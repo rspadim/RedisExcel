@@ -1,0 +1,18 @@
+﻿<DnaLibrary Name="RedisExcel" RuntimeVersion="v4.0">
+	<!-- Bibliotecas principais -->
+	<ExternalLibrary Path="RedisExcel.dll" ComServer="true" LoadFromBytes="true" />
+
+	<!-- Bibliotecas do System que precisam ser empacotadas -->
+	<Reference Path="System.Buffers.dll" Pack="true" />
+	<Reference Path="System.Memory.dll" Pack="true" />
+	<Reference Path="System.Runtime.CompilerServices.Unsafe.dll" Pack="true" />
+	<Reference Path="System.Threading.Channels.dll" Pack="true" />
+	<Reference Path="System.Threading.Tasks.Extensions.dll" Pack="true" />
+	<Reference Path="System.IO.Pipelines.dll" Pack="true" />
+	<Reference Path="System.Numerics.Vectors.dll" Pack="true" />
+	<Reference Path="StackExchange.Redis.dll" Pack="true" />
+	<Reference Path="NLog.dll" Pack="true" />
+	<Reference Path="ExcelDna.IntelliSense.dll" Pack="true" />
+	<Reference Path="Newtonsoft.Json.dll" Pack="true" />
+	<Reference Path="Microsoft.BCL.AsyncInterfaces.dll" Pack="true" />
+</DnaLibrary>

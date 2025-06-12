@@ -1,0 +1,36 @@
+name: Build & Release RedisExcel
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v1
+
+      - name: Restore NuGet packages
+        run: nuget restore RedisExcel.sln
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build RedisExcel (.NET Framework 4.8)
+        run: msbuild RedisExcel.sln /p:Configuration=Release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/Release/net48/publish/RedisExcel.dll
+            bin/Release/net48/publish/RedisExcel-packed.xll
+            bin/Release/net48/publish/RedisExcel64-packed.xll
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,14 @@
+{
+  "RTD": {
+    "host": "localhost:6379",
+    "timeout": 1000,
+    "RedisUpdateRateMs": 1000,
+    "ExcelUpdateRateMS": 100,
+    "RealTimeUpdates": true,
+    "UseGetMultiple": true
+  },
+  "UDF": {
+    "host": "localhost:6379",
+    "timeout": 1000
+  }
+}

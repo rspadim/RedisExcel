@@ -1,0 +1,12 @@
+obj/
+bin/
+packages/
+properties/
+*.user
+*.suo
+*.cache
+*.log
+.vs/
+*.xll
+t1.xlsx
+t2.xlsx
