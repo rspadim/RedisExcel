@@ -32,5 +32,7 @@ jobs:
             bin/Release/net48/publish/RedisExcel.dll
             bin/Release/net48/publish/RedisExcel-packed.xll
             bin/Release/net48/publish/RedisExcel64-packed.xll
+            NLog.config
+            RedisExcel.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
