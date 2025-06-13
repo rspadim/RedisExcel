@@ -43,11 +43,24 @@ r.publish("canal_alerta", "ALTA")
 
 ---
 
-## 🚀 Example: Publishing from Excel
+## 🚀 Example: Publishing from Excel (send data)
 
 ```Excel
-=RedisUDFSet("preco_btc", "67000.50")
-=RedisUDFChannelPublish("canal_alerta", "ALTA")
+=RedisUDFSet("preco_btc", "67000.50")                          // send SET message (key-value database)
+=RedisUDFChannelPublish("canal_alerta", "ALTA")                // send PUB/SUB message
+=RedisUDFChannelPublishJSON("range_of_data", A1:C20)           // send PUB/SUB Matrix, encoded as JSON
+```
+
+---
+
+## 🚀 Example: Subscribe and UDF from Excel (fetch data)
+
+```Excel
+=RedisUDFGet("preco_btc", "67000.50")                          // receive GET (key-value database) with UDF (no character limit)
+=RTD("RedisRtd", , "GET", "canal_alerta")                      // receive GET (key-value database - automatic pooling) with RTD (max of 255 characters)
+=RedisUDFChannelLatest("canal_alerta")                         // receive PUB/SUB with UDF (no character limit)
+=RTD("RedisRtd", , "SUB", "canal_alerta")                      // receive PUB/SUB with RTD (max of 255 characters)
+=RedisUDFJSONToMatrix(RedisUDFChannelLatest("range_of_data"))  // receive PUB/SUB Matrix using UDF (no RTD)
 ```
 
 ---
