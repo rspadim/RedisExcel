@@ -1,164 +1,233 @@
-# RedisRTD
+# RedisExcel
 
-Integração em tempo real entre Redis e Excel via RTD (Real-Time Data) e UDF (User Defined Functions), utilizando C# (.NET Framework 4.8) com [ExcelDna](https://github.com/Excel-DNA/ExcelDna). Esta biblioteca permite a atualização contínua de valores no Excel através de funções RTD, com suporte a polling (GET, HGET, HGETALL) e Pub/Sub (SUB, PSUB), e funções de UDF do Redis.
+Integration between Redis and Excel using RTD (Real-Time Data) and UDF (User Defined Functions), developed in C# (.NET Framework 4.8) with [ExcelDna](https://github.com/Excel-DNA/ExcelDna).
+Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` commands and various UDF operations to interact with Redis.
 
 ---
 
-## 🚀 Exemplo: publicar no Redis via Python
+## 🚀 Example: Publishing from Python
 
 ```python
 import redis
 
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
-# Publicar um valor
+# Set a key
 r.set("preco_btc", "67000.50")
 
-# Enviar mensagem para um canal
+# Publish to a channel
 r.publish("canal_alerta", "ALTA")
 ```
 
 ---
 
-## 🛠️ Como compilar o RedisRTD
+## 🛠️ Build Instructions
 
-### Requisitos
+### Requirements
 
-- Visual Studio 2022 ou superior
-- .NET Framework 4.8
-- NuGet packages:
-  - `ExcelDna.AddIn`
-  - `ExcelDna.Integration`
-  - `ExcelDna.IntelliSense`
-  - `StackExchange.Redis`
-  - `NLog`
-  - `Newtonsoft.Json`
+* Visual Studio 2022+
+* .NET Framework 4.8
+* NuGet packages:
 
-### Passos
+  * ExcelDna.AddIn
+  * ExcelDna.Integration
+  * ExcelDna.IntelliSense
+  * StackExchange.Redis
+  * NLog
+  * Newtonsoft.Json
 
-1. Clone o projeto:
+### Steps
 
 ```bash
 git clone https://github.com/rspadim/RedisExcel.git
 ```
 
-2. Abra no Visual Studio.
-
-3. Restaure os pacotes NuGet.
-
-4. Compile em modo `Release`. O `.xll` será gerado em `bin\Release`.
+1. Open the project in Visual Studio
+2. Restore NuGet packages
+3. Build in `Release` mode — `.xll` will be generated in `bin\Release`
 
 ---
 
-## 🧩 Como usar no Excel
+## 🧹 Installing in Excel
 
-### Opção 1: Adicionar manualmente
+### Quick Installation
 
-1. Copie os arquivos de `bin\Release` para uma pasta local.
+1. Download the latest release from GitHub (`.xll`, `.dll`, `NLog.config`)
+2. Place all files in the **same local folder**
+3. In Excel: `File > Options > Add-ins`
 
-2. No Excel:
-    - Vá em `Arquivo > Opções > Suplementos`.
-    - Clique em **Ir...**, depois em **Procurar...**, e selecione o `.xll` gerado.
+   * Click **Go...**, then **Browse...**, and select the `.xll` file
 
-### Opção 2: Registrar COM (`regasm`)
-
-Se estiver usando `.dll` com COM (para RTD):
-
-```bat
-cd "C:\Caminho\Para\Release"
-regasm RedisExcel.dll /codebase
-```
-
-> Execute como administrador no `Developer Command Prompt`.
+> The `RedisExcel.config.json` file can be placed in:
+>
+> * The same folder as the `.xll`
+> * The user folder (`%USERPROFILE%`)
+> * The Excel folder
+> * Or `C:\Windows`
 
 ---
 
-## 🧪 Testando no Excel
+## 🔎 Excel Examples
 
-### Pub/Sub com canal
+### Pub/Sub
 
 ```excel
 =RTD("RedisRtd", , "SUB", "canal_alerta", "localhost:6379")
+=RTD("RedisRtd", , "SUB", "canal_alerta", "dev") // can find an alias using `RedisExcel.json` file
+=RTD("RedisRtd", , "SUB", "canal_alerta")  // uses default host if omitted
 ```
 
-### Polling de chave
-
-```excel
-=RTD("RedisRtd", , "GET", "preco_btc", "localhost:6379")
-```
-
-### Polling de hash
-
-```excel
-=RTD("RedisRtd", , "HGET", "user:42", "saldo", "localhost:6379")
-```
+You can find other connection string formats in the [StackExchange.Redis configuration manual](https://stackexchange.github.io/StackExchange.Redis/Configuration).
 
 ---
 
-## ⚙️ Configurações Internas
+## 📊 Available RTD Functions
 
-Estas funções podem ser usadas para inspecionar o status do RTD server diretamente no Excel:
-
-| Função                         | Descrição                                                |
-|--------------------------------|----------------------------------------------------------|
-| `RedisRTDConnectionCount()`    | Número de conexões Redis ativas                          |
-| `RedisRTDSubscriptionCount()`  | Número de subscrições Redis ativas                       |
-| `RedisRTDTopicCount()`         | Total de tópicos RTD registrados                         |
-| `RedisRTDChannelCount()`       | Número de canais distintos com subscrição ativa          |
-| `RedisRTDDefaultHost()`        | Host Redis padrão configurado                            |
-| `RedisRTDExcelUpdateInterval()`| Intervalo de atualização do Excel em milissegundos       |
-| `RedisRTDRedisUpdateInterval()`| Intervalo de polling do Redis em milissegundos           |
-| `RedisRTDRealTimeUpdates()`    | Indica se está em modo de atualização contínua (boolean) |
+| Function                    | Description                            | 
+| --------------------------- | -------------------------------------- | 
+| RedisRTDConnectionCount     | Number of active Redis connections     | 
+| RedisRTDSubscriptionCount   | Number of active Redis subscriptions   | 
+| RedisRTDTopicCount          | Total number of RTD topics registered  | 
+| RedisRTDChannelCount        | Number of distinct subscribed channels | 
+| RedisRTDDefaultHost         | Current default Redis host             | 
+| RedisRTDExcelUpdateInterval | Excel update interval (ms)             | 
+| RedisRTDRedisUpdateInterval | Redis polling interval (ms)            | 
+| RedisRTDRealTimeUpdates     | Is real-time update enabled? (bool)    | 
 
 ---
 
-## 📄 Exemplo de configuração do Redis (opcional)
+## RTD Parameters Reference
+
+When calling the Excel RTD function like this:
+
+```excel
+=RTD("RedisRtd", , param1, param2, param3, param4)
+```
+
+Each parameter has a specific meaning depending on the RTD command.
+
+### RTD Parameters Breakdown
+
+| Param  | Description                                               |
+| ------ | --------------------------------------------------------- |
+| param1 | Command: GET, HGET, HGETALL, SUB, PSUB                    |
+| param2 | Key, hash, or channel name                                |
+| param3 | Host (optional for GET/HGETALL/SUB/PSUB), or field (HGET) |
+| param4 | Host (only used in HGET if param3 is the field name)      |
+
+> If `param3` or `param4` are omitted, the default host will be used. You can use aliases from your `RedisExcel.config.json`.
+
+### Supported RTD Commands
+
+| Command | Description                      | Arguments            |
+| ------- | -------------------------------- | -------------------- |
+| GET     | Polls a Redis key                | key, \[host]         |
+| HGET    | Polls a field in a Redis hash    | hash, field, \[host] |
+| HGETALL | Polls all fields in a Redis hash | hash, \[host]        |
+| SUB     | Subscribes to a Redis channel    | channel, \[host]     |
+| PSUB    | Subscribes to a Redis pattern    | pattern, \[host]     |
+
+> All commands support specifying either a full connection string or a named host defined in the `RedisExcel.config.json` file.
+
+## 💡 Available UDF Functions
+
+Functions to use directly in Excel cells:
+
+| Function                         | Description                      | Parameters                                |
+| -------------------------------- | -------------------------------- | ----------------------------------------- |
+| RedisUDFGet                      | Get the value of a key           | key, optionalHost                         |
+| RedisUDFSet                      | Set the value of a key           | key, value, optionalHost                  |
+| RedisUDFSetJSON                  | Set JSON-encoded data            | key, matrix, optionalHost                 |
+| RedisUDFSetKV / SetKVPair        | Set key-value pairs              | keys, values / pairs, optionalHost        |
+| RedisUDFGetMultiple              | Get multiple keys                | keys\[], multipleColumnsOpt, optionalHost |
+| RedisUDFExists / ExistsMultiples | Check key existence              | key / keys\[], optionalHost               |
+| RedisUDFTTL / TTLMultiples       | Time-to-live (TTL) for keys      | key / keys\[], optionalHost               |
+| RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
+| RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
+| RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
+| RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
+| RedisUDFServerTime               | Redis server current time        | optionalHost                              |
+| RedisUDFKeys                     | List keys by pattern             | pattern, optionalHost                     |
+| RedisUDFConnectionCount          | Number of active UDF connections | None                                      |
+
+---
+
+## 📝 Configuration Files
+
+### Example: NLog.config
+
+```xml
+<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+
+  <targets>
+    <target name="file" xsi:type="File"
+            fileName="RedisExcel.log"
+            layout="${longdate}|${level:uppercase=true}|${logger}|${message} ${exception:format=toString}"
+            archiveFileName="RedisExcel.${environment-user}.{#}.log"
+            archiveAboveSize="104857600"
+            archiveNumbering="Rolling"
+            maxArchiveFiles="5"
+            concurrentWrites="true"
+            keepFileOpen="true"
+            encoding="utf-8" />
+  </targets>
+
+  <rules>
+    <logger name="*" minlevel="Debug" writeTo="file" />
+  </rules>
+</nlog>
+```
+
+### JSON Configuration (RedisExcel.config.json)
 
 ```json
 {
-  "UDF": {
-    "host": "localhost:6379,password=senha123,defaultDatabase=0",
-    "timeout": "800"
-  },
   "RTD": {
-   "host": "localhost:6379",
-   "timeout": 1000,
-   "RedisUpdateRateMs": 1000,
-   "ExcelUpdateRateMS": 100,
-   "RealTimeUpdates": false,
-   "UseGetMultiple": true,
+    "host": "localhost:6379",
+    "timeout": 1000,
+    "RedisUpdateRateMs": 1000,
+    "ExcelUpdateRateMS": 100,
+    "MessageCounterThreshold": 1000,
+    "ExcelUpdateStyle": "Automatic",
+    "UseGetMultiple": true
+  },
+  "UDF": {
+    "host": "localhost:6379",
+    "timeout": 1000
+  },
+  "Servers": {
+    "prod": "localhost:6379,defaultDatabase=0",
+    "dev": "localhost:6379,defaultDatabase=1"
   }
 }
 ```
 
-Coloque o arquivo `RedisExcel.json` no mesmo diretório do `.xll` para carregar configurações padrão, ou no diretório do usuário, ou no diretório do excel, ou no diretório c:\windows\.
-
 ---
 
-## 🔄 Atualização Automática no Excel
+## ♻️ Force Update in Excel
 
-Para forçar recálculo:
-
-- Pressione `F9` manualmente.
-- Ou use VBA:
+* Press `F9`
+* Or use VBA:
 
 ```vba
-Dim proximaAtualizacao As Date
+Dim nextUpdate As Date
 
-Sub AtualizarRTD()
+Sub RefreshRTD()
     Sheet1.Calculate
-    proximaAtualizacao = Now + TimeValue("00:00:01")
-    Application.OnTime proximaAtualizacao, "AtualizarRTD"
+    nextUpdate = Now + TimeValue("00:00:01")
+    Application.OnTime nextUpdate, "RefreshRTD"
 End Sub
 
-Sub PararAtualizacao()
+Sub StopUpdate()
     On Error Resume Next
-    Application.OnTime proximaAtualizacao, "AtualizarRTD", , False
+    Application.OnTime nextUpdate, "RefreshRTD", , False
 End Sub
 ```
 
 ---
 
-## 📬 Contato
+## 📬 Contact
 
-Dúvidas, sugestões ou problemas? Abra uma *issue* no repositório ou entre em contato pelo e-mail associado ao projeto.
+Open an *issue* on GitHub or email as instructed in the repository.
