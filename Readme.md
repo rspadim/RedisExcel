@@ -7,6 +7,26 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 ---
 
+## 🧹 Installing in Excel
+
+### Quick Installation
+
+1. Download the latest release from GitHub (`.xll`, `.dll`) - [Download Releases](https://github.com/rspadim/RedisExcel/releases)
+2. Download [NLog config example files](https://github.com/rspadim/RedisExcel/blob/main/NLog.config)
+3. Download [RedisExcel.json file](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
+4. Place (`.xll`, `.dll`, `NLog.config`) files in the **same local folder**
+5. In Excel: `File > Options > Add-ins`
+
+   * Click **Go...**, then **Browse...**, and select the `.xll` file
+
+6. The `RedisExcel.json` file can be placed in - [Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
+>
+> * The user folder (`%USERPROFILE%`) - Example: c:\Users\rspadim\RedisExcel.json
+> * The Excel folder
+> * Or `C:\Windows\RedisExcel.json`
+
+---
+
 ## 🚀 Example: Publishing from Python
 
 ```python
@@ -47,25 +67,6 @@ git clone https://github.com/rspadim/RedisExcel.git
 1. Open the project in Visual Studio
 2. Restore NuGet packages
 3. Build in `Release` mode — `.xll` will be generated in `bin\Release`
-
----
-
-## 🧹 Installing in Excel
-
-### Quick Installation
-
-1. Download the latest release from GitHub (`.xll`, `.dll`, `NLog.config`)
-2. Place all files in the **same local folder**
-3. In Excel: `File > Options > Add-ins`
-
-   * Click **Go...**, then **Browse...**, and select the `.xll` file
-
-> The `RedisExcel.config.json` file can be placed in:
->
-> * The same folder as the `.xll`
-> * The user folder (`%USERPROFILE%`)
-> * The Excel folder
-> * Or `C:\Windows`
 
 ---
 
@@ -117,7 +118,7 @@ Each parameter has a specific meaning depending on the RTD command.
 | param3 | Host (optional for GET/HGETALL/SUB/PSUB), or field (HGET) |
 | param4 | Host (only used in HGET if param3 is the field name)      |
 
-> If `param3` or `param4` are omitted, the default host will be used. You can use aliases from your `RedisExcel.config.json`.
+> If `param3` or `param4` are omitted, the default host will be used. You can use aliases from your `RedisExcel.json`.
 
 ### Supported RTD Commands
 
@@ -129,7 +130,7 @@ Each parameter has a specific meaning depending on the RTD command.
 | SUB     | Subscribes to a Redis channel    | channel, \[host]     |
 | PSUB    | Subscribes to a Redis pattern    | pattern, \[host]     |
 
-> All commands support specifying either a full connection string or a named host defined in the `RedisExcel.config.json` file.
+> All commands support specifying either a full connection string or a named host defined in the `RedisExcel.json` file.
 
 ## 💡 Available UDF Functions
 
@@ -182,7 +183,7 @@ Functions to use directly in Excel cells:
 </nlog>
 ```
 
-### JSON Configuration (RedisExcel.config.json)
+### JSON Configuration (RedisExcel.json)
 
 ```json
 {
