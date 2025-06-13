@@ -43,6 +43,15 @@ r.publish("canal_alerta", "ALTA")
 
 ---
 
+## 🚀 Example: Publishing from Excel
+
+```Excel
+=RedisUDFSet("preco_btc", "67000.50")
+=RedisUDFChannelPublish("canal_alerta", "ALTA")
+```
+
+---
+
 ## 🛠️ Build Instructions
 
 ### Requirements
