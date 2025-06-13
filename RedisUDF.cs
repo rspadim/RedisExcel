@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Threading.Channels;
 
 /// <summary>
 /// Exemplo de arquivo RedisExcel.config.json:
@@ -293,6 +294,71 @@ namespace RedisExcel
                 return "Error: " + ex.Message;
             }
         }
+        [ExcelFunction(Description = "Returns all active Pub/Sub channels and their subscriber counts from Redis", IsVolatile = true)]
+        public static object[,] RedisUDFPubSubChannelsInfo(
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = "";
+            try
+            {
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
+                var conn = GetOrCreateConnection(host);
+                var endpoint = conn.GetEndPoints().First();
+                var server = conn.GetServer(endpoint);
+
+                // Executa PUBSUB CHANNELS
+                var channelsResult = server.Execute("PUBSUB", "CHANNELS");
+                if (channelsResult.Resp2Type != ResultType.Array)
+                {
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels=0");
+                    return new object[,] { { "Channel", "Subscribers" } };
+                }
+
+                var channels = (RedisResult[])channelsResult;
+                int count = channels.Length;
+                object[,] result = new object[count + 1, 2];
+                result[0, 0] = "Channel";
+                result[0, 1] = "Subscribers";
+
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels={count}");
+                for (int i = 0; i < count; i++)
+                {
+                    string channel = channels[i].ToString();
+
+                    // Executa PUBSUB NUMSUB <channel>
+                    result[i + 1, 0] = channel;
+                    result[i + 1, 1] = "Fetching ...";
+                    try
+                    {
+                        var numsubResult = server.Execute("PUBSUB", "NUMSUB", channel);
+                        var numsubArray = (RedisResult[])numsubResult;
+                        long subscribers = (numsubArray.Length >= 2) ? (long)numsubArray[1] : 0;
+                        result[i + 1, 1] = subscribers;
+
+
+                        if (logger.IsTraceEnabled)
+                            logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels={count}, i={i}, channel={channel}, subscribers={subscribers}");
+                    }catch (Exception ex)
+                    {
+                        if (logger.IsErrorEnabled)
+                            logger.Error(ex, $"RedisUDFPubSubChannelsInfo Error: host={host}, fetch PUBSUB NUMSUB {channel}");
+                        result[i + 1, 1] = $"Error: {ex.Message}";
+                    }
+                }
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (logger.IsErrorEnabled)
+                    logger.Error(ex, $"RedisUDFPubSubChannelsInfo Error: host={host}");
+                return new object[,] { { "Error", ex.Message } };
+            }
+        }
+
 
         [ExcelFunction(Description = "Gets the value of a Redis key with optional host", IsVolatile = true)]
         public static string RedisUDFGet(
