@@ -1,6 +1,6 @@
 # RedisExcel
 
-TL-DR: [Download Releases](https://github.com/rspadim/RedisExcel/releases)
+TL-DR: Read Installing in Excel and [Download Releases](https://github.com/rspadim/RedisExcel/releases)
 
 Integration between Redis and Excel using RTD (Real-Time Data) and UDF (User Defined Functions), developed in C# (.NET Framework 4.8) with [ExcelDna](https://github.com/Excel-DNA/ExcelDna).
 Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` commands and various UDF operations to interact with Redis.
