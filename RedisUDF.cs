@@ -24,6 +24,7 @@ namespace RedisExcel
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private static TimeSpan RedisTimeout = TimeSpan.FromMilliseconds(500);
         private static string ConfigDefaultHost = null;
+        private static Dictionary<string, string> Servers = null;
         private static readonly ConcurrentDictionary<string, ConnectionMultiplexer> RedisConnections = new ConcurrentDictionary<string, ConnectionMultiplexer>();
 
         private static readonly ConcurrentDictionary<string, string> _channelMessages = new ConcurrentDictionary<string, string>();
@@ -36,12 +37,21 @@ namespace RedisExcel
             var config = ConfigHelper.GetConfig();
             RedisUDF.ConfigDefaultHost = config.UDF.host;
             RedisUDF.RedisTimeout = TimeSpan.FromMilliseconds(config.UDF.timeout);
+            RedisUDF.Servers = config.Servers;
         }
         private static string GetDefaultHost()
         {
             if (RedisUDF.ConfigDefaultHost == null)
                 RedisUDF.LoadConfig();
             return RedisUDF.ConfigDefaultHost;
+        }
+        private static string FindServerName(string host)
+        {
+            if (RedisUDF.Servers == null)
+                RedisUDF.LoadConfig();
+            if (RedisUDF.Servers != null && RedisUDF.Servers.TryGetValue(host, out var server))
+                return server;
+            return host;
         }
         private static ConnectionMultiplexer GetOrCreateConnection(string host)
         {
@@ -72,6 +82,7 @@ namespace RedisExcel
         private static IDatabase GetDatabase(string host = null)
         {
             host = string.IsNullOrWhiteSpace(host) ? GetDefaultHost() : host;
+            host = FindServerName(host);
 
             var connection = RedisConnections.GetOrAdd(host, h =>
             {
@@ -182,7 +193,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string ?? GetDefaultHost();
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 StartChannelListener(channel, host);
                 var resposta = _channelMessages.TryGetValue(channel, out var msg) ? msg : "(null)";
                 if (logger.IsTraceEnabled)
@@ -216,8 +228,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string ?? GetDefaultHost();
-
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var mux = GetOrCreateConnection(host);
                 var sub = mux.GetSubscriber();
 
@@ -263,7 +275,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string ?? GetDefaultHost();
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var mux = GetOrCreateConnection(host);
                 var sub = mux.GetSubscriber();
 
@@ -290,7 +303,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 var value = db.StringGet(key);
                 if (logger.IsTraceEnabled)
@@ -316,7 +330,8 @@ namespace RedisExcel
             string json = null;
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 json = RedisUDFMatrixToJSON(values);
                 db.StringSet(key, json);
@@ -341,7 +356,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 db.StringSet(key, value);
                 if (logger.IsTraceEnabled)
@@ -365,7 +381,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 int L1 = keys.GetLength(0);
                 int L2 = values.GetLength(0);
@@ -401,7 +418,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
 
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
@@ -436,7 +454,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 bool multipleColumns = multipleColumnsOpt is bool b && b;
 
                 var db = GetDatabase(host);
@@ -485,6 +504,7 @@ namespace RedisExcel
             try
             {
                 host = optionalHost as string ?? GetDefaultHost();
+                host = FindServerName(host);
                 var conn = GetOrCreateConnection(host);
                 var server = conn.GetServer(conn.GetEndPoints().First());
 
@@ -513,7 +533,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 var ttl = db.KeyTimeToLive(key);
                 if (logger.IsTraceEnabled)
@@ -536,6 +557,7 @@ namespace RedisExcel
             try
             {
                 host = optionalHost as string ?? GetDefaultHost();
+                host = FindServerName(host);
                 var conn = GetOrCreateConnection(host);
                 var server = conn.GetServer(conn.GetEndPoints().First());
                 if (logger.IsTraceEnabled)
@@ -558,7 +580,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 object[,] result = new object[keys.Length, 2];
 
@@ -589,7 +612,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 var resultado = db.KeyExists(key);
                 if (logger.IsTraceEnabled)
@@ -613,7 +637,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 object[,] result = new object[keys.Length, 2];
 
@@ -646,7 +671,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 db.HashSet(hashKey, field, value);
                 if(logger.IsTraceEnabled)
@@ -671,7 +697,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
 
                 var entries = new List<HashEntry>();
@@ -706,7 +733,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 var value = db.HashGet(hashKey, field);
                 if (logger.IsTraceEnabled)
@@ -730,7 +758,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
                 var all = db.HashGetAll(hashKey);
 
@@ -761,7 +790,8 @@ namespace RedisExcel
             string host = "";
             try
             {
-                host = optionalHost as string;
+                host = string.IsNullOrWhiteSpace(optionalHost as string) ? GetDefaultHost() : optionalHost as string;
+                host = FindServerName(host);
                 var db = GetDatabase(host);
 
                 object[,] result = new object[hashKeys.Length, 2];

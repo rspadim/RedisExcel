@@ -10,5 +10,9 @@
   "UDF": {
     "host": "localhost:6379",
     "timeout": 1000
+  },
+  "Servers": {
+    "prod": "localhost:6379,defaultDatabase=0",
+    "dev": "localhost:6379,defaultDatabase=1"
   }
 }

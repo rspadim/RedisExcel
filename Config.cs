@@ -2,6 +2,7 @@
 using Newtonsoft.Json.Converters;
 using NLog;
 using System;
+using System.Collections.Generic;
 using System.IO;
 
 namespace RedisExcel
@@ -32,6 +33,7 @@ namespace RedisExcel
     {
         public RTDConfig RTD { get; set; }
         public ConfigSection UDF { get; set; }
+        public Dictionary<string, string> Servers { get; set; }
     }
 
     public static class ConfigHelper

@@ -67,6 +67,7 @@ namespace RedisExcel
     [ProgId("RedisRtd")]
     public class RedisRtd : ExcelRtdServer
     {
+        private static Dictionary<string, string> Servers = null;
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private System.Timers.Timer _timerCounter;
         private System.Timers.Timer _timerRedis;
@@ -119,6 +120,15 @@ namespace RedisExcel
             this.ExcelUpdateStyle = config.RTD.ExcelUpdateStyle;
             this.MessageCounterThreshold = config.RTD.MessageCounterThreshold;
             this.UseGetMultiple = config.RTD.UseGetMultiple;
+            RedisRtd.Servers = config.Servers;
+        }
+        private string FindServerName(string host)
+        {
+            if (RedisRtd.Servers == null)
+                this.LoadConfig();
+            if (RedisRtd.Servers != null && RedisRtd.Servers.TryGetValue(host, out var server))
+                return server;
+            return host;
         }
         private string GetDefaultHost()
         {
@@ -131,6 +141,7 @@ namespace RedisExcel
         private ConnectionMultiplexer GetOrCreateRedis(string host, string subHost = null)
         {
             host = string.IsNullOrWhiteSpace(host) ? GetDefaultHost() : host;
+            host = FindServerName(host);
             bool forSubscription = subHost != null;
             string connectionKey = forSubscription ? subHost : host;
             var pool = forSubscription ? _redisSubConnections : _redisDataConnections;
@@ -351,7 +362,7 @@ namespace RedisExcel
                         {
                             Type = param1,
                             KeyOrChannel = param2,
-                            Host = string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3,
+                            Host = FindServerName(string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3),
                             Topic = topic
                         };
                         break;
@@ -361,7 +372,7 @@ namespace RedisExcel
                             Type = param1,
                             KeyOrChannel = param2,
                             Field = param3,
-                            Host = string.IsNullOrWhiteSpace(param4) ? GetDefaultHost() : param4,
+                            Host = FindServerName(string.IsNullOrWhiteSpace(param4) ? GetDefaultHost() : param4),
                             Topic = topic
                         };
                         break;
@@ -372,7 +383,7 @@ namespace RedisExcel
                         {
                             Type = param1,
                             KeyOrChannel = param2,
-                            Host = string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3,
+                            Host = FindServerName(string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3),
                             Topic = topic
                         };
                         SubscribeTopicId(topic.TopicId);
