@@ -24,15 +24,12 @@ jobs:
 
       - name: Generate GitVersion.cs
         run: |
-          $tag = "${{ github.ref_name }}"
-          $content = @"
-namespace RedisExcel {
-    public static class GitVersion {
-        public const string Tag = ""$tag"";
-    }
-}
-"@
-          $content | Out-File -Encoding UTF8 -FilePath GitVersion.cs
+          echo "namespace RedisExcel {" > GitVersion.cs
+          echo "    public static class GitVersion {" >> GitVersion.cs
+          echo "        public const string Tag = \"${{ github.ref_name }}\";" >> GitVersion.cs
+          echo "    }" >> GitVersion.cs
+          echo "}" >> GitVersion.cs
+
       - name: Build RedisExcel (.NET Framework 4.8)
         run: msbuild RedisExcel.sln /p:Configuration=Release
 
