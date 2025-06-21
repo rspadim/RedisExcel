@@ -64,11 +64,7 @@ namespace RedisExcel
                 options.AbortOnConnectFail = false;
                 options.ConnectTimeout = (int)RedisTimeout.TotalMilliseconds;
                 options.SyncTimeout = (int)RedisTimeout.TotalMilliseconds;
-#if GIT_TAG
-		        string GitTag = GIT_TAG;
-#else
-		        string GitTag = "not GITHub";
-#endif
+		        string GitTag = GitVersion.Tag;
 		        options.ClientName = $"RedisUDF :: {GitTag} :: {Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
                 var conn = ConnectionMultiplexer.Connect(options);
                 conn.ConnectionFailed += (sender, args) =>

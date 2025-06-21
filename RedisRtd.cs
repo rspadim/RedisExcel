@@ -155,12 +155,8 @@ namespace RedisExcel
                         var config = ConfigurationOptions.Parse(host);
                         config.ConnectTimeout = 1000;
                         config.AbortOnConnectFail = false;
-#if GIT_TAG
-			            string GitTag = GIT_TAG;
-#else
-			            string GitTag = "not GITHub";
-#endif
-            			config.ClientName = $"RedisRTD :: {GitTag} :: {Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
+                        string GitTag = GitVersion.Tag;
+                        config.ClientName = $"RedisRTD :: {GitTag} :: {Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
                         if (logger.IsInfoEnabled)
                             logger.Info($"GetOrCreateRedis: Creating Redis connection to {host}, key={subHost}, ClientName={config.ClientName}");
                         pool[connectionKey] = ConnectionMultiplexer.Connect(config);
