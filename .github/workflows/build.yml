@@ -23,7 +23,9 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Build RedisExcel (.NET Framework 4.8)
-        run: msbuild RedisExcel.sln /p:Configuration=Release
+        run: |
+          $TAG = "${{ github.ref_name }}"
+          msbuild RedisExcel.sln /p:Configuration=Release /p:DefineConstants="GIT_TAG=\\\"$TAG\\\""
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

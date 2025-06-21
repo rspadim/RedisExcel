@@ -1,5 +1,7 @@
 # RedisExcel
 
+![RedisExcel Overview](redisexcel.png)
+
 TL-DR: Read Installing in Excel and [Download Releases](https://github.com/rspadim/RedisExcel/releases)
 
 Integration between Redis and Excel using RTD (Real-Time Data) and UDF (User Defined Functions), developed in C# (.NET Framework 4.8) with [ExcelDna](https://github.com/Excel-DNA/ExcelDna).
