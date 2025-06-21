@@ -22,6 +22,10 @@ jobs:
           echo     } >> GitVersion.cs
           echo } >> GitVersion.cs
 
+      - name: Print GitVersion.cs
+        shell: cmd
+        run: type GitVersion.cs
+
       - name: Setup NuGet
         uses: NuGet/setup-nuget@v1
 
