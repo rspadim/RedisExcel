@@ -18,7 +18,7 @@ jobs:
         run: |
           echo namespace RedisExcel { > GitVersion.cs
           echo     public static class GitVersion { >> GitVersion.cs
-          echo         public const string Tag = "^"${{ github.ref_name }}"^"; >> GitVersion.cs
+          echo         public const string Tag = "${{ github.ref_name }}"; >> GitVersion.cs
           echo     } >> GitVersion.cs
           echo } >> GitVersion.cs
 
