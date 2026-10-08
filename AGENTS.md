@@ -76,8 +76,9 @@ Outputs in `bin\Release\net48\publish\`:
 - `RedisExcel-packed.xll` (32-bit) and `RedisExcel64-packed.xll` (64-bit),
 - `RedisExcel.dll`, plus the dependency assemblies are packed inside the XLLs.
 
-CI (`.github/workflows/build.yml`) builds on `v*` tags and defines `GIT_TAG`,
-which is embedded in the Redis `ClientName` for diagnostics.
+CI (`.github/workflows/build.yml`) runs on pull requests and main pushes; on
+`v*` tags it passes `/p:InformationalVersion=<tag>`, which is embedded in the
+Redis `ClientName` for diagnostics (shown as `dev` for local builds).
 
 ## Tests
 
@@ -167,5 +168,5 @@ These cost real debugging time — read before writing automation.
 ## Release
 
 Push a `v*` tag; the CI workflow builds and publishes the packed XLLs plus
-`NLog.config` and `RedisExcel.json` as release assets. Next planned version:
+`NLog.config` and `RedisExcel.json` as release assets. Current version:
 `v1.1.0`.
