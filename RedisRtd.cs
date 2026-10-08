@@ -1,65 +1,102 @@
-﻿using NLog;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using ExcelDna.ComInterop;
+﻿using ExcelDna.ComInterop;
 using ExcelDna.Integration;
 using ExcelDna.Integration.Rtd;
-using static ExcelDna.Integration.Rtd.ExcelRtdServer;
+using Newtonsoft.Json;
+using NLog;
+using StackExchange.Redis;
 using System;
 using System.Collections.Concurrent;
-using StackExchange.Redis;
+using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
+using static ExcelDna.Integration.Rtd.ExcelRtdServer;
 
 namespace RedisExcel
 {
-    public class AddIn : IExcelAddIn {
-        public void AutoOpen(){ ComServer.DllRegisterServer(); }
-
-        public void AutoClose() { ComServer.DllUnregisterServer(); }
-    }
-    public class TopicData
+    public class AddIn : IExcelAddIn
     {
-        public Topic Topic { get; set; } // Armazena o Topic para notificação
-        public string Type { get; set; } = null;
-        public string KeyOrChannel { get; set; } = null;
-        public string Field { get; set; } = null;
-        public string Host { get; set; } = null;
-        public string LastValue { get; set; } = null;
-        public bool Dirty { get; set; } = true;
-        public string GetSubHost()
+        public void AutoOpen()
         {
-            return (Type == "SUB" || Type == "PSUB" ? Host : null);
+            ComServer.DllRegisterServer();
         }
-        public string GetChannel()
+
+        public void AutoClose()
         {
-            return (Type == "SUB" || Type == "PSUB" ? Host + "::" + Type + "::" + KeyOrChannel : null);
+            try
+            {
+                RedisRuntime.Shutdown();
+            }
+            catch
+            {
+                // best effort; the Excel process releases the sockets on shutdown
+            }
+            ComServer.DllUnregisterServer();
         }
+    }
+
+    public sealed class TopicData
+    {
+        private readonly object _sync = new object();
+        private string _lastValue;
+        private bool _dirty = true;
+
+        public TopicData(Topic topic, string type, string keyOrChannel, string field, string host)
+        {
+            Topic = topic;
+            Type = type;
+            KeyOrChannel = keyOrChannel;
+            Field = field;
+            Host = host;
+        }
+
+        public Topic Topic { get; }
+        public string Type { get; }
+        public string KeyOrChannel { get; }
+        public string Field { get; }
+        public string Host { get; }
+        public IDisposable Subscription { get; set; }
+
+        public string LastValue { get { lock (_sync) return _lastValue; } }
+
+        public bool Dirty { get { lock (_sync) return _dirty; } }
+
+        public void UpdateAndSendToExcel(string data)
+        {
+            Topic.UpdateValue(data);
+            lock (_sync)
+            {
+                _lastValue = data;
+                _dirty = false;
+            }
+        }
+
+        public void UpdateOnly(string data)
+        {
+            lock (_sync)
+            {
+                _lastValue = data;
+                _dirty = true;
+            }
+        }
+
+        public void SendToExcelIfDirty()
+        {
+            string value;
+            lock (_sync)
+            {
+                if (!_dirty)
+                    return;
+                _dirty = false;
+                value = _lastValue;
+            }
+            Topic.UpdateValue(value);
+        }
+
         public override string ToString()
         {
             return $"TopicId={Topic.TopicId}, Type={Type}, KeyOrChannel={KeyOrChannel}, Field={Field}, Host={Host}, LastValue={LastValue}, Dirty={Dirty}";
-        }
-        public void SendToExcelIfDirty()
-        {
-            if (this.Dirty)
-                this.Topic.UpdateValue(this.LastValue);
-            this.Dirty = false;
-        }
-        public void UpdateOnly(string data)
-        {
-            this.LastValue = data;
-            this.Dirty = true;
-        }
-        public void UpdateAndSendToExcel(string data)
-        {
-            this.Topic.UpdateValue(data);
-            this.LastValue = data;
-            this.Dirty = false;
-        }
-        public void UpdateAndSendOnlyIfNew(string data)
-        {
-            if (this.LastValue == data && !this.Dirty)
-                return;
-            this.UpdateAndSendToExcel(data);
         }
     }
 
@@ -67,346 +104,195 @@ namespace RedisExcel
     [ProgId("RedisRtd")]
     public class RedisRtd : ExcelRtdServer
     {
-        private static Dictionary<string, string> Servers = null;
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
-        private System.Timers.Timer _timerCounter;
-        private System.Timers.Timer _timerRedis;
-        private System.Timers.Timer _timerUpdateExcel;
-        
-        public bool UseGetMultiple = true;
-        private ENUMExcelUpdateStyle ExcelUpdateStyle = ENUMExcelUpdateStyle.Automatic;
-        private bool RealTimeUpdates = true;
-        private double ExcelUpdateRateMS = 100;
-        private double RedisUpdateRateMS = 100;
-        private object _MessageCounter_lock = new object();
-        private long MessageCounterThreshold = 0;
-        private long MessageCounter = 0;
-        private string ConfigDefaultHost = null;
+        private static readonly ConcurrentDictionary<RedisRtd, byte> Instances = new ConcurrentDictionary<RedisRtd, byte>();
+        private static RedisRtd Instance;
 
-        private readonly Dictionary<int, TopicData> _topicsSubs = new Dictionary<int, TopicData>();
-        private readonly Dictionary<int, TopicData> _topics = new Dictionary<int, TopicData>();
+        private readonly ConcurrentDictionary<int, TopicData> _polledTopics = new ConcurrentDictionary<int, TopicData>();
+        private readonly ConcurrentDictionary<int, TopicData> _subscribedTopics = new ConcurrentDictionary<int, TopicData>();
 
-        private static readonly ConcurrentDictionary<string, ConnectionMultiplexer> _redisDataConnections = new ConcurrentDictionary<string, ConnectionMultiplexer>();
-        private static readonly ConcurrentDictionary<string, ConnectionMultiplexer> _redisSubConnections = new ConcurrentDictionary<string, ConnectionMultiplexer>();
+        private long _messageCount;
+        private long _messageCounterThreshold;
+        private volatile bool _realTimeUpdates = true;
+        private ENUMExcelUpdateStyle _excelUpdateStyle = ENUMExcelUpdateStyle.Automatic;
+        private double _excelUpdateRateMs = 100;
+        private double _redisUpdateRateMs = 1000;
+        private bool _useGetMultiple = true;
+        private string _defaultHost;
 
-        private static readonly ConcurrentDictionary<string, ISubscriber> _redisSubscriptions = new ConcurrentDictionary<string, ISubscriber>();
-        private static readonly ConcurrentDictionary<string, HashSet<int>> _channelTopics = new ConcurrentDictionary<string, HashSet<int>>();
+        private System.Timers.Timer _excelTimer;
+        private System.Timers.Timer _redisTimer;
+        private System.Timers.Timer _counterTimer;
 
         public static long CurrentMessagesCounter()
         {
-            if (Instance == null)
-                return 0;
-            lock (Instance._MessageCounter_lock)
-            {
-                return Instance.MessageCounter;
-            }
+            var instance = Instance;
+            return instance == null ? 0 : Interlocked.Read(ref instance._messageCount);
         }
-        public static int RedisConnectionsCount() => _redisDataConnections.Count + _redisSubConnections.Count;
-        public static int RedisSubscriptionsCount() => _redisSubscriptions.Count;
-        public static int TopicsCount() => (Instance?._topics.Count ?? 0) + (Instance?._topicsSubs.Count ?? 0);
-        public static int ChannelTopicsCount() => _channelTopics.Count;
-        public static string DefaultHost() => Instance?.ConfigDefaultHost ?? null;
-        public static double ExcelUpdateRate() => Instance?.ExcelUpdateRateMS ?? 0;
-        public static double RedisUpdateRate() => Instance?.RedisUpdateRateMS ?? 0;
-        public static bool IsRealTimeEnabled() => Instance?.RealTimeUpdates ?? false;
-        private static RedisRtd Instance;
 
-        private void LoadConfig()
-        {
-            var config = ConfigHelper.GetConfig();
-            this.ConfigDefaultHost = config.RTD.host;
-            this.ExcelUpdateRateMS = config.RTD.ExcelUpdateRateMs;
-            this.RedisUpdateRateMS = config.RTD.RedisUpdateRateMs;
-            this.ExcelUpdateStyle = config.RTD.ExcelUpdateStyle;
-            this.MessageCounterThreshold = config.RTD.MessageCounterThreshold;
-            this.UseGetMultiple = config.RTD.UseGetMultiple;
-            RedisRtd.Servers = config.Servers;
-        }
-        private string FindServerName(string host)
-        {
-            if (RedisRtd.Servers == null)
-                this.LoadConfig();
-            if (RedisRtd.Servers != null && RedisRtd.Servers.TryGetValue(host, out var server))
-                return server;
-            return host;
-        }
-        private string GetDefaultHost()
-        {
-            if (this.ConfigDefaultHost == null) {
-                var config = ConfigHelper.GetConfig();
-                this.ConfigDefaultHost = config.RTD.host;
-            }
-            return this.ConfigDefaultHost;
-        }
-        private ConnectionMultiplexer GetOrCreateRedis(string host, string subHost = null)
-        {
-            host = string.IsNullOrWhiteSpace(host) ? GetDefaultHost() : host;
-            host = FindServerName(host);
-            bool forSubscription = subHost != null;
-            string connectionKey = forSubscription ? subHost : host;
-            var pool = forSubscription ? _redisSubConnections : _redisDataConnections;
+        public static int RedisConnectionsCount() => RedisRuntime.Connections.RtdConnectionCount;
 
-            if (!pool.ContainsKey(host))
-            {
-                lock (pool)
-                {
-                    if (!pool.ContainsKey(host))
-                    {
-                        var config = ConfigurationOptions.Parse(host);
-                        config.ConnectTimeout = 1000;
-                        config.AbortOnConnectFail = false;
-#if GIT_TAG
-			            string GitTag = GIT_TAG;
-#else
-			            string GitTag = "not GITHub";
-#endif
-            			config.ClientName = $"RedisRTD :: {GitTag} :: {Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
-                        if (logger.IsInfoEnabled)
-                            logger.Info($"GetOrCreateRedis: Creating Redis connection to {host}, key={subHost}, ClientName={config.ClientName}");
-                        pool[connectionKey] = ConnectionMultiplexer.Connect(config);
-                        pool[connectionKey].ConnectionFailed += (sender, args) =>
-                        {
-                            if (logger.IsInfoEnabled)
-                                logger.Info($"GetOrCreateRedis: LOST connection to Redis. host={host}, Endpoint={args.EndPoint}, FailureType={args.FailureType}, Exception={args.Exception?.Message}");
-                        };
-                        pool[connectionKey].ConnectionRestored += (sender, args) =>
-                        {
-                            if (logger.IsInfoEnabled)
-                                logger.Info($"GetOrCreateRedis: Redis reconnect detected for host={host}");
-                            ResubscribeHost(host);
-                        };
-                    }
-                }
-            }
+        public static int RedisSubscriptionsCount() => RedisRuntime.Subscriptions.ListenerCount;
 
-            return pool[connectionKey];
+        public static int TopicsCount()
+        {
+            int total = 0;
+            foreach (var instance in Instances.Keys)
+                total += instance._polledTopics.Count + instance._subscribedTopics.Count;
+            return total;
         }
+
+        public static int ChannelTopicsCount() => RedisRuntime.Subscriptions.ChannelCount;
+
+        public static string DefaultHost() => Instance?._defaultHost;
+
+        public static double ExcelUpdateRate() => Instance?._excelUpdateRateMs ?? 0;
+
+        public static double RedisUpdateRate() => Instance?._redisUpdateRateMs ?? 0;
+
+        public static bool IsRealTimeEnabled() => Instance?._realTimeUpdates ?? false;
+
         protected override bool ServerStart()
         {
-            if (logger.IsInfoEnabled)
-                logger.Info("ServerStart: Starting RTD Server");
+            logger.Info("ServerStart: starting RTD server");
             Instance = this;
-            // carrega configuracoes
-            LoadConfig();
-            if (logger.IsInfoEnabled)
-                logger.Info(
-                    "Loaded configuration:\n"+
-                    $"    ConfigDefaultHost        = {this.ConfigDefaultHost}\n"+
-                    $"    ExcelUpdateRateMS        = {this.ExcelUpdateRateMS}\n"+
-                    $"    RedisUpdateRateMS        = {this.RedisUpdateRateMS}\n"+
-                    $"    ExcelUpdateStyle         = {this.ExcelUpdateStyle}\n"+
-                    $"    MessageCounterThreshold  = {this.MessageCounterThreshold}\n"+
-                    $"    UseGetMultiple           = {this.UseGetMultiple}"
-                );
+            Instances[this] = 0;
 
-            // inicializa timers
-            _timerCounter = new System.Timers.Timer(1000);
-            _timerCounter.AutoReset = true;
-            _timerCounter.Elapsed += TimerElapsedMessageCounter;
+            var config = AppConfig.Current.RTD;
+            _defaultHost = config.host;
+            _excelUpdateRateMs = config.ExcelUpdateRateMs;
+            _redisUpdateRateMs = config.RedisUpdateRateMs;
+            _excelUpdateStyle = config.ExcelUpdateStyle;
+            _messageCounterThreshold = config.MessageCounterThreshold;
+            _useGetMultiple = config.UseGetMultiple;
+            // in Realtime/Timer styles the mode is fixed; in Automatic it is recalculated from the message counter
+            _realTimeUpdates = _excelUpdateStyle != ENUMExcelUpdateStyle.Timer;
 
-            _timerUpdateExcel = new System.Timers.Timer(ExcelUpdateRateMS);
-            _timerUpdateExcel.AutoReset = true;
-            _timerUpdateExcel.Elapsed += TimerElapsedExcel;
+            logger.Info(
+                "ServerStart: config " +
+                $"host={_defaultHost}, excelRate={_excelUpdateRateMs}ms, redisRate={_redisUpdateRateMs}ms, " +
+                $"style={_excelUpdateStyle}, threshold={_messageCounterThreshold}, useGetMultiple={_useGetMultiple}");
 
-            _timerRedis = new System.Timers.Timer(RedisUpdateRateMS);
-            _timerRedis.AutoReset = true;
-            _timerRedis.Elapsed += TimerElapsedRedis;
-
-            // start
-            _timerRedis.Start();
-            _timerUpdateExcel.Start();
-            _timerCounter.Start();
+            _redisTimer = CreateTimer(_redisUpdateRateMs, "redis", OnRedisTick);
+            _excelTimer = CreateTimer(_excelUpdateRateMs, "excel", OnExcelTick);
+            _counterTimer = CreateTimer(1000, "counter", OnCounterTick);
+            _redisTimer.Start();
+            _excelTimer.Start();
+            _counterTimer.Start();
             return true;
         }
 
         protected override void ServerTerminate()
         {
-            if (logger.IsInfoEnabled)
-                logger.Info($"ServerTerminate");
-            // matar os timers
-            _timerUpdateExcel?.Stop();
-            _timerRedis?.Dispose();
+            logger.Info("ServerTerminate");
+            DisposeTimer(ref _redisTimer);
+            DisposeTimer(ref _excelTimer);
+            DisposeTimer(ref _counterTimer);
 
-            // TODO: matar as conexoes do redis
-        }
-        private void ResubscribeHost(string host)
-        {
-            if (!_redisSubConnections.ContainsKey(host))
+            foreach (var td in _subscribedTopics.Values)
             {
-                if (logger.IsErrorEnabled)
-                    logger.Error($"ResubscribeHost: host not found {host}");
-                return;
-            }
-            // remove todos subscriptions, e todos channeltopics
-            var topics = _topicsSubs
-                .Where(kvp => kvp.Value.Host == host)
-                .Select(kvp => kvp.Value)
-                .ToList();
-            if (logger.IsInfoEnabled)
-                logger.Info($"ResubscribeHost: Cleaning topics {topics.Count} topic(s) for host={host}");
-            foreach (var td in topics)
-            {
-                var subHost = td.GetSubHost();
                 try
                 {
-                    _channelTopics[subHost].Clear();
-                    if (_redisSubscriptions.TryRemove(subHost, out var _oldSubscription))
-                        _oldSubscription.UnsubscribeAll();
+                    td.Subscription?.Dispose();
                 }
                 catch (Exception ex)
                 {
-                    if (logger.IsErrorEnabled)
-                        logger.Error(ex, $"ResubscribeHost: Failed to remove subHost={subHost}");
+                    logger.Debug(ex, "ServerTerminate: error disposing subscription");
                 }
             }
-            // adicionar todos subscriptions e channeltopics novamente
-            if (logger.IsInfoEnabled)
-                logger.Info($"ResubscribeHost: Re-subscribing {topics.Count} topic(s) for host={host}");
-            foreach (var topic in topics)
+            _subscribedTopics.Clear();
+            _polledTopics.Clear();
+
+            Instances.TryRemove(this, out _);
+            if (ReferenceEquals(Instance, this))
+                Instance = Instances.Keys.FirstOrDefault();
+        }
+
+        private static System.Timers.Timer CreateTimer(double intervalMs, string name, Action action)
+        {
+            var timer = new System.Timers.Timer(intervalMs) { AutoReset = true };
+            timer.Elapsed += (sender, args) =>
             {
-                var topicId = topic.Topic.TopicId;
+                // System.Timers.Timer swallows unhandled exceptions; without this catch the
+                // failure would be completely silent (one of the original bug symptoms).
                 try
                 {
-                    SubscribeTopicId(topicId);
+                    action();
                 }
                 catch (Exception ex)
                 {
-                    if (logger.IsErrorEnabled)
-                        logger.Error(ex, $"ResubscribeHost: Failed to resubscribe TopicId={topicId}, host={host}, TopidData={topic}");
+                    logger.Error(ex, $"Timer({name}): unhandled error");
                 }
-            }
+            };
+            return timer;
         }
-        private void SubscribeTopicId(int topicId)
+
+        private static void DisposeTimer(ref System.Timers.Timer timer)
         {
-            if (!_topicsSubs.ContainsKey(topicId))
-            {
-                if (logger.IsErrorEnabled)
-                    logger.Error($"Subscribe: TopicId={topicId} not found");
+            var toDispose = timer;
+            timer = null;
+            if (toDispose == null)
                 return;
-            }
-            var td = _topicsSubs[topicId];
-            string subHost = td.GetSubHost();
-            string channelName = td.GetChannel();
-            // obtem a conexao
-            var conn = GetOrCreateRedis(td.Host, subHost);
-            // cria canal
-            var redisChannel = new RedisChannel(
-                td.KeyOrChannel, 
-                (td.Type == "SUB" ? RedisChannel.PatternMode.Literal : RedisChannel.PatternMode.Pattern)
-            );
-            // obtem o objeto de subscription da conexao, se nao existir cria um novo
-            ISubscriber subscriber;
-            if (!_redisSubscriptions.TryGetValue(subHost, out subscriber))
+            try
             {
-                subscriber = conn.GetSubscriber();
-                _redisSubscriptions[subHost] = subscriber;
+                toDispose.Stop();
+                toDispose.Dispose();
             }
-            // adiciona o topico no canal da conexao
-            lock (_channelTopics)
+            catch (Exception ex)
             {
-                if (!_channelTopics.ContainsKey(subHost))
-                    _channelTopics[subHost] = new HashSet<int>();
-                if (_channelTopics[subHost].Contains(topicId))
-                {
-                    // ja existe
-                    if (logger.IsWarnEnabled)
-                        logger.Warn($"Subscribe: TopicId={topicId} already subscribed on subHost={subHost}");
-                    return;
-                }
-                // TODO: verificar se topicId é o melhor caminho ou td.GetChannel(), caso dois topicId gerem o mesmo GetChannel()
-                _channelTopics[subHost].Add(topicId);
+                logger.Debug(ex, "DisposeTimer: error");
             }
-            subscriber.Subscribe(
-                redisChannel,
-                (channel, message) => {
-                    lock (_MessageCounter_lock)
-                    {
-                        MessageCounter++;
-                    }
-                    if (logger.IsTraceEnabled)
-                        logger.Trace($"Subscribe: topicId={topicId}, channel={channel}, message={message}");
-                    // TODO: verificar se topicId é o melhor caminho ou td.GetChannel(), caso dois topicId gerem o mesmo GetChannel()
-                    if (_topicsSubs.TryGetValue(topicId, out TopicData topicData))
-                    {
-                        if (RealTimeUpdates)
-                            topicData.UpdateAndSendToExcel(message);
-                        else
-                            topicData.UpdateOnly(message);
-                    }
-                }
-            );
-            logger.Info($"Subscribe: Subscribed TopicData={td}");
         }
+
         protected override object ConnectData(Topic topic, IList<string> topicInfo, ref bool newValues)
         {
             try
             {
-                if (_topicsSubs.ContainsKey(topic.TopicId))
+                if (_subscribedTopics.TryGetValue(topic.TopicId, out var existingSub))
                 {
-                    if (logger.IsWarnEnabled)
-                        logger.Warn($"ConnectData: TopicId already exists in Subscribe, TopicId={topic.TopicId}");
-                    return _topicsSubs[topic.TopicId].LastValue;
+                    logger.Warn($"ConnectData: TopicId={topic.TopicId} already exists in subscriptions");
+                    return existingSub.LastValue;
                 }
-                else if (_topics.ContainsKey(topic.TopicId))
+                if (_polledTopics.TryGetValue(topic.TopicId, out var existingPoll))
                 {
-                    if (logger.IsWarnEnabled)
-                        logger.Warn($"ConnectData: TopicId already exists in Topics, TopicId={topic.TopicId}");
-                    return _topics[topic.TopicId].LastValue;
+                    logger.Warn($"ConnectData: TopicId={topic.TopicId} already exists in polled topics");
+                    return existingPoll.LastValue;
                 }
-                string param1 = topicInfo.Count > 0 ? topicInfo[0].ToUpper().Trim() : null;
+
+                string command = topicInfo.Count > 0 ? topicInfo[0].ToUpperInvariant().Trim() : null;
                 string param2 = topicInfo.Count > 1 ? topicInfo[1] : null;
                 string param3 = topicInfo.Count > 2 ? topicInfo[2] : null;
                 string param4 = topicInfo.Count > 3 ? topicInfo[3] : null;
-                if (logger.IsInfoEnabled)
-                    logger.Info($"ConnectData: New data request: param1={param1}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
-                bool sub = false;
-                switch (param1){
+                logger.Info($"ConnectData: command={command}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
+
+                TopicData td;
+                switch (command)
+                {
                     case "GET":
                     case "HGETALL":
-                        _topics[topic.TopicId] = new TopicData
-                        {
-                            Type = param1,
-                            KeyOrChannel = param2,
-                            Host = FindServerName(string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3),
-                            Topic = topic
-                        };
+                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        _polledTopics[topic.TopicId] = td;
                         break;
                     case "HGET":
-                        _topics[topic.TopicId] = new TopicData
-                        {
-                            Type = param1,
-                            KeyOrChannel = param2,
-                            Field = param3,
-                            Host = FindServerName(string.IsNullOrWhiteSpace(param4) ? GetDefaultHost() : param4),
-                            Topic = topic
-                        };
+                        td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
+                        _polledTopics[topic.TopicId] = td;
                         break;
-                    case "PSUB":
                     case "SUB":
-                        sub = true;
-                        _topicsSubs[topic.TopicId] = new TopicData
-                        {
-                            Type = param1,
-                            KeyOrChannel = param2,
-                            Host = FindServerName(string.IsNullOrWhiteSpace(param3) ? GetDefaultHost() : param3),
-                            Topic = topic
-                        };
-                        SubscribeTopicId(topic.TopicId);
+                    case "PSUB":
+                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        _subscribedTopics[topic.TopicId] = td;
+                        Subscribe(td);
                         break;
                     default:
-                        throw new Exception($"ConnectData: Unknown parameter1 {param1}, allowed: [GET, HGET, HGETALL, SUB, PSUB]");
+                        throw new Exception($"unknown command '{command}', expected one of [GET, HGET, HGETALL, SUB, PSUB]");
                 }
-                if (logger.IsInfoEnabled)
-                    logger.Info(
-                        $"ConnectData: New data request accepted: " + 
-                        (sub ? _topicsSubs[topic.TopicId].ToString() : _topics[topic.TopicId].ToString())
-                    );
+
+                logger.Info($"ConnectData: accepted {td}");
                 return "(ConnectData)";
             }
             catch (Exception ex)
             {
-                if (logger.IsErrorEnabled)
-                    logger.Error(ex, $"ConnectData: Error: {ex.Message}");
+                logger.Error(ex, "ConnectData: error");
                 return $"#ERROR: ConnectData: {ex.Message}";
             }
         }
@@ -415,235 +301,189 @@ namespace RedisExcel
         {
             try
             {
-                bool ret = _topics.TryGetValue(topic.TopicId, out TopicData td);
-                if (!ret)
-                    ret = _topicsSubs.TryGetValue(topic.TopicId, out td);
-                if (ret){
-                    if (logger.IsInfoEnabled)
-                        logger.Info($"DisconnectData: Removing {topic.TopicId}");
-                    if (td.Type == "SUB" || td.Type == "PSUB")
-                    {
-                        string subHost = td.GetSubHost();
-                        // faz unsubscribe
-                        if (_redisSubscriptions.TryGetValue(subHost, out var sub))
-                        {
-                            var redisChannel = new RedisChannel(
-                                td.KeyOrChannel,
-                                (td.Type == "SUB" ? RedisChannel.PatternMode.Literal : RedisChannel.PatternMode.Pattern)
-                            );
-                            sub.Unsubscribe(redisChannel);
-                            if (logger.IsDebugEnabled)
-                                logger.Debug($"DisconnectData: Redis Unsubscribe TopicData={td}");
-                        }
-                        // remove da lista de canais no subHost
-                        if (_channelTopics.TryGetValue(subHost, out var list))
-                        {
-                            list.Remove(topic.TopicId);
-                            if (list.Count == 0)
-                            {
-                                if (_redisSubscriptions.TryRemove(subHost, out var sub2))
-                                {
-                                    sub2.UnsubscribeAll();
-                                    if (logger.IsDebugEnabled)
-                                        logger.Debug($"DisconnectData: Redis UnsubscribeAll host={td.Host}");
-                                }
-                                _channelTopics.TryRemove(subHost, out _);
-                            }
-                        }
-                        _topicsSubs.Remove(topic.TopicId);
-                    }
-                    else
-                    {
-                        _topics.Remove(topic.TopicId);
-                    }
+                if (_subscribedTopics.TryRemove(topic.TopicId, out var sub))
+                {
+                    sub.Subscription?.Dispose();
+                    sub.Subscription = null;
+                    logger.Info($"DisconnectData: removed subscription {sub}");
+                }
+                else if (_polledTopics.TryRemove(topic.TopicId, out var polled))
+                {
+                    logger.Info($"DisconnectData: removed polled topic {polled}");
                 }
                 else
                 {
-                    if (logger.IsErrorEnabled)
-                        logger.Error($"DisconnectData: Unknown TopicId={topic.TopicId}");
+                    logger.Error($"DisconnectData: unknown TopicId={topic.TopicId}");
                 }
             }
             catch (Exception ex)
             {
-                if (logger.IsErrorEnabled)
-                    logger.Error(ex, $"DisconnectData: Error: {ex.Message}");
-            }
-            return;
-        }
-        private bool CheckAutomaticRealtime(bool goback_realtime=false)
-        {
-            if (ExcelUpdateStyle != ENUMExcelUpdateStyle.Automatic)
-                return false;
-            var oldRealtime = RealTimeUpdates;
-            long counterWas = 0;
-            lock (_MessageCounter_lock)
-            {
-                counterWas = MessageCounter;
-                if (ExcelUpdateStyle == ENUMExcelUpdateStyle.Automatic)
-                {
-                    var curr = (MessageCounter < MessageCounterThreshold || MessageCounterThreshold <= 0);
-                    if (goback_realtime || (!goback_realtime && !curr))
-                        RealTimeUpdates = curr;
-                }
-            }
-            var changed = (ExcelUpdateStyle == ENUMExcelUpdateStyle.Automatic && oldRealtime != RealTimeUpdates);
-            if (changed && logger.IsDebugEnabled)
-                logger.Debug($"CheckAutomaticRealtime: RealTimeUpdates changed, from {oldRealtime} to {RealTimeUpdates}, counterWas={counterWas}/{MessageCounterThreshold}");
-            return changed;
-        }
-        private void TimerElapsedMessageCounter(object sender, System.Timers.ElapsedEventArgs e)
-        {
-            CheckAutomaticRealtime(true);
-            lock (_MessageCounter_lock)
-            {
-                MessageCounter = 0;
+                logger.Error(ex, "DisconnectData: error");
             }
         }
 
-        private void TimerElapsedExcel(object sender, System.Timers.ElapsedEventArgs e)
+        private void Subscribe(TopicData td)
         {
-            CheckAutomaticRealtime();
-            if (RealTimeUpdates)
+            bool pattern = td.Type == "PSUB";
+            long topicId = td.Topic.TopicId;
+            td.Subscription = RedisRuntime.Subscriptions.Subscribe(td.Host, td.KeyOrChannel, pattern, message =>
+            {
+                Interlocked.Increment(ref _messageCount);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={message}");
+                if (_realTimeUpdates)
+                    td.UpdateAndSendToExcel(message);
+                else
+                    td.UpdateOnly(message);
+            });
+            logger.Info($"Subscribe: subscribed {td}");
+        }
+
+        private void OnCounterTick()
+        {
+            UpdateRealtimeMode(allowReenable: true);
+            Interlocked.Exchange(ref _messageCount, 0);
+        }
+
+        private void OnExcelTick()
+        {
+            UpdateRealtimeMode(allowReenable: false);
+            if (_realTimeUpdates)
+                return;
+            if (_polledTopics.IsEmpty && _subscribedTopics.IsEmpty)
                 return;
             if (logger.IsDebugEnabled)
-                logger.Debug($"TimerElapsedExcel: Updating Excel Values, refresh rate={ExcelUpdateRateMS}ms, topics.Count={_topics.Count}, topicsSubs.Count={_topicsSubs.Count}");
-            if (_topics.Count == 0 && _topicsSubs.Count == 0)
-                return;
-            // aqui precisamos pegar os topicos e mandar para o excel
-            foreach (var topic in _topics.Values)
-                topic.SendToExcelIfDirty();
-            foreach (var topic in _topicsSubs.Values)
-                topic.SendToExcelIfDirty();
+                logger.Debug($"OnExcelTick: flushing dirty topics, polled={_polledTopics.Count}, subscribed={_subscribedTopics.Count}");
+            foreach (var td in _polledTopics.Values)
+                td.SendToExcelIfDirty();
+            foreach (var td in _subscribedTopics.Values)
+                td.SendToExcelIfDirty();
         }
-        private void TimerElapsedRedis(object sender, System.Timers.ElapsedEventArgs e)
+
+        /// <summary>
+        /// In Automatic style, turns off real-time updates when the message volume exceeds
+        /// the threshold. allowReenable=true (the 1s tick) also goes back to real-time
+        /// when the volume drops.
+        /// </summary>
+        private void UpdateRealtimeMode(bool allowReenable)
         {
-            CheckAutomaticRealtime();
-            if (logger.IsDebugEnabled)
-                logger.Debug($"TimerElapsedExcel: Fetching Redis Values, refresh rate={RedisUpdateRateMS}ms, topics.Count={_topics.Count}");
-            if (_topics.Count == 0)
+            if (_excelUpdateStyle != ENUMExcelUpdateStyle.Automatic)
                 return;
-            // Separar por tipo para GET múltiplo
-            List<TopicData> otherTopics;
-            if (UseGetMultiple)
-            {
-                var getTopics = new Dictionary<string, List<TopicData>>(); // host -> list of GETs
-                otherTopics = new List<TopicData>();
-                foreach (var td in _topics.Values)
-                {
-                    if (td.Type == "SUB" || td.Type == "PSUB") continue;
 
-                    if (td.Type == "GET")
-                    {
-                        if (!getTopics.ContainsKey(td.Host))
-                            getTopics[td.Host] = new List<TopicData>();
-                        getTopics[td.Host].Add(td);
-                    }
-                    else
-                    {
-                        otherTopics.Add(td);
-                    }
-                }
-                if (logger.IsDebugEnabled)
-                    logger.Debug($"TimerElapsedRedis: Using GETMULTI, otherTopics.Count={otherTopics.Count}, getTopics.Count={getTopics.Count}");
+            long count = Interlocked.Read(ref _messageCount);
+            bool belowThreshold = _messageCounterThreshold <= 0 || count < _messageCounterThreshold;
+            if (!allowReenable && belowThreshold)
+                return;
 
-                // Executar GET múltiplo por host
-                foreach (var kvp in getTopics)
-                {
-                    try
-                    {
-                        var conn = GetOrCreateRedis(kvp.Key, null);
-                        var db = conn.GetDatabase();
+            bool next = belowThreshold;
+            if (next == _realTimeUpdates)
+                return;
+            _realTimeUpdates = next;
+            logger.Debug($"UpdateRealtimeMode: realTimeUpdates={next}, messages={count}/{_messageCounterThreshold}");
+        }
 
-                        var topicsList = kvp.Value;
-                        var keys = topicsList.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
-                        if (logger.IsDebugEnabled)
-                            logger.Debug($"TimerElapsedRedis: GETMULTI host={kvp.Key}, keys=[{string.Join(", ", topicsList.Select(t => t.KeyOrChannel))}]");
-                        var values = db.StringGet(keys);
-
-                        for (int i = 0; i < topicsList.Count; i++)
-                        {
-                            var td = topicsList[i];
-                            string value = (values[i].HasValue ? values[i].ToString() : "(no value)");
-                            lock (_MessageCounter_lock)
-                            {
-                                MessageCounter++;
-                            }
-                            if (logger.IsTraceEnabled)
-                                logger.Trace($"TimerElapsedRedis: [MULTI] host={td.Host}, key={td.KeyOrChannel}, value={value}");
-                            if (RealTimeUpdates)
-                                td.UpdateAndSendToExcel(value);
-                            else
-                                td.UpdateOnly(value);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (logger.IsErrorEnabled)
-                            logger.Error(ex, $"TimerElapsedRedis: Error during GETMULTI for host={kvp.Key}");
-                    }
-                }
-            }
-            else
-            {
-                otherTopics = _topics.Values.ToList();
-                if (logger.IsDebugEnabled)
-                    logger.Debug($"TimerElapsedRedis: Not using GETMULTI, otherTopics.Count={otherTopics.Count}");
-            }
-
-            // Executar os demais tipos (HGET, HGETALL)
-            foreach (var td in otherTopics)
+        private void OnRedisTick()
+        {
+            if (_polledTopics.IsEmpty)
+                return;
+            if (logger.IsDebugEnabled)
+                logger.Debug($"OnRedisTick: polling {_polledTopics.Count} topic(s), rate={_redisUpdateRateMs}ms");
+            foreach (var group in _polledTopics.Values.GroupBy(t => t.Host))
             {
                 try
                 {
-                    var conn = GetOrCreateRedis(td.Host);
-                    var db = conn.GetDatabase();
-                    string valueStr = "";
-                    switch (td.Type)
-                    {
-                        case "GET":
-                            var valueGet = db.StringGet(td.KeyOrChannel);
-                            if (valueGet.HasValue)
-                                valueStr = valueGet.ToString();
-                            else
-                                valueStr = "(no value)";
-                            break;
-                        case "HGET":
-                            var valueHGet = db.HashGet(td.KeyOrChannel, td.Field);
-                            if (valueHGet.HasValue)
-                                valueStr = valueHGet.ToString();
-                            else
-                                valueStr = "(no value)";
-                            break;
-                        case "HGETALL":
-                            var valueHash = db.HashGetAll(td.KeyOrChannel);
-                            if (valueHash.Length > 0)
-                                valueStr = string.Join(",", valueHash.Select(x => $"\"{x.Name}\":\"{x.Value}\""));
-                            else
-                                valueStr = "(no value)";
-                            break;
-                        default:
-                            continue;
-                    }
-                    lock (_MessageCounter_lock)
-                    {
-                        MessageCounter++;
-                    }
-                    if (logger.IsTraceEnabled)
-                        logger.Trace($"TimerElapsedRedis: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={valueStr}");
-                    if (RealTimeUpdates)
-                        td.UpdateAndSendToExcel(valueStr);
-                    else
-                        td.UpdateOnly(valueStr);
+                    PollHost(group.Key, group.ToList());
                 }
                 catch (Exception ex)
                 {
-                    if (logger.IsErrorEnabled)
-                        logger.Error(ex, $"TimerElapsedRedis: Error fetching data for {td.KeyOrChannel}");
+                    logger.Error(ex, $"OnRedisTick: host={group.Key}");
                 }
             }
         }
 
+        private void PollHost(string host, List<TopicData> topics)
+        {
+            var db = RedisRuntime.Connections.GetDatabase(host, RedisPool.RtdData);
+
+            // GET in batch (MGET): one round-trip for all GETs of the host
+            if (_useGetMultiple)
+            {
+                var gets = topics.Where(t => t.Type == "GET").ToList();
+                if (gets.Count > 0)
+                {
+                    var keys = gets.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"PollHost: GETMULTI host={host}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
+                    var values = db.StringGet(keys);
+                    for (int i = 0; i < gets.Count; i++)
+                        Publish(gets[i], values[i].HasValue ? values[i].ToString() : "(no value)");
+                }
+                topics = topics.Where(t => t.Type != "GET").ToList();
+            }
+            if (topics.Count == 0)
+                return;
+
+            // HGET/HGETALL (and GET when UseGetMultiple=false) in a pipeline
+            var batch = db.CreateBatch();
+            var singleTasks = new List<KeyValuePair<TopicData, Task<RedisValue>>>();
+            var hashTasks = new List<KeyValuePair<TopicData, Task<HashEntry[]>>>();
+            foreach (var td in topics)
+            {
+                if (td.Type == "HGET")
+                    singleTasks.Add(new KeyValuePair<TopicData, Task<RedisValue>>(td, batch.HashGetAsync(td.KeyOrChannel, td.Field)));
+                else if (td.Type == "HGETALL")
+                    hashTasks.Add(new KeyValuePair<TopicData, Task<HashEntry[]>>(td, batch.HashGetAllAsync(td.KeyOrChannel)));
+                else if (td.Type == "GET")
+                    singleTasks.Add(new KeyValuePair<TopicData, Task<RedisValue>>(td, batch.StringGetAsync(td.KeyOrChannel)));
+            }
+            batch.Execute();
+            foreach (var pair in singleTasks)
+            {
+                try
+                {
+                    var value = pair.Value.GetAwaiter().GetResult();
+                    Publish(pair.Key, value.HasValue ? value.ToString() : "(no value)");
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"PollHost: {pair.Key.Type} key={pair.Key.KeyOrChannel}, host={host}");
+                }
+            }
+            foreach (var pair in hashTasks)
+            {
+                try
+                {
+                    var entries = pair.Value.GetAwaiter().GetResult();
+                    Publish(pair.Key, FormatHash(entries));
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"PollHost: HGETALL key={pair.Key.KeyOrChannel}, host={host}");
+                }
+            }
+        }
+
+        private void Publish(TopicData td, string value)
+        {
+            Interlocked.Increment(ref _messageCount);
+            if (logger.IsTraceEnabled)
+                logger.Trace($"Publish: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
+            if (_realTimeUpdates)
+                td.UpdateAndSendToExcel(value);
+            else
+                td.UpdateOnly(value);
+        }
+
+        /// <summary>HGETALL as a valid JSON object: {"field":"value",...}.</summary>
+        private static string FormatHash(HashEntry[] entries)
+        {
+            if (entries == null || entries.Length == 0)
+                return "(no value)";
+            return "{" + string.Join(",", entries.Select(e =>
+                $"{JsonConvert.ToString(e.Name.ToString())}:{JsonConvert.ToString(e.Value.ToString())}")) + "}";
+        }
     }
+
     public static class RedisRtdStatus
     {
         [ExcelFunction(Description = "Returns the number of active Redis connections.", IsVolatile = true)]
@@ -693,6 +533,7 @@ namespace RedisExcel
         {
             return RedisRtd.IsRealTimeEnabled();
         }
+
         [ExcelFunction(Description = "Returns last messages/second counter", IsVolatile = true)]
         public static long RedisRTDMessagesCounter()
         {
