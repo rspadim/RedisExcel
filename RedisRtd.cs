@@ -1,7 +1,6 @@
 ﻿using ExcelDna.ComInterop;
 using ExcelDna.Integration;
 using ExcelDna.Integration.Rtd;
-using Newtonsoft.Json;
 using NLog;
 using StackExchange.Redis;
 using System;
@@ -454,7 +453,7 @@ namespace RedisExcel
                 try
                 {
                     var entries = pair.Value.GetAwaiter().GetResult();
-                    Publish(pair.Key, FormatHash(entries));
+                    Publish(pair.Key, RedisResultFormatter.FormatHash(entries));
                 }
                 catch (Exception ex)
                 {
@@ -472,15 +471,6 @@ namespace RedisExcel
                 td.UpdateAndSendToExcel(value);
             else
                 td.UpdateOnly(value);
-        }
-
-        /// <summary>HGETALL as a valid JSON object: {"field":"value",...}.</summary>
-        private static string FormatHash(HashEntry[] entries)
-        {
-            if (entries == null || entries.Length == 0)
-                return "(no value)";
-            return "{" + string.Join(",", entries.Select(e =>
-                $"{JsonConvert.ToString(e.Name.ToString())}:{JsonConvert.ToString(e.Value.ToString())}")) + "}";
         }
     }
 

@@ -98,7 +98,7 @@ namespace RedisExcel
             }
         }
 
-        private static ConfigRoot Sanitize(ConfigRoot config)
+        internal static ConfigRoot Sanitize(ConfigRoot config)
         {
             config.RTD = config.RTD ?? new RTDConfig();
             config.UDF = config.UDF ?? new ConfigSection();
@@ -111,14 +111,19 @@ namespace RedisExcel
             return config;
         }
 
-        /// <summary>Resolves aliases ("prod", "dev") defined in Servers; a blank host uses the provided default.</summary>
-        public static string ResolveHost(string host, string defaultHost)
+        /// <summary>Pure alias/default resolution (kept internal for unit tests).</summary>
+        internal static string ResolveHostCore(string host, string defaultHost, IDictionary<string, string> servers)
         {
             string candidate = string.IsNullOrWhiteSpace(host) ? defaultHost : host;
-            var servers = Current.Servers;
             if (servers != null && servers.TryGetValue(candidate, out var mapped) && !string.IsNullOrWhiteSpace(mapped))
                 return mapped;
             return candidate;
+        }
+
+        /// <summary>Resolves aliases ("prod", "dev") defined in Servers; a blank host uses the provided default.</summary>
+        public static string ResolveHost(string host, string defaultHost)
+        {
+            return ResolveHostCore(host, defaultHost, Current.Servers);
         }
 
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);

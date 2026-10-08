@@ -144,7 +144,7 @@ namespace RedisExcel
             logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
 
-        private static string MakeKey(string host, string channel, bool pattern)
+        internal static string MakeKey(string host, string channel, bool pattern)
         {
             return $"{host}\u0001{(pattern ? 'P' : 'L')}\u0001{channel}";
         }

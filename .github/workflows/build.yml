@@ -27,6 +27,9 @@ jobs:
           $TAG = "${{ github.ref_name }}"
           msbuild RedisExcel.sln /p:Configuration=Release /p:DefineConstants="GIT_TAG=\\\"$TAG\\\""
 
+      - name: Run unit tests
+        run: dotnet test test/RedisExcel.Tests/RedisExcel.Tests.csproj -c Release
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:

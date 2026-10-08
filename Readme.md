@@ -92,6 +92,16 @@ git clone https://github.com/rspadim/RedisExcel.git
 2. Restore NuGet packages
 3. Build in `Release` mode — `.xll` will be generated in `bin\Release`
 
+### Tests
+
+* Unit tests (no Redis/Excel): `dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release`
+* Smoke tests (Redis only): `dotnet run --project test\SmokeTests -c Release -- "localhost:6379"`
+* Excel end-to-end: `powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1`
+
+See [AGENTS.md](AGENTS.md) and [test/README.md](test/README.md) for details,
+including the Excel automation troubleshooting notes (antivirus/EDR and COM
+registration).
+
 ---
 
 ## 🔎 Excel Examples
