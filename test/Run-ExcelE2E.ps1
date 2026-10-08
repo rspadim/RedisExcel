@@ -61,7 +61,7 @@ powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1
 
 .EXAMPLE
 powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1 `
-    -RedisHost redis.example.com -RealChannel ask.bs.USDCUSDT -SkipClientKill
+    -RedisHost redis.example.com -RealChannel test.redisexcel.real -SkipClientKill
 #>
 #Requires -Version 5.1
 param(
@@ -80,6 +80,7 @@ $ErrorActionPreference = 'Stop'
 $script:Failures = 0
 $script:RedisExe = $null
 $script:RedisPrefix = @()
+$script:RedisArgs = @()
 $script:Excel = $null
 $script:Workbook = $null
 
@@ -88,15 +89,28 @@ function Check([bool]$Condition, [string]$Label) {
     else { Write-Host ("FAIL " + $Label) -ForegroundColor Red; $script:Failures++ }
 }
 
+function Get-RedisEndpoint([string]$ConnectionString) {
+    $first = ($ConnectionString -split ',')[0].Trim()
+    if ($first -match '^(?<host>[^:]+)(:(?<port>\d+))?$') {
+        $port = if ($Matches['port']) { [int]$Matches['port'] } else { 6379 }
+        return @{ Host = $Matches['host']; Port = $port }
+    }
+    throw "Cannot parse the Redis endpoint from '$ConnectionString'"
+}
+
 function Invoke-RedisCli([string[]]$Arguments) {
-    return (& $script:RedisExe @($script:RedisPrefix + $Arguments))
+    return (& $script:RedisExe @($script:RedisPrefix + $script:RedisArgs + $Arguments))
 }
 
 function Resolve-RedisCli {
+    $endpoint = Get-RedisEndpoint $RedisHost
+    $script:RedisArgs = @('-h', $endpoint.Host, '-p', $endpoint.Port)
     if ($RedisCli) {
         $parts = $RedisCli -split '\s+'
         $script:RedisExe = $parts[0]
         $script:RedisPrefix = @($parts | Select-Object -Skip 1)
+        $script:RedisArgs = @()
+        Write-Host ("Custom Redis CLI: -h/-p not added; make sure it targets {0}" -f $RedisHost) -ForegroundColor DarkYellow
         return
     }
     if (Get-Command redis-cli -ErrorAction SilentlyContinue) {
@@ -216,10 +230,14 @@ function Wait-CellNotEmpty($Sheet, [string]$Address, [int]$TimeoutSeconds = 20) 
     $text = ''
     while ((Get-Date) -lt $deadline) {
         $text = Get-CellText $Sheet $Address
-        if (-not [string]::IsNullOrWhiteSpace($text)) { return $true }
+        if (-not [string]::IsNullOrWhiteSpace($text) -and
+            $text -ne '(ConnectData)' -and
+            -not $text.StartsWith('#')) {
+            return $true
+        }
         Start-Sleep -Milliseconds 300
     }
-    Write-Host ("      {0} is still empty after {1}s" -f $Address, $TimeoutSeconds) -ForegroundColor DarkGray
+    Write-Host ("      {0} = '{1}' (empty/placeholder after {2}s)" -f $Address, $text, $TimeoutSeconds) -ForegroundColor DarkGray
     return $false
 }
 
@@ -436,6 +454,7 @@ try {
     }
 }
 finally {
+    try { if ($copy) { Invoke-ExcelAction { $copy.Close($false) } | Out-Null } } catch { }
     try { if ($script:Workbook) { Invoke-ExcelAction { $script:Workbook.Close($false) } | Out-Null } } catch { }
     if (-not $KeepExcelOpen -and $script:Excel -ne $null) {
         try { Invoke-ExcelAction { $script:Excel.Quit() } | Out-Null } catch { }

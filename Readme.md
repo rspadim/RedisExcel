@@ -23,7 +23,7 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 6. The `RedisExcel.json` file can be placed in - [Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
 >
-> * The user folder (`%USERPROFILE%`) - Example: c:\Users\rspadim\RedisExcel.json
+> * The user folder (`%USERPROFILE%`) - Example: %USERPROFILE%\RedisExcel.json
 > * The Excel folder
 > * Or `C:\Windows\RedisExcel.json`
 
@@ -90,7 +90,7 @@ git clone https://github.com/rspadim/RedisExcel.git
 
 1. Open the project in Visual Studio
 2. Restore NuGet packages
-3. Build in `Release` mode — `.xll` will be generated in `bin\Release`
+3. Build in `Release` mode — the `.xll` files are generated in `bin\Release\net48\publish`
 
 ### Tests
 
@@ -130,6 +130,7 @@ You can find other connection string formats in the [StackExchange.Redis configu
 | RedisRTDExcelUpdateInterval | Excel update interval (ms)             | 
 | RedisRTDRedisUpdateInterval | Redis polling interval (ms)            | 
 | RedisRTDRealTimeUpdates     | Is real-time update enabled? (bool)    | 
+| RedisRTDMessagesCounter     | Messages received in the last second   | 
 
 ---
 
@@ -181,6 +182,7 @@ Functions to use directly in Excel cells:
 | RedisUDFTTL / TTLMultiples       | Time-to-live (TTL) for keys      | key / keys\[], optionalHost               |
 | RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
+| RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |

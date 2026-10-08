@@ -2,11 +2,12 @@ name: Build & Release RedisExcel
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
 
 jobs:
-  build-and-release:
+  build:
     runs-on: windows-latest
 
     steps:
@@ -22,15 +23,18 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build RedisExcel (.NET Framework 4.8)
-        run: |
-          $TAG = "${{ github.ref_name }}"
-          msbuild RedisExcel.sln /p:Configuration=Release /p:DefineConstants="GIT_TAG=\\\"$TAG\\\""
-
       - name: Run unit tests
         run: dotnet test test/RedisExcel.Tests/RedisExcel.Tests.csproj -c Release
 
+      - name: Build RedisExcel (.NET Framework 4.8)
+        shell: pwsh
+        run: |
+          $tag = "dev"
+          if ("${{ github.ref_type }}" -eq "tag") { $tag = "${{ github.ref_name }}" }
+          msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=$tag
+
       - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |

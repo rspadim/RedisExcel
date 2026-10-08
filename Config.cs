@@ -75,7 +75,11 @@ namespace RedisExcel
                 }
             }
             logger.Info("AppConfig: no configuration file found, using defaults");
-            return Sanitize(new ConfigRoot());
+            var fallback = Sanitize(new ConfigRoot());
+            // The original no-file fallback used 1000ms for the Excel flush timer;
+            // keep that legacy behavior when no configuration file exists.
+            fallback.RTD.ExcelUpdateRateMs = 1000;
+            return fallback;
         }
 
         private static IEnumerable<string> CandidatePaths()

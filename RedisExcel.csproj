@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <TargetFramework>net48</TargetFramework>
+    <!-- Embedded in the Redis ClientName; the CI overrides it with the release tag. -->
+    <InformationalVersion Condition="'$(InformationalVersion)' == ''">dev</InformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

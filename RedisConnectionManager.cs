@@ -31,9 +31,6 @@ namespace RedisExcel
         private readonly ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> _udfData =
             new ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>>();
 
-        /// <summary>Raised when a subscription connection is restored (channels must be re-subscribed).</summary>
-        public event Action<string> ConnectionRestored;
-
         public int RtdConnectionCount => _rtdData.Count + _rtdSub.Count;
         public int UdfConnectionCount => _udfData.Count;
 
@@ -84,8 +81,6 @@ namespace RedisExcel
             mux.ConnectionRestored += (sender, args) =>
             {
                 logger.Info($"RedisConnect: connection restored ({pool}) host={host}");
-                if (pool == RedisPool.RtdSub)
-                    ConnectionRestored?.Invoke(host);
             };
             return mux;
         }
@@ -118,10 +113,27 @@ namespace RedisExcel
 
     internal static class BuildInfo
     {
-#if GIT_TAG
-        public const string Tag = GIT_TAG;
-#else
-        public const string Tag = "not GITHub";
-#endif
+        /// <summary>
+        /// Release tag embedded by the CI via AssemblyInformationalVersion
+        /// (msbuild /p:InformationalVersion=&lt;tag&gt;). "dev" for local builds.
+        /// </summary>
+        public static string Tag { get; } = ResolveTag();
+
+        private static string ResolveTag()
+        {
+            try
+            {
+                var attribute = Attribute.GetCustomAttribute(
+                    typeof(BuildInfo).Assembly,
+                    typeof(System.Reflection.AssemblyInformationalVersionAttribute))
+                    as System.Reflection.AssemblyInformationalVersionAttribute;
+                var value = attribute?.InformationalVersion;
+                return string.IsNullOrWhiteSpace(value) ? "dev" : value;
+            }
+            catch
+            {
+                return "dev";
+            }
+        }
     }
 }

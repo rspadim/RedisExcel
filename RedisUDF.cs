@@ -98,9 +98,9 @@ namespace RedisExcel
                 {
                     var listener = new ChannelListener { Host = host, Channel = channel };
                     listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channel, pattern: false,
-                        onMessage: msg => _latestMessages[key] = msg);
+                        onMessage: message => _latestMessages[key] = message ?? "");
                     if (!_channelListeners.TryAdd(key, listener))
-                        listener.Token.Dispose(); // outro thread registrou primeiro
+                        listener.Token.Dispose(); // another thread registered first
                 }
                 var response = _latestMessages.TryGetValue(key, out var latest) ? latest : "(null)";
                 if (logger.IsTraceEnabled)
@@ -224,7 +224,8 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                return FailMatrix("RedisUDFPubSubChannelsInfo", ex, $"host={host}");
+                logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={host}");
+                return new object[,] { { "Error", ex.Message } }; // legacy 2-column shape
             }
         }
 

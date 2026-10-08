@@ -42,7 +42,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | --- | --- |
 | `Config.cs` | `AppConfig`: loads `RedisExcel.json` once, safe defaults, host alias resolution. |
 | `RedisConnectionManager.cs` | Single place that creates/caches `ConnectionMultiplexer` per host and pool (`RtdData`/`RtdSub`/`UdfData`). |
-| `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; auto-resubscribe on reconnect. |
+| `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
 | `RedisRtd.cs` | RTD server lifecycle, topic registries, timers, polling; `RedisRtdStatus` functions. |
 | `RedisUDF.cs` | `[ExcelFunction]` implementations; thin wrappers over the managers. |
@@ -56,8 +56,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   server instance.
 - One StackExchange.Redis handler per channel broadcasts to every listener;
   a channel is unsubscribed only when its last listener leaves.
-- StackExchange.Redis does **not** re-subscribe after reconnects;
-  `ConnectionRestored` → `RedisSubscriptionManager.ResubscribeHost` does it.
+- StackExchange.Redis re-subscribes channels automatically after a reconnect;
+  no custom resubscribe code is needed (verified live during the v1.1.0 work).
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; when
   real-time is off (`Automatic` over threshold, or `Timer` style), the Excel
   timer (`ExcelUpdateRateMs`) flushes dirty values.

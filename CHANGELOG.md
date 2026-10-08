@@ -26,8 +26,8 @@
 
 - Connection/subscription handling refactored into `RedisConnectionManager`,
   `RedisSubscriptionManager` and `RedisRuntime` (single connection point,
-  ref-counted channels, automatic re-subscribe on reconnects).
+  ref-counted channels; subscriptions survive reconnects).
 - Polling uses `MGET` for `GET` topics and a pipeline for `HGET`/`HGETALL`.
 - Added unit tests (`test/RedisExcel.Tests`) and an Excel end-to-end test
-  (`test/Run-ExcelE2E.ps1`); smoke tests moved to `test/SmokeTests`.
+  (`test/Run-ExcelE2E.ps1`); smoke tests added under `test/SmokeTests`.
 - All Excel function names, arguments and descriptions are unchanged.

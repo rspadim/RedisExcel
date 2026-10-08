@@ -32,7 +32,14 @@ namespace RedisExcel
                         if (value is ExcelEmpty || value is ExcelMissing || value is ExcelError || value == null)
                             row[j] = null;
                         else if (value is double d)
-                            row[j] = d % 1 == 0 ? (object)(long)d : d;
+                        {
+                            // Excel numbers are doubles; serialize whole numbers as longs,
+                            // but only when the cast cannot overflow.
+                            if (d % 1 == 0 && d >= long.MinValue && d <= long.MaxValue)
+                                row[j] = (long)d;
+                            else
+                                row[j] = d;
+                        }
                         else
                             row[j] = value;
                     }
@@ -58,7 +65,7 @@ namespace RedisExcel
             [ExcelArgument(Description = "JSON string to convert to Excel matrix")] string json,
             [ExcelArgument(Description = "Value to insert for nulls (default is empty string)")] object nullValue = null)
         {
-            object fill = nullValue ?? "";
+            object fill = nullValue == null || nullValue is ExcelMissing || nullValue is ExcelEmpty ? "" : nullValue;
             try
             {
                 var token = JsonConvert.DeserializeObject<JToken>(json);
@@ -66,9 +73,7 @@ namespace RedisExcel
                     return JArrayToMatrix(array, fill);
                 if (token is JObject obj)
                     return JObjectToMatrix(obj, fill);
-                if (token == null || token.Type == JTokenType.Null)
-                    return new object[,] { { fill } };
-                return new object[,] { { token } };
+                return new object[,] { { JTokenToValue(token, fill) } };
             }
             catch (Exception ex)
             {
@@ -77,28 +82,43 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>
+        /// Converts a JToken to a CLR value ExcelDna can marshal into a cell
+        /// (long/double/bool/string). Containers are returned as compact JSON text.
+        /// </summary>
+        private static object JTokenToValue(JToken token, object fill)
+        {
+            if (token == null || token.Type == JTokenType.Null)
+                return fill;
+            if (token is JValue value)
+                return value.Value ?? fill;
+            return token.ToString(Formatting.None);
+        }
+
         private static object[,] JArrayToMatrix(JArray array, object fill)
         {
             // Matrix: [[1,2],[3,4]]
             if (array.Count > 0 && array.All(x => x is JArray))
             {
-                var rows = array.Select(x => x.ToObject<List<object>>() ?? new List<object>()).ToList();
-                int cols = rows.Count == 0 ? 0 : rows.Max(r => r.Count);
+                var rows = array.Cast<JArray>().ToList();
+                int cols = rows.Max(r => r.Count);
                 var result = new object[rows.Count, cols];
                 for (int i = 0; i < rows.Count; i++)
                 {
                     for (int j = 0; j < cols; j++)
-                        result[i, j] = j < rows[i].Count ? rows[i][j] ?? fill : fill;
+                        result[i, j] = j < rows[i].Count ? JTokenToValue(rows[i][j], fill) : fill;
                 }
                 if (logger.IsDebugEnabled)
                     logger.Debug($"RedisUDFJSONToMatrix: array of arrays [{rows.Count}, {cols}]");
                 return result;
             }
 
-            // Flat vector: [1,2,3,4]
+            // Flat vector: [1,2,3,4]. Empty [] returns a single fill cell.
+            if (array.Count == 0)
+                return new object[,] { { fill } };
             var flat = new object[1, array.Count];
             for (int i = 0; i < array.Count; i++)
-                flat[0, i] = array[i].Type == JTokenType.Null ? fill : (object)array[i];
+                flat[0, i] = JTokenToValue(array[i], fill);
             if (logger.IsDebugEnabled)
                 logger.Debug($"RedisUDFJSONToMatrix: flat array [{array.Count}]");
             return flat;
@@ -123,11 +143,11 @@ namespace RedisExcel
                 if (value is JArray arr)
                 {
                     for (int i = 0; i < arr.Count; i++)
-                        result[i + 1, j] = arr[i].Type == JTokenType.Null ? fill : (object)arr[i];
+                        result[i + 1, j] = JTokenToValue(arr[i], fill);
                 }
                 else
                 {
-                    result[1, j] = value == null || value.Type == JTokenType.Null ? fill : (object)value;
+                    result[1, j] = JTokenToValue(value, fill);
                 }
             }
             if (logger.IsDebugEnabled)

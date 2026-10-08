@@ -60,7 +60,10 @@ namespace RedisExcel
                 lock (state.Sync)
                 {
                     if (state.Disposed)
+                    {
+                        Thread.Yield();
                         continue;
+                    }
                     id = Interlocked.Increment(ref _nextListenerId);
                     state.Listeners[id] = onMessage;
                     if (state.Listeners.Count == 1)
@@ -71,7 +74,11 @@ namespace RedisExcel
                         }
                         catch
                         {
+                            // StackExchange.Redis may have registered the handler before
+                            // throwing; undo everything so no zombie subscription is left.
                             state.Listeners.TryRemove(id, out _);
+                            state.Unsubscribe();
+                            _channels.TryRemove(key, out _);
                             throw;
                         }
                     }
@@ -80,31 +87,6 @@ namespace RedisExcel
             }
             logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, listeners={state.Listeners.Count}");
             return new Registration(this, state, id);
-        }
-
-        /// <summary>Re-subscribes every channel of a host after a reconnect (StackExchange.Redis does not do this on its own).</summary>
-        public void ResubscribeHost(string host)
-        {
-            foreach (var state in _channels.Values)
-            {
-                if (!string.Equals(state.Host, host, StringComparison.Ordinal))
-                    continue;
-                try
-                {
-                    lock (state.Sync)
-                    {
-                        if (state.Disposed)
-                            continue;
-                        state.Unsubscribe();
-                        state.Subscribe(_connections);
-                    }
-                    logger.Info($"ResubscribeHost: re-subscribed host={host}, channel={state.Name}, pattern={state.Pattern}");
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"ResubscribeHost: failed host={host}, channel={state.Name}, pattern={state.Pattern}");
-                }
-            }
         }
 
         public void Dispose()
