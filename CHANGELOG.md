@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.1.1 (unreleased)
+
+### Added
+
+- Non-blocking update check against GitHub releases, enabled by default and
+  controlled by the `UpdateCheck.enabled` setting in `RedisExcel.json`.
+  Exposed through the `RedisUDFUpdateAvailable` and `RedisUDFUpdateInfo`
+  worksheet functions; it runs in a background task and never blocks Excel.
+
 ## v1.1.0
 
 ### Fixed

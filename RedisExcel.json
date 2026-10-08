@@ -15,5 +15,8 @@
   "Servers": {
     "prod": "localhost:6379,defaultDatabase=0",
     "dev": "localhost:6379,defaultDatabase=1"
+  },
+  "UpdateCheck": {
+    "enabled": true
   }
 }

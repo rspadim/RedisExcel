@@ -19,6 +19,7 @@ namespace RedisExcel
         public void AutoOpen()
         {
             ComServer.DllRegisterServer();
+            UpdateCheck.Start();
         }
 
         public void AutoClose()

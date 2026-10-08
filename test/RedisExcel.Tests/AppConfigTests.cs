@@ -89,5 +89,19 @@ namespace RedisExcel.Tests
 
             Assert.Equal(expected, AppConfig.ResolveHostCore(host, defaultHost, servers));
         }
+
+        [Fact]
+        public void Sanitize_UpdateCheckDefaultsToEnabled()
+        {
+            var sanitized = AppConfig.Sanitize(new ConfigRoot());
+            Assert.NotNull(sanitized.UpdateCheck);
+            Assert.True(sanitized.UpdateCheck.enabled);
+
+            var disabled = AppConfig.Sanitize(new ConfigRoot
+            {
+                UpdateCheck = new UpdateCheckConfig { enabled = false }
+            });
+            Assert.False(disabled.UpdateCheck.enabled);
+        }
     }
 }

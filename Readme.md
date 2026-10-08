@@ -183,6 +183,7 @@ Functions to use directly in Excel cells:
 | RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
 | RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
+| RedisUDFUpdateAvailable/UpdateInfo | Excel update check (GitHub releases) | none                                 |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
@@ -239,6 +240,9 @@ Functions to use directly in Excel cells:
   "Servers": {
     "prod": "localhost:6379,defaultDatabase=0",
     "dev": "localhost:6379,defaultDatabase=1"
+  },
+  "UpdateCheck": {
+    "enabled": true
   }
 }
 ```
