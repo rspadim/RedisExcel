@@ -67,9 +67,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   instances.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
-- A `SUB`/`PSUB` RTD topic that fails to subscribe at connect time stays
-  `#ERROR` until the formula is edited; polled commands (`GET`/`HGET`/`HGETALL`)
-  retry on every tick.
+- A `SUB`/`PSUB` RTD topic that fails to subscribe at connect time shows
+  `#ERROR` and is retried automatically on the next tick (v1.2.7); polled
+  commands (`GET`/`HGET`/`HGETALL`) retry on every tick.
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
   timer (`ExcelUpdateRateMs`) flushes dirty values. Real-time updates are
   coalesced per topic by default (`CoalesceRealtimeUpdates`, on): the latest
@@ -79,7 +79,22 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   overlaps the next one. The `Automatic` threshold machinery is kept for
   status/config compatibility, while delivery is coalesced by default
   (`CoalesceRealtimeUpdates`).
-- `HGETALL` output is valid JSON: `{"field":"value",...}`.
+- `HGETALL` output is valid JSON: `{"field":"value",...}`; a missing hash
+  returns `{}` (not a sentinel string).
+- `RedisUDFChannelPublishIfChanged` dedup: the last payload is remembered per
+  host/channel only after it was actually delivered, and the marker is cleared
+  when listeners subscribe or unsubscribe, so a late subscriber is never
+  starved by a publish it did not see. The cache is safe under concurrent
+  recalculation and LRU-capped by `PublishDedupCacheSize` (default 10000).
+- Every worksheet function is volatile by design: it re-executes on every
+  recalculation (F9/edit). Write functions (`Set`, `SetEx`, `Expire`, `Incr`,
+  `IncrBy`, `Rename`, pushes, publishes, ...) really run each time - document
+  manual calculation (Formulas > Calculation Options > Manual) for sheets
+  where that matters.
+- Connection counters report live multiplexers only (closed/failed entries are
+  not counted), and shutdown no longer blocks on closing connections.
+- `RedisRuntime.ResetAfterAddInReload` supports a same-process add-in reload
+  without reusing the previous managers.
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written
   to Redis always use the invariant culture (decimal point), regardless of the
   Excel locale.
@@ -96,8 +111,10 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   HGETALL hashes are compared field-by-field and skipped too. `RedisValue`
   equality normalizes numeric formatting (e.g. `"1.00"` equals `"1"`), so
   formatting-only changes are treated as duplicates.
-- Config file is searched in: user profile, Excel folder, `C:\Windows`
-  (first found wins).
+- The config file is read once per Excel process (restart Excel after editing
+  it) and searched in: user profile, Excel folder, `C:\Windows` (first existing
+  wins). A malformed first-existing file uses safe defaults instead of falling
+  through to a lower-priority file.
 
 ## Build
 
@@ -122,10 +139,11 @@ Redis `ClientName` for diagnostics (shown as `dev` for local builds).
 dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
-Covers: `ExcelJson` conversions, `AppConfig.Sanitize`/`ResolveHostCore`,
-subscription keys, HGETALL formatting, the `TickGate` reentrancy helper,
-`UpdateCheckTests` (`IsNewer`/`NormalizeTag`) and `RedisValueLocaleTests`
-(de-DE culture).
+Covers: `ExcelJson` conversions, `AppConfig` load/sanitize and
+`ResolveHostCore`, the `RedisConnectionManager`/`RedisSubscriptionManager`
+behavior, the `PublishIfChanged` dedup LRU cache, subscription keys, HGETALL
+formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
+(`IsNewer`/`NormalizeTag`) and `RedisValueLocaleTests` (de-DE culture).
 
 The unit, smoke and load test projects compile the production sources directly
 (linked `Compile` items), so a new production `.cs` needed by tests must be
@@ -228,6 +246,6 @@ These cost real debugging time — read before writing automation.
 
 ## Release
 
-Push a `v*` tag; the CI workflow builds and publishes the packed XLLs plus
-`NLog.config` and `RedisExcel.json` as release assets. Current release:
-`v1.2.6`; next planned version: TBD.
+Push an annotated `v*` tag (from v1.2.7 on); the CI workflow builds and
+publishes the packed XLLs plus `NLog.config` and `RedisExcel.json` as release
+assets. Current release: `v1.2.6`; `v1.2.7` is in progress (unreleased).

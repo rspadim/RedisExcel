@@ -129,7 +129,7 @@ You can find other connection string formats in the [StackExchange.Redis configu
 
 | Function                    | Description                            | 
 | --------------------------- | -------------------------------------- | 
-| RedisRTDConnectionCount     | Number of active Redis connections (RTD only; UDF excluded) | 
+| RedisRTDConnectionCount     | Number of live Redis connections (RTD only; UDF excluded) | 
 | RedisRTDSubscriptionCount   | Active subscriptions (RTD only; UDF excluded) | 
 | RedisRTDTopicCount          | Total number of RTD topics registered  | 
 | RedisRTDChannelCount        | Distinct subscribed channels (RTD only) | 
@@ -137,7 +137,7 @@ You can find other connection string formats in the [StackExchange.Redis configu
 | RedisRTDExcelUpdateInterval | Excel update interval (ms)             | 
 | RedisRTDRedisUpdateInterval | Redis polling interval (ms)            | 
 | RedisRTDRealTimeUpdates     | Is real-time update enabled? (bool)    | 
-| RedisRTDMessagesCounter     | Messages received in the last second   | 
+| RedisRTDMessagesCounter     | Messages received in the last full second | 
 
 ---
 
@@ -168,15 +168,32 @@ Each parameter has a specific meaning depending on the RTD command.
 | ------- | -------------------------------- | -------------------- |
 | GET     | Polls a Redis key                | key, \[host]         |
 | HGET    | Polls a field in a Redis hash    | hash, field, \[host] |
-| HGETALL | Polls all fields in a Redis hash | hash, \[host]        |
+| HGETALL | Polls all fields in a Redis hash; a missing hash returns `{}` | hash, \[host]        |
 | SUB     | Subscribes to a Redis channel    | channel, \[host]     |
 | PSUB    | Subscribes to a Redis pattern    | pattern, \[host]     |
 
 > All commands support specifying either a full connection string or a named host defined in the `RedisExcel.json` file.
 
+> A `SUB`/`PSUB` topic that cannot subscribe at connect time shows `#ERROR`
+> and is retried automatically on the next tick (v1.2.7); polled commands
+> (`GET`/`HGET`/`HGETALL`) retry on every tick. Editing the formula re-registers
+> the topic as well.
+
 ## 💡 Available UDF Functions
 
 Functions to use directly in Excel cells:
+
+> **⚠️ Volatile by design:** every RedisExcel worksheet function is volatile,
+> so it recalculates on every edit and on `F9`. That is what keeps read
+> functions fresh - and it means write functions re-execute on every
+> recalculation too: `Set`, `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Expire`,
+> `Incr`, `IncrBy`, `Rename`, `Del`, hash/list/set writers, channel publishes
+> and unsubscribe all run again each time. For example, `=RedisUDFIncr("k")`
+> increments the counter every time the sheet recalculates, not once. Use
+> manual calculation (Formulas > Calculation Options > Manual) when that
+> matters, or keep write calls on a sheet you update deliberately.
+> `RedisUDFChannelPublishIfChanged` guards itself: it only publishes when the
+> payload changed since the last delivery.
 
 | Function                         | Description                      | Parameters                                |
 | -------------------------------- | -------------------------------- | ----------------------------------------- |
@@ -202,18 +219,27 @@ Functions to use directly in Excel cells:
 | RedisUDFSetMembers               | Get all members of a set         | key, optionalHost                         |
 | RedisUDFSetRemove                | Remove a set member              | key, value, optionalHost                  |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
-| RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
+| RedisUDFChannelLatest            | Latest Pub/Sub message (subscribes on first use) | channel, optionalHost       |
+| RedisUDFChannelUnsubscribe       | Unsubscribe a channel (host argument added in v1.2.6) | channel, optionalHost   |
 | RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
-| RedisUDFKeys                     | List keys by pattern (SCAN)      | pattern, optionalHost, pageSize           |
-| RedisUDFConnectionCount          | Number of active UDF connections | None                                      |
+| RedisUDFKeys                     | List keys by pattern (SCAN); invalid pageSize values fall back to the default | pattern, optionalHost, pageSize |
+| RedisUDFConnectionCount          | Number of live UDF connections   | None                                      |
 
 > **Cell values:** date/time cells are stored as their Excel serial number (use
 > `TEXT()` for a date string) and boolean cells as `true`/`false` (the JSON
 > path does the same).
+
+> **Missing values:** the sentinel differs per function family. `RedisUDFGet`,
+> `RedisUDFHashGet` and the list pops return an empty cell; `RedisUDFGetMultiple`
+> and `RedisUDFChannelLatest` return `(null)`; RTD `GET`/`HGET` return
+> `(no value)` while RTD `HGETALL` returns `{}` for a missing hash;
+> `RedisUDFHashGetAll`, `RedisUDFKeys`, `RedisUDFSetMembers` and
+> `RedisUDFListRange` return an empty cell when there is nothing to show;
+> `RedisUDFTTL` returns `-1` and `RedisUDFExists` returns `0` for a missing key.
 
 ---
 
@@ -268,9 +294,18 @@ Functions to use directly in Excel cells:
   },
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
-  "CoalesceRealtimeUpdates": true
+  "CoalesceRealtimeUpdates": true,
+  "PublishDedupCacheSize": 10000
 }
 ```
+
+> **Config notes:** the file is read once per Excel process - restart Excel
+> after editing it. The first existing file wins (user profile, Excel folder,
+> `C:\Windows`); if that file is malformed, safe defaults are used instead of
+> falling through to a lower-priority file. `PublishDedupCacheSize`
+> (default `10000`) caps the LRU cache used by
+> `RedisUDFChannelPublishIfChanged` to remember the last payload published per
+> host/channel.
 
 ---
 

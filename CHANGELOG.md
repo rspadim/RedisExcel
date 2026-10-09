@@ -1,5 +1,43 @@
 # Changelog
 
+## v1.2.7 (unreleased)
+
+### Fixed
+
+- `RedisUDFChannelPublishIfChanged` only remembers a payload that was actually
+  delivered and clears the marker when listeners subscribe or unsubscribe, so a
+  late subscriber is no longer starved by a publish it never saw; the cache is
+  safe under concurrent recalculation and LRU-capped (`PublishDedupCacheSize`).
+- Empty/whitespace keys are valid Redis names in the batch writers (`SetKV`,
+  `SetKVPair`, `HashSetMultiple`) instead of being silently dropped; a missing
+  required key/field returns a friendly `Error:` cell.
+- RTD: an invalid host is surfaced in the cell instead of being hidden; a
+  failed `SUB`/`PSUB` subscribe is retried automatically on the next tick; a
+  missing hash returns `{}` from `HGETALL` (was `(no value)`);
+  `RedisRTDMessagesCounter` reports the last full second; extra topic arguments
+  are rejected; polling runs per host in parallel; `HGETALL` comparison is O(n)
+  and compares field names byte-exact; log messages no longer embed payloads.
+- `RedisConnectionManager` shutdown no longer blocks on closing connections and
+  the connection counters report live multiplexers only.
+- The update check retries sooner after a failed attempt instead of waiting the
+  full refresh window.
+- `ExcelJson`: a leading UTF-8 BOM is tolerated, JSON nesting depth is capped
+  at 256, oversized matrices are rejected, and JSON date values are emitted as
+  ISO-8601 text.
+
+### Changed
+
+- New config key `PublishDedupCacheSize` (default 10000): LRU cap for the
+  `PublishIfChanged` publish-dedup cache.
+- `RedisRuntime.ResetAfterAddInReload` resets the process-wide managers for a
+  same-process add-in reload.
+- Release tags are annotated from v1.2.7 on (the `v*` tag trigger is unchanged).
+
+### Tests
+
+- Unit coverage for the connection/subscription managers, config loading and
+  the publish-dedup LRU cache, plus new E2E regression rows.
+
 ## v1.2.6
 
 ### Fixed

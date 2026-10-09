@@ -11,6 +11,9 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 
 The test project compiles the production sources directly (no add-in build), so
 a new production file used by the tests must be added to its `Compile` list.
+Coverage includes the JSON conversions, config load/sanitize, the
+connection/subscription managers, the publish-dedup LRU cache, `TickGate` and
+the update-check helpers.
 
 ## 2. Smoke tests (requires Redis, no Excel)
 
@@ -32,10 +35,11 @@ save path and the personal document metadata are removed. For remote hosts the
 workbook goes to `%TEMP%` and the destructive `CLIENT KILL` step is skipped
 automatically.
 
-Useful parameters: `-RedisHost`, `-KeyPrefix`, `-RealChannel`, `-RealPattern`,
-`-SkipClientKill`, `-RedisCli`, `-KeepExcelOpen`. Supplying a custom
-`-RedisCli` (e.g. `docker exec my-redis redis-cli`) disables the automatic
-`CLIENT KILL` step.
+Useful parameters: `-RepoRoot <path>` (repository root; defaults to the
+script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,
+`-RealChannel`, `-RealPattern`, `-SkipClientKill`, `-RedisCli`,
+`-KeepExcelOpen`. Supplying a custom `-RedisCli` (e.g.
+`docker exec my-redis redis-cli`) disables the automatic `CLIENT KILL` step.
 
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that

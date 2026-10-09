@@ -6,11 +6,14 @@ on:
     tags: [ 'v*' ]
   pull_request:
 
+# Least privilege by default: the build job only reads the repository.
+# Only the release job below may write to the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
@@ -41,15 +44,46 @@ jobs:
           if ("${{ github.ref_type }}" -eq "tag") { $tag = "${{ github.ref_name }}" }
           msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=$tag
 
-      - name: Create GitHub Release
+      # Hand the release assets to the release job. The artifact keeps the
+      # paths relative to the repository root (bin/... plus the two config
+      # files), which the release job references below.
+      - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v3
+        uses: actions/upload-artifact@v7
         with:
-          files: |
+          name: release-assets
+          path: |
             bin/Release/net48/publish/RedisExcel.dll
             bin/Release/net48/publish/RedisExcel-packed.xll
             bin/Release/net48/publish/RedisExcel64-packed.xll
             NLog.config
             RedisExcel.json
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v8
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          # Tags with a suffix (e.g. v1.2.7-rc1) publish as prerelease.
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            release-assets/bin/Release/net48/publish/RedisExcel.dll
+            release-assets/bin/Release/net48/publish/RedisExcel-packed.xll
+            release-assets/bin/Release/net48/publish/RedisExcel64-packed.xll
+            release-assets/NLog.config
+            release-assets/RedisExcel.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

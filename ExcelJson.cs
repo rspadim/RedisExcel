@@ -13,6 +13,11 @@ namespace RedisExcel
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
 
+        // Excel worksheet limits: a result matrix larger than this cannot be
+        // sized into cells and would only cost memory before failing.
+        private const int MaxExcelRows = 1048576;
+        private const int MaxExcelColumns = 16384;
+
         [ExcelFunction(Description = "Converts a 2D Excel matrix to a compact JSON array of arrays.")]
         public static string RedisUDFMatrixToJSON(
             [ExcelArgument(Description = "2D Excel range to convert")] object[,] range)
@@ -53,7 +58,10 @@ namespace RedisExcel
                 var settings = new JsonSerializerSettings
                 {
                     NullValueHandling = NullValueHandling.Include,
-                    Formatting = Formatting.None
+                    Formatting = Formatting.None,
+                    // Values are primitives nested two levels deep; the explicit
+                    // ceiling keeps both serializer settings symmetric.
+                    MaxDepth = 256
                 };
                 return JsonConvert.SerializeObject(array, settings);
             }
@@ -87,11 +95,17 @@ namespace RedisExcel
                 // "Error: ..." cell instead of reaching Excel raw.
                 if (jsonText == null)
                     return new object[,] { { fill } };
+                // Pasted JSON often carries a UTF-8 BOM (U+FEFF); the parser
+                // would fail on the invisible leading character, so strip it.
+                jsonText = jsonText.TrimStart('\uFEFF');
                 var token = JsonConvert.DeserializeObject<JToken>(jsonText, new JsonSerializerSettings
                 {
                     // Keep date-like strings as text so cells receive the original
                     // JSON literal instead of a DateTime.
-                    DateParseHandling = DateParseHandling.None
+                    DateParseHandling = DateParseHandling.None,
+                    // The default is 64, which rejects moderately deep payloads;
+                    // 256 raises the ceiling while still guarding recursion.
+                    MaxDepth = 256
                 });
                 if (token is JArray array)
                     return JArrayToMatrix(array, fill);
@@ -150,6 +164,7 @@ namespace RedisExcel
                 // Excel cannot size; return a single fill cell instead.
                 if (cols == 0)
                     return new object[,] { { fill } };
+                EnsureMatrixFitsExcel(rows.Count, cols);
                 var result = new object[rows.Count, cols];
                 for (int i = 0; i < rows.Count; i++)
                 {
@@ -164,6 +179,7 @@ namespace RedisExcel
             // Flat vector: [1,2,3,4]. Empty [] returns a single fill cell.
             if (array.Count == 0)
                 return new object[,] { { fill } };
+            EnsureMatrixFitsExcel(1, array.Count);
             var flat = new object[1, array.Count];
             for (int i = 0; i < array.Count; i++)
                 flat[0, i] = JTokenToValue(array[i], fill);
@@ -179,6 +195,7 @@ namespace RedisExcel
                 return new object[,] { { fill } };
 
             int rows = obj.Properties().Max(p => p.Value is JArray ja ? ja.Count : 1);
+            EnsureMatrixFitsExcel(rows + 1, keys.Count);
             var result = new object[rows + 1, keys.Count];
             for (int j = 0; j < keys.Count; j++)
             {
@@ -201,6 +218,17 @@ namespace RedisExcel
             if (logger.IsDebugEnabled)
                 logger.Debug($"RedisUDFJSONToMatrix: object [{rows + 1}, {keys.Count}]");
             return result;
+        }
+
+        /// <summary>
+        /// Rejects result matrices that cannot fit an Excel worksheet before the
+        /// matrix is allocated, so the cell shows an "Error: ..." value instead
+        /// of a huge allocation.
+        /// </summary>
+        private static void EnsureMatrixFitsExcel(int rows, int columns)
+        {
+            if (rows > MaxExcelRows || columns > MaxExcelColumns)
+                throw new ArgumentException("JSON is too large for an Excel sheet");
         }
     }
 }

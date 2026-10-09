@@ -21,6 +21,13 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MatrixToJSON_BooleanStaysLowercase()
+        {
+            // Pins the documented true/false casing against a ToString refactor.
+            Assert.Equal("[[true]]", ExcelJson.RedisUDFMatrixToJSON(new object[,] { { true } }));
+        }
+
+        [Fact]
         public void MatrixToJSON_HugeDoubleIsNotCastToLong()
         {
             var json = ExcelJson.RedisUDFMatrixToJSON(new object[,] { { 1e19 } });
@@ -64,6 +71,53 @@ namespace RedisExcel.Tests
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[\"2026-10-09T12:00:00Z\"]", "");
             Assert.Equal("2026-10-09T12:00:00Z", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_LeadingBomIsIgnored()
+        {
+            // Pasted JSON often carries a UTF-8 BOM (U+FEFF); it must not fail
+            // the parse with "Unexpected character".
+            var result = ExcelJson.RedisUDFJSONToMatrix("\uFEFF[1,2]", "");
+            Assert.Equal(1, result.GetLength(0));
+            Assert.Equal(2, result.GetLength(1));
+            Assert.Equal(1L, result[0, 0]);
+            Assert.Equal(2L, result[0, 1]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_ModeratelyDeepJsonIsAccepted()
+        {
+            // The Newtonsoft default MaxDepth is 64; the raised ceiling (256)
+            // must accept ~100 nested arrays instead of returning an error cell.
+            const int depth = 100;
+            string deep = new string('[', depth) + "1" + new string(']', depth);
+            // Object values that are not arrays are kept as compact JSON text,
+            // so this pins the exact round-trip of a deeply nested container.
+            string nested = "{\"b\":" + deep + "}";
+            var result = ExcelJson.RedisUDFJSONToMatrix("{\"a\":" + nested + "}", "");
+            Assert.Equal(2, result.GetLength(0));
+            Assert.Equal(1, result.GetLength(1));
+            Assert.Equal("a", result[0, 0]);
+            Assert.Equal(nested, result[1, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_ObjectWithTooManyColumnsReturnsError()
+        {
+            // 20000 keys exceed the 16384 Excel column limit; the result must be
+            // rejected before the matrix is allocated, not built and discarded.
+            var builder = new System.Text.StringBuilder("{");
+            for (int i = 0; i < 20000; i++)
+            {
+                if (i > 0)
+                    builder.Append(',');
+                builder.Append("\"k").Append(i).Append("\":").Append(i);
+            }
+            builder.Append('}');
+
+            var result = ExcelJson.RedisUDFJSONToMatrix(builder.ToString(), "");
+            Assert.Equal("Error: JSON is too large for an Excel sheet", result[0, 0]);
         }
 
         [Fact]

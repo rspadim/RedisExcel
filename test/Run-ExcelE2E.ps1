@@ -433,7 +433,11 @@ try {
         # suppressed ("No change"), so the two calls in this formula differ.
         @{ Row = 44; Func = 'PublishIfChanged'; Fx = '=RedisUDFChannelPublishIfChanged("{1}.rtd2","same","{0}")' -f $h, $kp; Expected = 'No change' },
         # Regression (v1.2.6): blank channels are rejected with a clear Error cell.
-        @{ Row = 45; Func = 'Unsubscribe blank channel'; Fx = '=RedisUDFChannelUnsubscribe("   ")'; Expected = $null }
+        @{ Row = 45; Func = 'Unsubscribe blank channel'; Fx = '=RedisUDFChannelUnsubscribe("   ")'; Expected = $null },
+        # Pair-range positive layout (v1.2.7): a 2x2 range is read row by row
+        # (F2:G3 = 1/linha1;2/linha2 -> fields "1"="linha1" and "2"="linha2").
+        @{ Row = 46; Func = 'HashSetMultiple pairs'; Fx = '=RedisUDFHashSetMultiple("{1}.pairs",$F$2:$G$3,"{0}")' -f $h, $kp; Expected = $null },
+        @{ Row = 47; Func = 'HashGet pairs'; Fx = '=RedisUDFHashGet("{1}.pairs","1","{0}")' -f $h, $kp; Expected = 'linha1' }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -467,7 +471,9 @@ try {
         # #ERROR without aborting the polling of the other topics of the host;
         # empty/whitespace keys are valid Redis names and must keep working.
         @{ Row = 20; Func = 'GET missing key';     Fx = '=RTD("RedisRtd",,"GET")';                                     Expected = $null },
-        @{ Row = 21; Func = 'GET whitespace key';  Fx = '=RTD("RedisRtd",,"GET"," ","{0}")' -f $h;                     Expected = 'ws_key_value' }
+        @{ Row = 21; Func = 'GET whitespace key';  Fx = '=RTD("RedisRtd",,"GET"," ","{0}")' -f $h;                     Expected = 'ws_key_value' },
+        # Regression (v1.2.7): a missing hash is valid empty JSON, not a sentinel.
+        @{ Row = 22; Func = 'HGETALL missing hash'; Fx = '=RTD("RedisRtd",,"HGETALL","{1}.missinghash","{0}")' -f $h, $kp; Expected = $null }
     )
     foreach ($item in $rtdItems) {
         Set-Cell $rtd $item.Row 1 $item.Func
@@ -498,6 +504,7 @@ try {
     Check (Wait-CellText $udf 'B9' '2')                      'UDF JSONToMatrix index [2,1] is 2'
     Check (Wait-CellText $udf 'B10' 'OK')                    'UDF HashSet returns OK'
     Check (Wait-CellText $udf 'B11' 'valor1')                'UDF HashGet returns the value'
+    Check (Wait-CellText $udf 'B12' '1 readers(s)')          'UDF ChannelPublish reports readers'
     Check (Wait-CellText $udf 'B13' 'ola_mundo')             'UDF ChannelLatest received the published message'
     Check (Wait-CellNumberMin $udf 'B14' 1)                  'UDF ConnectionCount >= 1'
     Check (Wait-CellText $udf 'B15' '1')                     'UDF ExistsMultiples (pipelined) first key exists'
@@ -539,12 +546,13 @@ try {
     Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
     Check (Wait-CellText $udf 'B42' 'linha1')                 'UDF GetMultiple flattens a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'
-    Check (Wait-CellText $udf 'B44' 'No change')              'UDF PublishIfChanged suppresses an unchanged payload on recalculation'
     Check (Wait-CellRegex $udf 'B45' '^Error')                'UDF ChannelUnsubscribe rejects a blank channel'
+    Check (Wait-CellText $udf 'B47' 'linha1')                 'UDF HashSetMultiple pairs a 2x2 range row-by-row'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'
     Check (Wait-CellText $rtd 'B6' '{"campo1":"valor1"}')    'RTD HGETALL returns valid JSON'
+    Check (Wait-CellText $rtd 'B22' '{}')                    'RTD HGETALL returns {} for a missing hash'
 
     Invoke-RedisCli @('SET', ' ', 'ws_key_value') | Out-Null
     Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'ALTA') | Out-Null
@@ -556,7 +564,19 @@ try {
     Check (Wait-CellNumberMin $rtd 'B12' 1)                  'RTD ChannelCount >= 1'
     Check (Wait-CellText $rtd 'B21' 'ws_key_value')          'RTD GET accepts a whitespace-only key'
     Check (Wait-CellRegex $rtd 'B20' '^#ERROR')              'RTD GET without a key returns #ERROR without freezing the host'
+
+    # PublishIfChanged only marks delivered payloads; the PSUB topic above is a
+    # live reader, so two forced recalculations settle the cell on "No change"
+    # (with zero readers every recalculation retries the publish).
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    Start-Sleep -Milliseconds 400
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    Check (Wait-CellText $udf 'B44' 'No change')             'UDF PublishIfChanged suppresses an unchanged payload'
     Invoke-RedisCli @('DEL', ' ') | Out-Null
+
+    # A polled GET topic must pick up a value changed after registration.
+    Invoke-RedisCli @('SET', "$KeyPrefix.key", 'hello_v2') | Out-Null
+    Check (Wait-CellText $rtd 'B4' 'hello_v2')               'RTD GET picks up a changed value'
 
     if ($RealChannel) {
         Check (Wait-CellNotEmpty $rtd 'B17' 30)              'RTD SUB received live data from the real channel'
