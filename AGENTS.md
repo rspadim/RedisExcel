@@ -230,4 +230,4 @@ These cost real debugging time — read before writing automation.
 
 Push a `v*` tag; the CI workflow builds and publishes the packed XLLs plus
 `NLog.config` and `RedisExcel.json` as release assets. Current release:
-`v1.2.5`; next planned version: TBD.
+`v1.2.6`; next planned version: TBD.
