@@ -425,7 +425,10 @@ try {
         @{ Row = 39; Func = 'GetMultiple no keys'; Fx = '=RedisUDFGetMultiple("",FALSE)';                                                                   Expected = $null },
         @{ Row = 40; Func = 'ExistsMultiples 2x2'; Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing1";"{1}.missing2","{1}.missing3"}},"{0}"),2,1)' -f $h, $kp; Expected = $null },
         @{ Row = 41; Func = 'Keys blank pattern'; Fx = '=RedisUDFKeys($J$3)';                                                                                 Expected = $null },
-        @{ Row = 42; Func = 'GetMultiple 2x2'; Fx = '=INDEX(RedisUDFGetMultiple($F$2:$G$3,TRUE,"{0}"),2,1)' -f $h; Expected = $null }
+        @{ Row = 42; Func = 'GetMultiple 2x2'; Fx = '=INDEX(RedisUDFGetMultiple($F$2:$G$3,TRUE,"{0}"),2,1)' -f $h; Expected = $null },
+        # Regression (v1.2.5): SetKV must reject ranges with different cell counts
+        # instead of silently writing only part of the data.
+        @{ Row = 43; Func = 'SetKV mismatched'; Fx = '=RedisUDFSetKV($F$2:$G$2,$F$3)'; Expected = $null }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -530,6 +533,7 @@ try {
     Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
     Check (Wait-CellText $udf 'B42' 'linha1')                 'UDF GetMultiple flattens a 2x2 range row-major'
+    Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

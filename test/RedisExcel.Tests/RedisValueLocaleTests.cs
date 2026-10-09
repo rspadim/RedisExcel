@@ -125,6 +125,21 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ToInt64Invariant_RejectsBooleansAndFractions()
+        {
+            var boolEx = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(true));
+            Assert.Equal("numeric argument is not valid", boolEx.Message);
+
+            var doubleEx = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(2.5));
+            Assert.Equal("numeric argument is not an integer", doubleEx.Message);
+
+            var decimalEx = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(1.5m));
+            Assert.Equal("numeric argument is not an integer", decimalEx.Message);
+
+            Assert.Equal(2L, RedisUDF.ToInt64Invariant(2.0));
+        }
+
+        [Fact]
         public void ToInt64Invariant_OutOfRange_Throws()
         {
             var ex = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(1e19));

@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.2.5 (unreleased)
+
+### Fixed
+
+- Batch writers (`SetKV`, `SetKVPair`, `HashSetMultiple`) validate their range
+  shapes instead of silently writing only part of the data; `SetKVPair`/
+  `HashSetMultiple` also accept horizontal 2-row ranges.
+- `RedisUDFChannelUnsubscribe` rejects a blank channel instead of reporting
+  success for nothing.
+- `RedisUDFGetMultiple`'s `multipleColumns` accepts TRUE/FALSE, 0/1 and
+  TRUE/FALSE text, and rejects anything else instead of silently meaning FALSE.
+- `ToInt64Invariant` rejects booleans and fractional numbers (TTL/increment
+  arguments must be whole numbers).
+
+### Tests
+
+- Unit + E2E coverage for the new validations (rows 42-43).
+
 ## v1.2.4
 
 ### Fixed

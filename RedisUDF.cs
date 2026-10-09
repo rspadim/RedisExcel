@@ -63,6 +63,75 @@ namespace RedisExcel
             return new object[,] { { "Error: " + ex.Message } };
         }
 
+        /// <summary>Flattens an Excel range row-major (the order Excel uses), so a
+        /// cell count is a stable pairing unit independent of the range shape.</summary>
+        private static List<object> FlattenRowMajor(object[,] range)
+        {
+            int rows = range.GetLength(0);
+            int cols = range.GetLength(1);
+            var cells = new List<object>(rows * cols);
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cols; c++)
+                    cells.Add(range[r, c]);
+            return cells;
+        }
+
+        /// <summary>Returns key/value cells as pairs. A range with exactly two
+        /// columns is read row by row; otherwise a range with exactly two rows is
+        /// read column by column (horizontal layout). Any other shape is an
+        /// error instead of silently using only part of the range.</summary>
+        private static List<KeyValuePair<object, object>> FlattenPairRange(object[,] range)
+        {
+            int rows = range.GetLength(0);
+            int cols = range.GetLength(1);
+            var pairs = new List<KeyValuePair<object, object>>();
+            if (cols == 2)
+            {
+                for (int r = 0; r < rows; r++)
+                    pairs.Add(new KeyValuePair<object, object>(range[r, 0], range[r, 1]));
+            }
+            else if (rows == 2)
+            {
+                for (int c = 0; c < cols; c++)
+                    pairs.Add(new KeyValuePair<object, object>(range[0, c], range[1, c]));
+            }
+            else
+            {
+                throw new ArgumentException("expected a range with 2 columns or 2 rows");
+            }
+            return pairs;
+        }
+
+        /// <summary>Coerces an Excel-friendly numeric flag: an integral number
+        /// maps 0 to false and any other value to true. Returns false for
+        /// non-integral or non-numeric values so the caller can reject them.</summary>
+        private static bool TryGetIntegralFlag(object value, out bool flag)
+        {
+            double number;
+            switch (value)
+            {
+                case double d: number = d; break;
+                case float f: number = f; break;
+                case decimal m: number = (double)m; break;
+                case long l: number = l; break;
+                case int i: number = i; break;
+                case short s: number = s; break;
+                case byte b: number = b; break;
+                case sbyte sb: number = sb; break;
+                case ushort us: number = us; break;
+                case uint ui: number = ui; break;
+                case ulong ul: number = ul; break;
+                default: flag = false; return false;
+            }
+            if (double.IsNaN(number) || double.IsInfinity(number) || number != Math.Truncate(number))
+            {
+                flag = false;
+                return false;
+            }
+            flag = number != 0;
+            return true;
+        }
+
         /// <summary>Converts an Excel cell value to the string stored in Redis.
         /// Uses the invariant culture so numbers are written as 67000.5, not
         /// 67000,5 on comma-decimal locales. Strings pass through unchanged.</summary>
@@ -98,6 +167,14 @@ namespace RedisExcel
                 throw new ArgumentException("Excel error cells are not valid numeric arguments");
             if (value == null || value is ExcelMissing || value is ExcelEmpty)
                 throw new ArgumentException("numeric argument is not valid");
+            // Booleans convert to 1/0 and fractions silently truncate; TTL and
+            // increment arguments must be whole numbers.
+            if (value is bool)
+                throw new ArgumentException("numeric argument is not valid");
+            if (value is double d && !double.IsNaN(d) && d != Math.Truncate(d))
+                throw new ArgumentException("numeric argument is not an integer");
+            if (value is decimal m && m != Math.Truncate(m))
+                throw new ArgumentException("numeric argument is not an integer");
             try
             {
                 return Convert.ToInt64(value, CultureInfo.InvariantCulture);
@@ -120,6 +197,10 @@ namespace RedisExcel
             try
             {
                 string channelStr = ToRedisString(channel);
+                // A blank channel matches nothing; report it instead of
+                // claiming success.
+                if (string.IsNullOrEmpty(channelStr))
+                    throw new ArgumentException("a channel is required");
                 foreach (var kv in _channelListeners)
                 {
                     if (!string.Equals(kv.Value.Channel, channelStr, StringComparison.Ordinal))
@@ -464,12 +545,15 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                int rows = Math.Min(keys.GetLength(0), values.GetLength(0));
+                var keyCells = FlattenRowMajor(keys);
+                var valueCells = FlattenRowMajor(values);
+                if (keyCells.Count == 0 || keyCells.Count != valueCells.Count)
+                    throw new ArgumentException("keys and values must have the same number of cells");
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
-                for (int i = 0; i < rows; i++)
+                for (int i = 0; i < keyCells.Count; i++)
                 {
-                    var key = ToRedisString(keys[i, 0]);
-                    var value = ToRedisString(values[i, 0]);
+                    var key = ToRedisString(keyCells[i]);
+                    var value = ToRedisString(valueCells[i]);
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
@@ -494,11 +578,12 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                var pairs = FlattenPairRange(keyValuePairs);
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
-                for (int i = 0; i < keyValuePairs.GetLength(0); i++)
+                foreach (var pair in pairs)
                 {
-                    var key = ToRedisString(keyValuePairs[i, 0]);
-                    var value = ToRedisString(keyValuePairs[i, 1]);
+                    var key = ToRedisString(pair.Key);
+                    var value = ToRedisString(pair.Value);
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
@@ -528,7 +613,25 @@ namespace RedisExcel
                     throw new ArgumentException("Excel error cells are not valid arguments");
                 if (multipleColumnsOpt is Array)
                     throw new ArgumentException("A multi-cell range is not a valid scalar argument");
-                bool multipleColumns = multipleColumnsOpt is bool b && b;
+                bool multipleColumns;
+                if (multipleColumnsOpt is bool boolFlag)
+                    multipleColumns = boolFlag;
+                else if (multipleColumnsOpt == null || multipleColumnsOpt is ExcelMissing || multipleColumnsOpt is ExcelEmpty)
+                    multipleColumns = false;
+                else if (TryGetIntegralFlag(multipleColumnsOpt, out bool numericFlag))
+                    multipleColumns = numericFlag;
+                else if (multipleColumnsOpt is string flagText)
+                {
+                    string trimmed = flagText.Trim();
+                    if (string.Equals(trimmed, "TRUE", StringComparison.OrdinalIgnoreCase))
+                        multipleColumns = true;
+                    else if (string.Equals(trimmed, "FALSE", StringComparison.OrdinalIgnoreCase))
+                        multipleColumns = false;
+                    else
+                        throw new ArgumentException("multipleColumns must be TRUE or FALSE");
+                }
+                else
+                    throw new ArgumentException("multipleColumns must be TRUE or FALSE");
 
                 int rows = keys.GetLength(0);
                 int cols = keys.GetLength(1);
@@ -943,11 +1046,12 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                var pairs = FlattenPairRange(fieldValuePairs);
                 var entries = new List<HashEntry>();
-                for (int i = 0; i < fieldValuePairs.GetLength(0); i++)
+                foreach (var pair in pairs)
                 {
-                    var field = ToRedisString(fieldValuePairs[i, 0]);
-                    var value = ToRedisString(fieldValuePairs[i, 1]);
+                    var field = ToRedisString(pair.Key);
+                    var value = ToRedisString(pair.Value);
                     if (!string.IsNullOrWhiteSpace(field))
                         entries.Add(new HashEntry(field, value ?? ""));
                 }

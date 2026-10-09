@@ -31,6 +31,49 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void GetMultiple_NonBooleanTextFlag_ReturnsFlagError()
+        {
+            var result = RedisUDF.RedisUDFGetMultiple(new object[,] { { "k" } }, "maybe", ExcelMissing.Value);
+            Assert.Equal("Error: multipleColumns must be TRUE or FALSE", (string)result[0, 0]);
+        }
+
+        [Fact]
+        public void SetKV_DifferentCellCounts_ReturnsCellCountMismatch()
+        {
+            var result = RedisUDF.RedisUDFSetKV(
+                new object[,] { { "k1", "k2" } },
+                new object[,] { { "v1" } },
+                ExcelMissing.Value);
+            Assert.Equal("Error: keys and values must have the same number of cells", result);
+        }
+
+        [Fact]
+        public void SetKVPair_RangeWithoutPairShape_ReturnsRangeShapeError()
+        {
+            var result = RedisUDF.RedisUDFSetKVPair(
+                new object[,] { { "k1", "v1", "extra" } },
+                ExcelMissing.Value);
+            Assert.Equal("Error: expected a range with 2 columns or 2 rows", result);
+        }
+
+        [Fact]
+        public void HashSetMultiple_RangeWithoutPairShape_ReturnsRangeShapeError()
+        {
+            var result = RedisUDF.RedisUDFHashSetMultiple(
+                "hash",
+                new object[,] { { "f1", "v1", "extra" } },
+                ExcelMissing.Value);
+            Assert.Equal("Error: expected a range with 2 columns or 2 rows", result);
+        }
+
+        [Fact]
+        public void ChannelUnsubscribe_BlankChannel_ReturnsChannelRequired()
+        {
+            var result = RedisUDF.RedisUDFChannelUnsubscribe("");
+            Assert.Equal("Error: a channel is required", result);
+        }
+
+        [Fact]
         public void Keys_EmptyPattern_ReturnsKeyPatternRequiredMessage()
         {
             var result = RedisUDF.RedisUDFKeys("", ExcelMissing.Value);
