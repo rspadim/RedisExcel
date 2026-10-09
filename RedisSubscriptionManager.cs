@@ -390,7 +390,12 @@ namespace RedisExcel
                         return;
                     try
                     {
-                        subscriber.Unsubscribe(Channel, HandleMessage);
+                        // Fire-and-forget teardown (literal and pattern channels
+                        // use the same path): the handler is removed client-side
+                        // immediately, while the command is sent asynchronously,
+                        // so an unreachable host cannot block the Excel main
+                        // thread for up to SyncTimeout per channel.
+                        subscriber.Unsubscribe(Channel, HandleMessage, CommandFlags.FireAndForget);
                     }
                     catch (Exception ex)
                     {

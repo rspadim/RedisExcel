@@ -22,6 +22,14 @@ namespace RedisExcel
         {
             public string Channel;
             public IDisposable Token;
+            // Set before the token is disposed/unsubscribed so an in-flight
+            // callback cannot publish a pre-unsubscribe message after the
+            // channel entry was removed.
+            private volatile bool _closed;
+
+            public bool IsClosed => _closed;
+
+            public void Close() => _closed = true;
         }
 
         private static readonly ConcurrentDictionary<string, ChannelListener> _channelListeners =
@@ -88,7 +96,7 @@ namespace RedisExcel
                 throw new ArgumentException("A multi-cell range is not a valid numeric argument");
             if (value is ExcelError)
                 throw new ArgumentException("Excel error cells are not valid numeric arguments");
-            if (value is ExcelMissing || value is ExcelEmpty)
+            if (value == null || value is ExcelMissing || value is ExcelEmpty)
                 throw new ArgumentException("numeric argument is not valid");
             try
             {
@@ -118,6 +126,9 @@ namespace RedisExcel
                         continue;
                     if (_channelListeners.TryRemove(kv.Key, out var listener))
                     {
+                        // Mark closed before disposing so an in-flight callback
+                        // stops writing; only then drop the latest message.
+                        listener.Close();
                         listener.Token?.Dispose();
                         _latestMessages.TryRemove(kv.Key, out _);
                     }
@@ -157,9 +168,19 @@ namespace RedisExcel
                 {
                     var listener = new ChannelListener { Channel = channelStr };
                     listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
-                        onMessage: message => _latestMessages[key] = message ?? "", origin: "UDF");
+                        onMessage: message =>
+                        {
+                            if (listener.IsClosed)
+                                return;
+                            _latestMessages[key] = message ?? "";
+                        }, origin: "UDF");
                     if (!_channelListeners.TryAdd(key, listener))
-                        listener.Token.Dispose(); // another thread registered first
+                    {
+                        // Another thread registered first: close before disposing
+                        // so this losing listener never writes.
+                        listener.Close();
+                        listener.Token.Dispose();
+                    }
                 }
                 var response = _latestMessages.TryGetValue(key, out var latest) ? latest : "(null)";
                 if (logger.IsTraceEnabled)
@@ -558,11 +579,11 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                string patternStr = ToRedisString(pattern);
+                if (string.IsNullOrEmpty(patternStr))
+                    throw new ArgumentException("a key pattern is required; use \"*\" to match all keys");
                 var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
                 var server = conn.GetServer(conn.GetEndPoints().First());
-                string patternStr = ToRedisString(pattern);
-                if (patternStr == null)
-                    throw new ArgumentException("a key pattern is required; use \"*\" to match all keys");
                 List<string> keys;
                 bool hasPageSize = false;
                 int pageSizeInt = 0;

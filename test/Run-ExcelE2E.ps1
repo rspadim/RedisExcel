@@ -424,7 +424,8 @@ try {
         @{ Row = 38; Func = 'Get range arg';  Fx = '=IF(ISNUMBER(SEARCH("Error",RedisUDFGet($F$2:$G$2))),"error","no error")';                               Expected = 'error' },
         @{ Row = 39; Func = 'GetMultiple no keys'; Fx = '=RedisUDFGetMultiple("",FALSE)';                                                                   Expected = $null },
         @{ Row = 40; Func = 'ExistsMultiples 2x2'; Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing1";"{1}.missing2","{1}.missing3"}},"{0}"),2,1)' -f $h, $kp; Expected = $null },
-        @{ Row = 41; Func = 'Keys blank pattern'; Fx = '=RedisUDFKeys($J$3)';                                                                                 Expected = $null }
+        @{ Row = 41; Func = 'Keys blank pattern'; Fx = '=RedisUDFKeys($J$3)';                                                                                 Expected = $null },
+        @{ Row = 42; Func = 'GetMultiple 2x2'; Fx = '=INDEX(RedisUDFGetMultiple($F$2:$G$3,TRUE,"{0}"),2,1)' -f $h; Expected = $null }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -528,6 +529,7 @@ try {
     Check (Wait-CellRegex $udf 'B39' '^Error')                'UDF GetMultiple returns Error when no valid key remains'
     Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
+    Check (Wait-CellText $udf 'B42' 'linha1')                 'UDF GetMultiple flattens a 2x2 range row-major'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

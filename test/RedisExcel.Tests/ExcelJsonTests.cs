@@ -179,6 +179,36 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void JSONToMatrix_ErrorCellJsonReturnsError()
+        {
+            // An Excel error cell as the JSON argument is rejected by
+            // ToRedisString; the caught exception becomes an "Error:" cell.
+            var result = ExcelJson.RedisUDFJSONToMatrix((object)ExcelError.ExcelErrorNA, "");
+            Assert.Equal("Error: Excel error cells are not valid arguments", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_MultiCellJsonReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix(new object[,] { { "[]" } }, "");
+            Assert.Equal("Error: A multi-cell range is not a valid scalar argument", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_ErrorCellFillReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[1]", (object)ExcelError.ExcelErrorNA);
+            Assert.Equal("Error: Excel error cells are not valid arguments", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_MultiCellFillReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[1]", new object[,] { { "X" } });
+            Assert.Equal("Error: A multi-cell range is not a valid scalar argument", result[0, 0]);
+        }
+
+        [Fact]
         public void JSONToMatrix_InvalidJsonReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("{oops", "");
@@ -189,21 +219,21 @@ namespace RedisExcel.Tests
         public void JSONToMatrix_NaNReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[NaN]", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
         }
 
         [Fact]
         public void JSONToMatrix_InfinityReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[Infinity]", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
         }
 
         [Fact]
         public void JSONToMatrix_NegativeInfinityReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[-Infinity]", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
         }
 
         [Fact]
@@ -212,7 +242,7 @@ namespace RedisExcel.Tests
             // Nested values also go through JTokenToValue, which must reject the
             // non-finite literal instead of handing a raw double to Excel.
             var result = ExcelJson.RedisUDFJSONToMatrix("{\"a\":NaN}", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
         }
 
         [Fact]
@@ -221,14 +251,42 @@ namespace RedisExcel.Tests
             // A container that would be stringified as JSON text must still be
             // rejected when a non-finite number is hidden inside it.
             var result = ExcelJson.RedisUDFJSONToMatrix("{\"a\":{\"b\":-Infinity}}", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
         }
 
         [Fact]
         public void JSONToMatrix_DeeplyNestedNaNReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[[[NaN]]]", "");
-            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_BareNaNScalarReturnsError()
+        {
+            // Bare NaN (not inside an array/object) takes the scalar path and
+            // must hit the same non-finite guard.
+            var result = ExcelJson.RedisUDFJSONToMatrix("NaN", "");
+            Assert.Equal("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_QuotedNonFiniteLiteralsStayText()
+        {
+            var nanText = ExcelJson.RedisUDFJSONToMatrix("[\"NaN\"]", "");
+            Assert.Equal("NaN", nanText[0, 0]);
+
+            var infinityText = ExcelJson.RedisUDFJSONToMatrix("{\"a\":\"Infinity\"}", "");
+            Assert.Equal("Infinity", infinityText[1, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_OverflowingNumberLiteralReturnsError()
+        {
+            // 1e999 is rejected by Newtonsoft itself (JsonReaderException), so
+            // the exact message is not stable; only the "Error:" prefix is.
+            var result = ExcelJson.RedisUDFJSONToMatrix("[1e999]", "");
+            Assert.StartsWith("Error:", result[0, 0].ToString());
         }
     }
 }

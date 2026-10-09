@@ -80,7 +80,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written
   to Redis always use the invariant culture (decimal point), regardless of the
   Excel locale.
-- Excel error cells are rejected in every argument position; date/time cells
+- Excel error cells are rejected in every scalar argument position; date/time cells
   arrive as their Excel serial number and boolean cells serialize as
   `true`/`false`.
 - Identical consecutive payloads are skipped before decoding for literal

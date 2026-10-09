@@ -35,6 +35,10 @@ namespace RedisExcel
         private readonly ConcurrentDictionary<string, ISubscriber> _subscribers =
             new ConcurrentDictionary<string, ISubscriber>();
 
+        // Set at the start of Shutdown and never cleared: a connect that races
+        // with shutdown must not leave an un-disposed multiplexer behind.
+        private volatile bool _shutdown;
+
         public int RtdConnectionCount => _rtdData.Count + _rtdSub.Count;
         public int UdfConnectionCount => _udfData.Count;
 
@@ -97,6 +101,9 @@ namespace RedisExcel
 
         private ConnectionMultiplexer Connect(string host, RedisPool pool)
         {
+            if (_shutdown)
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+
             var config = AppConfig.Current;
             int timeoutMs = pool == RedisPool.UdfData ? config.UDF.timeout : config.RTD.timeout;
 
@@ -110,6 +117,20 @@ namespace RedisExcel
 
             logger.Info($"RedisConnect: opening {pool} connection to {host} (timeout={timeoutMs}ms, client={options.ClientName})");
             var mux = ConnectionMultiplexer.Connect(options);
+            if (_shutdown)
+            {
+                // Shutdown started while this connect was in flight: dispose the
+                // fresh multiplexer immediately and fail the caller instead of
+                // leaving an un-disposed connection behind.
+                try
+                {
+                    mux.Dispose();
+                }
+                catch
+                {
+                }
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+            }
 
             mux.ConnectionFailed += (sender, args) =>
             {
@@ -130,6 +151,10 @@ namespace RedisExcel
 
         public void Shutdown()
         {
+            // Set before anything is closed/cleared: a racing connect either sees
+            // the flag (and refuses) or completes before Shutdown starts walking
+            // the caches, so no new connection can appear after the teardown.
+            _shutdown = true;
             _databases.Clear();
             _subscribers.Clear();
             foreach (var dictionary in new[] { _rtdData, _rtdSub, _udfData })

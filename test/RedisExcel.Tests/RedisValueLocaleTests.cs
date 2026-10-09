@@ -105,8 +105,9 @@ namespace RedisExcel.Tests
                 Assert.Equal(5L, RedisUDF.ToInt64Invariant(5.0));
                 Assert.Equal(7L, RedisUDF.ToInt64Invariant("7"));
 
-                // Under de-DE a culture-sensitive parse would accept "1,5";
-                // the invariant implementation must reject it with a stable message.
+                // Convert.ToInt64(string) parses with NumberStyles.Integer, which
+                // never accepts a group separator, so "1,5" fails under any
+                // culture; the stable error message is what this asserts.
                 var ex = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant("1,5"));
                 Assert.Equal("numeric argument is not valid", ex.Message);
             }
@@ -128,6 +129,18 @@ namespace RedisExcel.Tests
         {
             var ex = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(1e19));
             Assert.Equal("numeric argument is out of range", ex.Message);
+        }
+
+        [Fact]
+        public void ToInt64Invariant_NullAndExcelSentinels_Throw()
+        {
+            // null is not reachable from an Excel cell (a blank cell arrives as
+            // ExcelEmpty), but the helper contract mirrors ToRedisString.
+            var nullEx = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(null));
+            Assert.Equal("numeric argument is not valid", nullEx.Message);
+
+            var missingEx = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant(ExcelMissing.Value));
+            Assert.Equal("numeric argument is not valid", missingEx.Message);
         }
 
         [Fact]

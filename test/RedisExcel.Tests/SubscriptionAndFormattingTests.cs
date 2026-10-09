@@ -23,6 +23,14 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MakeKey_DistinguishesHosts()
+        {
+            Assert.NotEqual(
+                RedisSubscriptionManager.MakeKey("h1", "c", false),
+                RedisSubscriptionManager.MakeKey("h2", "c", false));
+        }
+
+        [Fact]
         public void MakeKey_HostAndChannelBoundariesDoNotCollide()
         {
             Assert.NotEqual(

@@ -7,15 +7,17 @@
 - Scalar UDF arguments reject multi-cell ranges and array constants (they
   previously became the literal text `System.Object[,]`, silently creating keys,
   values or channels).
-- Excel error cells are rejected in every UDF argument position: they previously
-  became `null`/`""` for values and the raw error code (`#N/A` = 42,
-  `#DIV/0!` = 7, ...) for TTL, increment and index arguments.
+- Excel error cells are rejected in every scalar UDF argument position: they
+  previously became `null`/`""` for values and the raw error code (`#N/A` = 42,
+  `#DIV/0!` = 7, ...) for TTL, increment and index arguments. Documented
+  exception: matrix cells passed to `RedisUDFSetJSON`/JSON publish still map
+  error cells to JSON `null` (unchanged, pre-existing behavior).
 - Optional host arguments accept only text: blank/missing keeps the default
   host, any other type surfaces an error instead of silently using the default.
 - Multi-key UDFs (`GetMultiple`, `ExistsMultiples`, `TTLMultiples`,
   `HashGetFieldMultipleKeys`) flatten any range shape row-major; a range with
   more than one row and column used to silently query only its first row.
-- `RedisUDFKeys` rejects a missing (blank cell) pattern instead of scanning
+- `RedisUDFKeys` rejects a missing or empty-string pattern instead of scanning
   every key; pass `"*"` to match all keys.
 - `RedisUDFJSONToMatrix` rejects non-finite JSON numbers (`NaN`, `Infinity`,
   `-Infinity`) with an `Error:` cell (Excel rendered them as `#NUM!`).
@@ -40,6 +42,9 @@
 
 - Unit tests pin the new conversion contracts (multi-cell range and error-cell
   rejection, boolean casing, double round-trip, non-finite JSON).
+- Unit tests also cover the JSON argument/fill behavior (matrix error cells map
+  to `null`; empty or ragged JSON uses the fill value), the `GetMultiple`
+  validation messages and Excel missing/empty sentinel handling.
 - E2E regression checks for the multi-cell-range rejection, the no-valid-key
   error, 2x2 row-major flattening and the blank keys pattern.
 

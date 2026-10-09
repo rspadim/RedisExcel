@@ -19,6 +19,12 @@ namespace RedisExcel
         private static volatile RedisConnectionManager _connections;
         private static volatile RedisSubscriptionManager _subscriptions;
 
+        // Set at the start of Shutdown, inside the lock, and never cleared:
+        // after an explicit Shutdown (for example AutoClose) no code path may
+        // recreate the managers, no matter how many RTD timer ticks or UDF
+        // calls race with the teardown.
+        private static volatile bool _shutdown;
+
         public static RedisConnectionManager Connections
         {
             get
@@ -27,7 +33,8 @@ namespace RedisExcel
                 var value = _connections;
                 if (value == null)
                 {
-                    // Shutdown raced with this access; recreate once.
+                    // Shutdown raced with this access: EnsureInitialized now
+                    // throws instead of recreating the managers.
                     EnsureInitialized();
                     value = _connections;
                 }
@@ -43,7 +50,8 @@ namespace RedisExcel
                 var value = _subscriptions;
                 if (value == null)
                 {
-                    // Shutdown raced with this access; recreate once.
+                    // Shutdown raced with this access: EnsureInitialized now
+                    // throws instead of recreating the managers.
                     EnsureInitialized();
                     value = _subscriptions;
                 }
@@ -53,10 +61,16 @@ namespace RedisExcel
 
         private static void EnsureInitialized()
         {
+            // Checked before creation: once Shutdown has started, callers (timer
+            // ticks included) must fail instead of resurrecting disposed managers.
+            if (_shutdown)
+                throw new InvalidOperationException("RedisRuntime is shutting down");
             if (_connections != null && _subscriptions != null)
                 return;
             lock (Sync)
             {
+                if (_shutdown)
+                    throw new InvalidOperationException("RedisRuntime is shutting down");
                 if (_connections != null && _subscriptions != null)
                     return;
                 var connections = new RedisConnectionManager();
@@ -74,6 +88,10 @@ namespace RedisExcel
         {
             lock (Sync)
             {
+                // The flag is set BEFORE the managers are disposed/nulled (and is
+                // never cleared), so a racing EnsureInitialized either observes it
+                // and throws, or waits on the lock and then observes it.
+                _shutdown = true;
                 try
                 {
                     _subscriptions?.Dispose();

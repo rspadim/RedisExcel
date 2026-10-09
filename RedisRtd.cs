@@ -438,7 +438,13 @@ namespace RedisExcel
                 }
 
                 logger.Info($"ConnectData: accepted {td}");
-                return "(ConnectData)";
+                // A subscription message can arrive between Subscribe and Excel
+                // activating the topic; Excel-DNA drops pushes for topics that are
+                // not active yet, so return the value cached by that push instead
+                // of the sentinel (which would overwrite it permanently in
+                // non-coalesced realtime mode). LastValue is read under the topic
+                // lock, so this is safe against concurrent updates.
+                return td.LastValue ?? "(ConnectData)";
             }
             catch (Exception ex)
             {
