@@ -1,7 +1,8 @@
 # Tests
 
-Three layers, from fastest to most realistic. See `AGENTS.md` for the full
-guidance and the Excel automation lessons.
+Four layers (three test suites plus load tests), from fastest to most
+realistic. See `AGENTS.md` for the full guidance and the Excel automation
+lessons.
 
 ## 1. Unit tests (no Redis, no Excel)
 

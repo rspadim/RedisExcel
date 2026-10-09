@@ -253,6 +253,31 @@ function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$Timeou
     return $false
 }
 
+function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$TimeoutSeconds = 20) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $text = ''
+    while ((Get-Date) -lt $deadline) {
+        $text = (Get-CellText $Sheet $Address).Replace(',', '.')
+        $value = 0.0
+        if ([double]::TryParse($text, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -and $value -ge $Min) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    Write-Host ("      {0} = '{1}' (expected >= {2})" -f $Address, $text, $Min) -ForegroundColor DarkGray
+    return $false
+}
+
+# A workbook may (re)register its RTD topics asynchronously; a single publish
+# can be lost before that happens, so repeat it until the cell shows the value.
+function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 30) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-Null
+        if (Wait-CellText $Sheet $Address $Expected 3) { return $true }
+        Start-Sleep -Milliseconds 500
+    }
+    return $false
+}
+
 # ---------------------------------------------------------------- setup ----
 
 Resolve-RedisCli
@@ -265,7 +290,7 @@ if ((Invoke-RedisCli @('PING') | Out-String).Trim() -ne 'PONG') {
 }
 
 $isLocalHost = $RedisHost -match '^(localhost|127\.0\.0\.1)(:\d+)?$'
-$allowClientKill = (-not $SkipClientKill) -and $isLocalHost
+$allowClientKill = (-not $SkipClientKill) -and $isLocalHost -and [string]::IsNullOrWhiteSpace($RedisCli)
 
 $script:Excel = New-Object -ComObject Excel.Application
 $script:Excel.Visible = $false
@@ -351,7 +376,10 @@ try {
         @{ Row = 31; Func = 'SetRemove missing'; Fx = '=RedisUDFSetRemove("{1}.set","missing","{0}")' -f $h, $kp;                                          Expected = '0' },
         @{ Row = 32; Func = 'Type missing'; Fx = '=RedisUDFType("{1}.missingkey","{0}")' -f $h, $kp;                                                       Expected = 'none' },
         @{ Row = 33; Func = 'Type string'; Fx = '=RedisUDFType("{1}.key","{0}")' -f $h, $kp;                                                               Expected = 'string' },
-        @{ Row = 34; Func = 'Type list'; Fx = '=RedisUDFType("{1}.list","{0}")' -f $h, $kp;                                                                Expected = 'list' }
+        @{ Row = 34; Func = 'Type list'; Fx = '=RedisUDFType("{1}.list","{0}")' -f $h, $kp;                                                                Expected = 'list' },
+        @{ Row = 35; Func = 'ListPopRight empty'; Fx = '=IF(RedisUDFListPopRight("{1}.emptylist","{0}")="","empty","not empty")' -f $h, $kp;              Expected = 'empty' },
+        @{ Row = 36; Func = 'ListPopLeft empty';  Fx = '=IF(RedisUDFListPopLeft("{1}.emptylist","{0}")="","empty","not empty")' -f $h, $kp;               Expected = 'empty' },
+        @{ Row = 37; Func = 'Rename missing';     Fx = '=RedisUDFRename("{1}.missingrename","{1}.renamed","{0}")' -f $h, $kp;                               Expected = $null }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -412,7 +440,7 @@ try {
     Check (Wait-CellText $udf 'B10' 'OK')                    'UDF HashSet returns OK'
     Check (Wait-CellText $udf 'B11' 'valor1')                'UDF HashGet returns the value'
     Check (Wait-CellText $udf 'B13' 'ola_mundo')             'UDF ChannelLatest received the published message'
-    Check ((Get-CellNumber $udf 'B14') -ge 1)                'UDF ConnectionCount >= 1'
+    Check (Wait-CellNumberMin $udf 'B14' 1)                  'UDF ConnectionCount >= 1'
     Check (Wait-CellText $udf 'B15' '1')                     'UDF ExistsMultiples (pipelined) first key exists'
     Check (Wait-CellText $udf 'B16' '-1')                    'UDF TTLMultiples (pipelined) returns -1'
     Check (Wait-CellText $udf 'B17' 'valor1')                'UDF HashGetFieldMultipleKeys (pipelined) returns the value'
@@ -443,6 +471,9 @@ try {
     Check (Wait-CellText $udf 'B32' 'none')                   'UDF Type returns none for a missing key'
     Check (Wait-CellText $udf 'B33' 'string')                 'UDF Type returns string'
     Check (Wait-CellText $udf 'B34' 'list')                   'UDF Type returns list'
+    Check (Wait-CellText $udf 'B35' 'empty')                  'UDF ListPopRight returns empty for a missing list'
+    Check (Wait-CellText $udf 'B36' 'empty')                  'UDF ListPopLeft returns empty for a missing list'
+    Check (Wait-CellRegex $udf 'B37' '^Error')                'UDF Rename errors for a missing key'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'
@@ -451,10 +482,10 @@ try {
     Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'ALTA') | Out-Null
     Check (Wait-CellText $rtd 'B7' 'ALTA')                   'RTD SUB received the published message'
     Check (Wait-CellText $rtd 'B8' 'ALTA')                   'RTD PSUB received the published message'
-    Check ((Get-CellNumber $rtd 'B9') -ge 1)                 'RTD ConnectionCount >= 1'
-    Check ((Get-CellNumber $rtd 'B10') -ge 5)                'RTD TopicCount >= 5'
-    Check ((Get-CellNumber $rtd 'B11') -ge 2)                'RTD SubscriptionCount >= 2'
-    Check ((Get-CellNumber $rtd 'B12') -ge 1)                'RTD ChannelCount >= 1'
+    Check (Wait-CellNumberMin $rtd 'B9' 1)                   'RTD ConnectionCount >= 1'
+    Check (Wait-CellNumberMin $rtd 'B10' 5)                  'RTD TopicCount >= 5'
+    Check (Wait-CellNumberMin $rtd 'B11' 2)                  'RTD SubscriptionCount >= 2'
+    Check (Wait-CellNumberMin $rtd 'B12' 1)                  'RTD ChannelCount >= 1'
 
     if ($RealChannel) {
         Invoke-RedisCli @('PUBSUB', 'NUMSUB', $RealChannel) | Out-Null
@@ -465,7 +496,10 @@ try {
     }
 
     # ------------------------------------------------------------- save it ----
-    $outPath = Join-Path $env:TEMP 'RedisExcel.Test.xlsx'
+    # Save to a temp file first and copy it into place afterwards, so a failed
+    # SaveAs can never delete the committed sample workbook.
+    $tempOut = Join-Path $env:TEMP 'RedisExcel.Test.xlsx'
+    $outPath = $tempOut
     if ($isLocalHost) {
         $outDir = Join-Path $RepoRoot 'test'
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
@@ -474,8 +508,11 @@ try {
     else {
         Write-Host "Remote host: the workbook will not be saved into the repository." -ForegroundColor DarkGray
     }
-    Remove-Item $outPath -Force -ErrorAction SilentlyContinue
-    Invoke-ExcelAction { $script:Workbook.SaveAs($outPath, 51) } | Out-Null
+    Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
+    Invoke-ExcelAction { $script:Workbook.SaveAs($tempOut, 51) } | Out-Null
+    if ($tempOut -ne $outPath) {
+        Copy-Item -Path $tempOut -Destination $outPath -Force
+    }
     Check (Test-Path $outPath) ("test workbook saved to " + $outPath)
 
     # ------------------------------------ regression: copy of the workbook ----
@@ -487,43 +524,52 @@ try {
     $copy = Invoke-ExcelAction { $script:Excel.Workbooks.Open($copyPath) }
     $copyRtd = $copy.Worksheets.Item('RTD')
 
-    Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'copy-1') | Out-Null
-    Check (Wait-CellText $rtd 'B7' 'copy-1')                 'original received copy-1'
-    Check (Wait-CellText $copyRtd 'B7' 'copy-1')             'copy received copy-1'
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-1' $rtd 'B7' 'copy-1')        'original received copy-1'
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-1' $copyRtd 'B7' 'copy-1')    'copy received copy-1'
 
     # Duplicate the RTD sheet inside the copy: new topics for the same channel.
     Invoke-ExcelAction { $copyRtd.Copy($copy.Worksheets.Item($copy.Worksheets.Count)) } | Out-Null
     $dup = $script:Excel.ActiveSheet
-    if ($dup.Name -eq 'RTD') { $dup = $copy.Worksheets.Item(2) }
-    Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'copy-2') | Out-Null
-    Check (Wait-CellText $rtd 'B7' 'copy-2')                 'original keeps receiving after a sheet is copied'
-    Check (Wait-CellText $copyRtd 'B7' 'copy-2')             'duplicated workbook keeps receiving'
-    Check (Wait-CellText $dup 'B7' 'copy-2')                 'duplicated sheet receives'
+    if ($dup.Name -notlike 'RTD (*') { $dup = @($copy.Worksheets | Where-Object { $_.Name -like 'RTD (*' })[0] }
+    if (-not $dup -or $dup.Name -eq 'RTD') { $dup = $copy.Worksheets.Item(2) }
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $rtd 'B7' 'copy-2')        'original keeps receiving after a sheet is copied'
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $copyRtd 'B7' 'copy-2')    'duplicated workbook keeps receiving'
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $dup 'B7' 'copy-2')        'duplicated sheet receives'
 
     Invoke-ExcelAction { $copy.Close($false) } | Out-Null
     Start-Sleep -Seconds 1
-    Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'copy-3') | Out-Null
-    Check (Wait-CellText $rtd 'B7' 'copy-3')                 'original keeps receiving after the copy workbook is closed'
+    Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-3' $rtd 'B7' 'copy-3')        'original keeps receiving after the copy workbook is closed'
 
     # ---------------------------------------- regression: connection blip ----
     if ($allowClientKill) {
         Invoke-RedisCli @('CLIENT', 'KILL', 'TYPE', 'pubsub') | Out-Null
         Start-Sleep -Seconds 2
-        Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'reconnect-1') | Out-Null
-        Check (Wait-CellText $rtd 'B7' 'reconnect-1' 30)     'subscriptions recover after the Pub/Sub connection is killed'
+        Check (Publish-Until-Cell "$KeyPrefix.rtd" 'reconnect-1' $rtd 'B7' 'reconnect-1' 30)  'subscriptions recover after the Pub/Sub connection is killed'
     }
     else {
-        Write-Host "SKIP  CLIENT KILL (not a local host or -SkipClientKill); subscriptions not tested against a blip." -ForegroundColor DarkGray
+        Write-Host "SKIP  CLIENT KILL (not a local host, -SkipClientKill, or a custom -RedisCli); subscriptions not tested against a blip." -ForegroundColor DarkGray
     }
 }
 finally {
-    try { if ($copy) { Invoke-ExcelAction { $copy.Close($false) } | Out-Null } } catch { }
-    try { if ($script:Workbook) { Invoke-ExcelAction { $script:Workbook.Close($false) } | Out-Null } } catch { }
-    if (-not $KeepExcelOpen -and $script:Excel -ne $null) {
-        try { Invoke-ExcelAction { $script:Excel.Quit() } | Out-Null } catch { }
-        [System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:Excel) | Out-Null
-        [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+    if ($KeepExcelOpen) {
+        if ($script:Excel -ne $null) {
+            try { $script:Excel.Visible = $true } catch { }
+            Write-Host 'Excel was left open (-KeepExcelOpen).' -ForegroundColor DarkYellow
+        }
     }
+    else {
+        try { if ($copy) { Invoke-ExcelAction { $copy.Close($false) } | Out-Null } } catch { }
+        try { if ($script:Workbook) { Invoke-ExcelAction { $script:Workbook.Close($false) } | Out-Null } } catch { }
+        if ($script:Excel -ne $null) {
+            try { Invoke-ExcelAction { $script:Excel.Quit() } | Out-Null } catch { }
+            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:Excel) | Out-Null
+            [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+        }
+    }
+    # Always clean up the temporary workbooks (copy + save-as staging). The
+    # committed sample in test\ is never removed here.
+    Remove-Item (Join-Path $env:TEMP 'RedisExcel.Test.Copy.xlsx') -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $env:TEMP 'RedisExcel.Test.xlsx') -Force -ErrorAction SilentlyContinue
 }
 
 if ($script:Failures -eq 0) {

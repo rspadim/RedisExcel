@@ -53,7 +53,7 @@ namespace RedisExcel
         /// 67000,5 on comma-decimal locales. Strings pass through unchanged.</summary>
         internal static string ToRedisString(object value)
         {
-            if (value == null || value is ExcelMissing || value is ExcelEmpty)
+            if (value == null || value is ExcelMissing || value is ExcelEmpty || value is ExcelError)
                 return null;
             if (value is string s)
                 return s;
@@ -295,6 +295,8 @@ namespace RedisExcel
                     case RedisType.SortedSet: return "zset";
                     case RedisType.Hash: return "hash";
                     case RedisType.Stream: return "stream";
+                    case RedisType.Unknown: return "unknown";
+                    case RedisType.None: return "none";
                     default: return "none";
                 }
             }
@@ -365,7 +367,9 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = ToRedisString(key);
-                GetDb(host).StringSet(keyStr, ToRedisString(value));
+                string valueStr = ToRedisString(value);
+                // A null RedisValue would issue DEL instead of storing an empty string.
+                GetDb(host).StringSet(keyStr, valueStr ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={host}");
                 return "OK";
@@ -492,7 +496,7 @@ namespace RedisExcel
                 var server = conn.GetServer(conn.GetEndPoints().First());
                 string patternStr = ToRedisString(pattern);
                 List<string> keys;
-                if (pageSize != null && int.TryParse(pageSize.ToString(), out var pageSizeInt) && pageSizeInt > 0)
+                if (pageSize != null && int.TryParse(Convert.ToString(pageSize, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pageSizeInt) && pageSizeInt > 0)
                     keys = server.Keys(pattern: patternStr, pageSize: pageSizeInt).Select(k => k.ToString()).ToList();
                 else
                     keys = server.Keys(pattern: patternStr).Select(k => k.ToString()).ToList();
@@ -648,7 +652,9 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
                 string keyStr = ToRedisString(key);
-                GetDb(host).StringSet(keyStr, ToRedisString(value), TimeSpan.FromSeconds(ttl));
+                string valueStr = ToRedisString(value);
+                // A null RedisValue would issue DEL instead of storing an empty string.
+                GetDb(host).StringSet(keyStr, valueStr ?? "", TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={host}");
                 return "OK";
@@ -671,6 +677,8 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
+                if (ttl <= 0)
+                    return "Error: ttl must be a positive number of seconds";
                 string keyStr = ToRedisString(key);
                 bool expired = GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
@@ -756,7 +764,7 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     var ttl = tasks[i].GetAwaiter().GetResult();
-                    result[i, 1] = ttl.HasValue ? ttl.Value.TotalSeconds.ToString("F0") : "-1";
+                    result[i, 1] = ttl.HasValue ? ttl.Value.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture) : "-1";
                 }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFTTLMultiples: {keys.Length} keys, host={host}");
@@ -782,7 +790,9 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = ToRedisString(hashKey);
                 string fieldStr = ToRedisString(field);
-                GetDb(host).HashSet(hashKeyStr, fieldStr, ToRedisString(value));
+                string valueStr = ToRedisString(value);
+                // A null RedisValue would issue HDEL instead of storing an empty string.
+                GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={host}");
                 return "OK";
@@ -810,7 +820,7 @@ namespace RedisExcel
                     var field = ToRedisString(fieldValuePairs[i, 0]);
                     var value = ToRedisString(fieldValuePairs[i, 1]);
                     if (!string.IsNullOrWhiteSpace(field))
-                        entries.Add(new HashEntry(field, value));
+                        entries.Add(new HashEntry(field, value ?? ""));
                 }
                 string hashKeyStr = ToRedisString(hashKey);
                 GetDb(host).HashSet(hashKeyStr, entries.ToArray());
@@ -1074,7 +1084,7 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string keyStr = ToRedisString(key);
                 string valueStr = ToRedisString(value);
-                long added = GetDb(host).SetAdd(keyStr, valueStr) ? 1L : 0L;
+                long added = GetDb(host).SetAdd(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, added={added}, host={host}");
                 return added;

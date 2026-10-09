@@ -1,6 +1,7 @@
 using NLog;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Globalization;
 using System.Net.Http;
 using System.Threading.Tasks;
 
@@ -117,7 +118,7 @@ namespace RedisExcel
             var numbers = new int[parts.Length];
             for (int i = 0; i < parts.Length; i++)
             {
-                if (!int.TryParse(parts[i], out numbers[i]))
+                if (!int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i]))
                     return null;
             }
             return numbers;

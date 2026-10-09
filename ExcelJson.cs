@@ -62,13 +62,14 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Converts a JSON string to a 2D Excel matrix. Accepts arrays, objects, or single values.")]
         public static object[,] RedisUDFJSONToMatrix(
-            [ExcelArgument(Description = "JSON string to convert to Excel matrix")] string json,
+            [ExcelArgument(Description = "JSON string to convert to Excel matrix")] object json,
             [ExcelArgument(Description = "Value to insert for nulls (default is empty string)")] object nullValue = null)
         {
             object fill = nullValue == null || nullValue is ExcelMissing || nullValue is ExcelEmpty ? "" : nullValue;
+            string jsonText = RedisUDF.ToRedisString(json);
             try
             {
-                var token = JsonConvert.DeserializeObject<JToken>(json);
+                var token = JsonConvert.DeserializeObject<JToken>(jsonText);
                 if (token is JArray array)
                     return JArrayToMatrix(array, fill);
                 if (token is JObject obj)

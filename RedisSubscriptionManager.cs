@@ -211,19 +211,12 @@ namespace RedisExcel
         /// <summary>
         /// Removes the registry entry only if it still maps to this exact state.
         /// .NET Framework has no atomic value-checked TryRemove, so a mismatched
-        /// entry (a state re-created under the same key) is put back and retried.
+        /// (freshly re-created) entry is simply restored instead of retried.
         /// </summary>
         private void RemoveChannelEntry(string key, ChannelState state)
         {
-            while (true)
-            {
-                if (!_channels.TryRemove(key, out var removed))
-                    return;
-                if (ReferenceEquals(removed, state))
-                    return;
+            if (_channels.TryRemove(key, out var removed) && !ReferenceEquals(removed, state))
                 _channels.TryAdd(key, removed);
-                Thread.Yield();
-            }
         }
 
         public void Dispose()

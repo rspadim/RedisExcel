@@ -65,7 +65,7 @@ r.publish("canal_alerta", "ALTA")
 ## 🚀 Example: Subscribe and UDF from Excel (fetch data)
 
 ```Excel
-=RedisUDFGet("preco_btc", "67000.50")                          // receive GET (key-value database) with UDF (no character limit)
+=RedisUDFGet("preco_btc")                                      // receive GET (key-value database) with UDF (no character limit)
 =RTD("RedisRtd", , "GET", "canal_alerta")                      // receive GET (key-value database - automatic pooling) with RTD (max of 255 characters)
 =RedisUDFChannelLatest("canal_alerta")                         // receive PUB/SUB with UDF (no character limit)
 =RTD("RedisRtd", , "SUB", "canal_alerta")                      // receive PUB/SUB with RTD (max of 255 characters)
@@ -129,7 +129,7 @@ You can find other connection string formats in the [StackExchange.Redis configu
 
 | Function                    | Description                            | 
 | --------------------------- | -------------------------------------- | 
-| RedisRTDConnectionCount     | Number of active Redis connections     | 
+| RedisRTDConnectionCount     | Number of active Redis connections (RTD only; UDF excluded) | 
 | RedisRTDSubscriptionCount   | Active subscriptions (RTD only; UDF excluded) | 
 | RedisRTDTopicCount          | Total number of RTD topics registered  | 
 | RedisRTDChannelCount        | Distinct subscribed channels (RTD only) | 
@@ -203,6 +203,7 @@ Functions to use directly in Excel cells:
 | RedisUDFSetRemove                | Remove a set member              | key, value, optionalHost                  |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
 | RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
+| RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |

@@ -51,11 +51,18 @@
   still run in that tick.
 - Failed Redis connects are no longer cached: the connection entry is dropped
   and retried on the next call instead of poisoning the host until Excel
-  restarts.
+  restarts; a failed connection attempt now removes only its own cache entry
+  (a fresh entry created concurrently is preserved).
+- RTD polling commits the dedup state only after a successful Excel push, and
+  a failed Excel update restores the dirty flag so the value is retried on the
+  next tick; `ServerTerminate` marks topics disconnected before stopping the
+  timers.
 - Subscription manager hardened: network I/O moved outside the per-channel
   lock, a manager dispose flag, value-checked channel removal (no state
-  eviction races) and length-prefixed subscription keys (no collision when
-  hosts/channels contain control characters).
+  eviction races) and host-length-prefixed subscription keys (no collision
+  when hosts/channels contain control characters); a late unsubscribe can no
+  longer tear down a freshly installed handler (the network gate is held
+  across Unsubscribe).
 - Subscription manager shutdown race closed: a channel state created
   concurrently with `Dispose()` can no longer subscribe after shutdown.
 - Joiner retry: every `Subscribe` re-ensures the single StackExchange.Redis
@@ -81,8 +88,14 @@
 - Numeric cell values are written to Redis with the invariant culture
   (`67000.5`, not `67000,5` on comma-decimal locales), covering single sets,
   matrix/key-value setters, hash fields, channel publishes and list pushes.
-  Identifiers (keys, hash keys, fields, channels, patterns) are now also
-  converted with the invariant culture.
+  Identifiers (keys, hash keys, fields, channels, patterns) and values are
+  converted with the invariant culture. Null/`ExcelMissing`/`ExcelEmpty`/
+  `ExcelError` cell values become null and are never sent as a Redis key;
+  empty/null values are stored as `""` (they no longer reach Redis as a null
+  `RedisValue` that would delete the key).
+- `RedisUDFExpire` rejects non-positive TTLs; `RedisUDFType` reports `unknown`
+  for unrecognized key types; `RedisUDFJSONToMatrix` accepts numeric cells
+  invariantly.
 
 ## v1.1.3
 

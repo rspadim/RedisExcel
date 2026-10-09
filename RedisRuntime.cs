@@ -21,12 +21,34 @@ namespace RedisExcel
 
         public static RedisConnectionManager Connections
         {
-            get { EnsureInitialized(); return _connections; }
+            get
+            {
+                EnsureInitialized();
+                var value = _connections;
+                if (value == null)
+                {
+                    // Shutdown raced with this access; recreate once.
+                    EnsureInitialized();
+                    value = _connections;
+                }
+                return value ?? throw new InvalidOperationException("RedisRuntime is shutting down");
+            }
         }
 
         public static RedisSubscriptionManager Subscriptions
         {
-            get { EnsureInitialized(); return _subscriptions; }
+            get
+            {
+                EnsureInitialized();
+                var value = _subscriptions;
+                if (value == null)
+                {
+                    // Shutdown raced with this access; recreate once.
+                    EnsureInitialized();
+                    value = _subscriptions;
+                }
+                return value ?? throw new InvalidOperationException("RedisRuntime is shutting down");
+            }
         }
 
         private static void EnsureInitialized()

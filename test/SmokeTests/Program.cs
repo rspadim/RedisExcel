@@ -83,7 +83,7 @@ internal static class Program
         // Regression (v1.1.0): disconnecting one topic must not tear down the other listener.
         tokenA.Dispose();
         Check(WaitUntil(() => subscriptions.ListenerCount == 1, 5000), "listener A removed");
-        Check(numsub() == 1, "channel stays subscribed while B is still active");
+        Check(WaitUntil(() => numsub() == 1, 5000), "channel stays subscribed while B is still active");
 
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "msg2");
         Check(WaitUntil(() => { lock (Sync) return receivedB.Count == 2 && receivedB[1] == "msg2"; }, 5000), "B keeps receiving after A left");
@@ -115,12 +115,14 @@ internal static class Program
         tokenD.Dispose();
 
         // Pattern subscriptions are never deduplicated, and pattern/literal
-        // refcounts are independent (separate channel states).
+        // refcounts are independent (separate channel states). Unique channels
+        // per run avoid interference from leftovers of an aborted prior run.
+        string patBase = "smoke:pat:" + Guid.NewGuid().ToString("N");
         var receivedPat = new List<string>();
         var receivedLit = new List<string>();
-        var patToken = subscriptions.Subscribe(host, "pat:*", pattern: true,
+        var patToken = subscriptions.Subscribe(host, patBase + ":*", pattern: true,
             onMessage: m => { lock (Sync) receivedPat.Add(m); });
-        var litToken = subscriptions.Subscribe(host, "pat:other", pattern: false,
+        var litToken = subscriptions.Subscribe(host, patBase + ":other", pattern: false,
             onMessage: m => { lock (Sync) receivedLit.Add(m); });
 
         Func<string, long> numsubOf = ch =>
@@ -129,23 +131,22 @@ internal static class Program
             return arr.Length >= 2 ? (long)arr[1] : 0;
         };
 
-        // Patterns do not show up in PUBSUB NUMSUB; NUMPAT covers them.
-        Check(WaitUntil(() => (long)server.Execute("PUBSUB", "NUMPAT") >= 1, 5000),
-            "pattern subscription active on the server");
-        Check(WaitUntil(() => numsubOf("pat:other") == 1, 5000),
+        // Pattern subscriptions do not show up in PUBSUB NUMSUB; their delivery
+        // assertions below prove them, while the literal side is waited on here.
+        Check(WaitUntil(() => numsubOf(patBase + ":other") == 1, 5000),
             "literal channel active on the server");
         Check(subscriptions.ChannelCount == 2 && subscriptions.ListenerCount == 2,
             "pattern and literal subscriptions tracked independently");
 
-        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup");
-        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup");
-        publisher.Publish(new RedisChannel("pat:other", RedisChannel.PatternMode.Literal), "dup");
-        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup2");
+        publisher.Publish(new RedisChannel(patBase + ":one", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(patBase + ":one", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(patBase + ":other", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(patBase + ":one", RedisChannel.PatternMode.Literal), "dup2");
 
-        // "pat:*" also matches "pat:other", so the pattern listener must see all
-        // four messages (2x "dup" @ pat:one + 1x "dup" @ pat:other + "dup2").
-        // If identical consecutive payloads were suppressed for patterns it
-        // would stop at two ("dup" + "dup2").
+        // patBase + ":*" also matches patBase + ":other", so the pattern
+        // listener must see all four messages (2x "dup" @ :one + 1x "dup" @
+        // :other + "dup2"). If identical repeated payloads were suppressed for
+        // patterns it would stop at two ("dup" + "dup2").
         Check(WaitUntil(() => { lock (Sync) return receivedPat.Count == 4; }, 5000),
             "pattern listener received every matching message (3x \"dup\" + \"dup2\", no deduplication)");
         bool patternDuplicatesDelivered;
@@ -163,13 +164,16 @@ internal static class Program
         Check(WaitUntil(() => subscriptions.ListenerCount == 1, 5000),
             "pattern listener removed, literal listener kept");
         Check(subscriptions.ChannelCount == 1, "only the literal channel state remains");
-        publisher.Publish(new RedisChannel("pat:other", RedisChannel.PatternMode.Literal), "after-pat");
+        publisher.Publish(new RedisChannel(patBase + ":other", RedisChannel.PatternMode.Literal), "after-pat");
         Check(WaitUntil(() => { lock (Sync) return receivedLit.Count == 2 && receivedLit[1] == "after-pat"; }, 5000),
             "literal channel still receives after the pattern left");
-        Check(numsubOf("pat:other") == 1, "literal channel still subscribed on the server");
+        Check(WaitUntil(() => numsubOf(patBase + ":other") == 1, 5000),
+            "literal channel still subscribed on the server");
         litToken.Dispose();
-        Check(WaitUntil(() => numsubOf("pat:other") == 0, 5000),
+        Check(WaitUntil(() => numsubOf(patBase + ":other") == 0, 5000),
             "literal channel unsubscribed after its last listener left");
+        Check(subscriptions.ChannelCount == 0 && subscriptions.ListenerCount == 0,
+            "all pattern/literal channels released");
 
         // Disposing the same token twice is a safe no-op.
         string doubleDisposeChannel = "smoke:double:" + Guid.NewGuid().ToString("N");
@@ -230,9 +234,8 @@ internal static class Program
             "origin listener counts track each tag");
         Check(subscriptions.ChannelCountWithOrigin("smokeA") == 1 && subscriptions.ChannelCountWithOrigin("smokeB") == 1,
             "origin channel counts track channels with that tag");
-        Check(subscriptions.ListenerCount >= subscriptions.ListenerCountWithOrigin("smokeA") + subscriptions.ListenerCountWithOrigin("smokeB")
-              && subscriptions.ChannelCount >= subscriptions.ChannelCountWithOrigin("smokeA") + subscriptions.ChannelCountWithOrigin("smokeB"),
-            "parameterless counters remain >= origin counts");
+        Check(subscriptions.ListenerCount == totalListenersBefore + 2 && subscriptions.ChannelCount == totalChannelsBefore + 2,
+            "parameterless counters reflect exactly the two origin subscriptions");
 
         originTokenA.Dispose();
         originTokenB.Dispose();

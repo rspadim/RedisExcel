@@ -75,10 +75,11 @@ namespace RedisExcel
             }
             catch
             {
-                // Do not cache a failed connect: drop the entry so the next call retries.
-                // Only remove our own entry in case another thread already replaced it.
-                if (dictionary.TryGetValue(host, out var current) && ReferenceEquals(current, lazy))
-                    dictionary.TryRemove(host, out _);
+                // Drop only OUR failed entry; a fresh entry created by another thread
+                // in the meantime must be preserved (.NET Framework has no atomic
+                // value-checked TryRemove).
+                if (dictionary.TryRemove(host, out var removed) && !ReferenceEquals(removed, lazy))
+                    dictionary.TryAdd(host, removed);
                 throw;
             }
         }

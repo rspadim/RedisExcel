@@ -38,6 +38,7 @@ namespace RedisExcel
 
     public sealed class TopicData
     {
+        private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private readonly object _sync = new object();
         private string _lastValue;
         private bool _dirty = true;
@@ -68,32 +69,55 @@ namespace RedisExcel
         private RedisValue _lastPolledValue;
         private bool _hasLastPolledValue;
 
+        // Two-phase commit for polled values: compare first, store only after the Excel
+        // push succeeds. Committing before the push would mark a throwing value as seen
+        // and suppress it until it changes again.
+
         /// <summary>TRUE when the polled value changed since the previous tick.</summary>
-        public bool ShouldUpdatePolledValue(RedisValue value)
+        public bool HasChangedPolledValue(RedisValue value)
         {
             lock (_sync)
             {
                 if (_hasLastPolledValue && _lastPolledValue == value)
                     return false;
+                return true;
+            }
+        }
+
+        /// <summary>Stores the polled value as seen; call only after a successful push.</summary>
+        public void CommitPolledValue(RedisValue value)
+        {
+            lock (_sync)
+            {
                 _lastPolledValue = value;
                 _hasLastPolledValue = true;
-                return true;
             }
         }
 
         private HashEntry[] _lastPolledHash;
         private bool _hasLastPolledHash;
 
+        // Two-phase commit for polled hashes: compare first, store the reference only
+        // after the Excel push succeeds, so a throwing push is retried on the next tick.
+
         /// <summary>TRUE when the polled hash changed since the previous tick.</summary>
-        public bool ShouldUpdatePolledHash(HashEntry[] entries)
+        public bool HasChangedPolledHash(HashEntry[] entries)
         {
             lock (_sync)
             {
                 if (_hasLastPolledHash && RedisResultFormatter.HashEquals(_lastPolledHash, entries))
                     return false;
+                return true;
+            }
+        }
+
+        /// <summary>Stores the polled hash as seen; call only after a successful push.</summary>
+        public void CommitPolledHash(HashEntry[] entries)
+        {
+            lock (_sync)
+            {
                 _lastPolledHash = entries;
                 _hasLastPolledHash = true;
-                return true;
             }
         }
 
@@ -111,6 +135,8 @@ namespace RedisExcel
 
         public void UpdateOnly(string data)
         {
+            if (Disconnected)
+                return;
             lock (_sync)
             {
                 _lastValue = data;
@@ -132,7 +158,19 @@ namespace RedisExcel
             }
             if (Disconnected)
                 return;
-            Topic.UpdateValue(value);
+            try
+            {
+                Topic.UpdateValue(value);
+            }
+            catch (Exception ex)
+            {
+                // Mark dirty again so the next Excel tick retries instead of losing the value.
+                logger.Error(ex, "SendToExcelIfDirty: update failed");
+                lock (_sync)
+                {
+                    _dirty = true;
+                }
+            }
         }
 
         public override string ToString()
@@ -247,16 +285,18 @@ namespace RedisExcel
         protected override void ServerTerminate()
         {
             logger.Info("ServerTerminate");
-            DisposeTimer(ref _redisTimer);
-            DisposeTimer(ref _excelTimer);
-            DisposeTimer(ref _counterTimer);
 
-            // Mark every topic first so in-flight callbacks and poll ticks stop
-            // publishing before subscriptions are torn down and registries cleared.
+            // Mark every topic before disposing the timers: a tick already in flight must
+            // see Disconnected and stop publishing, and no timer may run against live
+            // registries after teardown starts.
             foreach (var td in _polledTopics.Values)
                 td.Disconnected = true;
             foreach (var td in _subscribedTopics.Values)
                 td.Disconnected = true;
+
+            DisposeTimer(ref _redisTimer);
+            DisposeTimer(ref _excelTimer);
+            DisposeTimer(ref _counterTimer);
 
             foreach (var td in _subscribedTopics.Values)
             {
@@ -543,9 +583,18 @@ namespace RedisExcel
                         for (int i = 0; i < gets.Count; i++)
                         {
                             var td = gets[i];
-                            if (_skipRepeatedMessages && !td.ShouldUpdatePolledValue(values[i]))
+                            if (_skipRepeatedMessages && !td.HasChangedPolledValue(values[i]))
                                 continue;
-                            Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                            // Per-item try so one failing Excel push cannot abort the whole MGET batch.
+                            try
+                            {
+                                Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                                td.CommitPolledValue(values[i]);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.Error(ex, $"PollHost: GET key={td.KeyOrChannel}, host={host}");
+                            }
                         }
                     }
                 }
@@ -582,9 +631,10 @@ namespace RedisExcel
                 try
                 {
                     var value = pair.Value.GetAwaiter().GetResult();
-                    if (_skipRepeatedMessages && !pair.Key.ShouldUpdatePolledValue(value))
+                    if (_skipRepeatedMessages && !pair.Key.HasChangedPolledValue(value))
                         continue;
                     Publish(pair.Key, value.HasValue ? value.ToString() : "(no value)");
+                    pair.Key.CommitPolledValue(value);
                 }
                 catch (Exception ex)
                 {
@@ -596,9 +646,10 @@ namespace RedisExcel
                 try
                 {
                     var entries = pair.Value.GetAwaiter().GetResult();
-                    if (_skipRepeatedMessages && !pair.Key.ShouldUpdatePolledHash(entries))
+                    if (_skipRepeatedMessages && !pair.Key.HasChangedPolledHash(entries))
                         continue;
                     Publish(pair.Key, RedisResultFormatter.FormatHash(entries));
+                    pair.Key.CommitPolledHash(entries);
                 }
                 catch (Exception ex)
                 {
