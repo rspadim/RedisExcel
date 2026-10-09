@@ -21,9 +21,10 @@ namespace RedisExcel
     /// Hardened lifecycle: network calls (Subscribe/Unsubscribe) are serialized per
     /// channel through a dedicated lock but always run outside the listener lock, so
     /// message fan-out never blocks behind socket I/O. Subscribe racing with Dispose()
-    /// either throws ObjectDisposedException or fully rolls back its listener. Channel
-    /// entry removal is single-shot: a stale removal restores the currently installed
-    /// entry instead of evicting it (see RemoveChannelEntry).
+    /// usually throws ObjectDisposedException or fully rolls back its listener; when
+    /// Dispose() wins the final check the registration is still returned and is torn
+    /// down with the manager. Channel entry removal re-checks the mapping and restores
+    /// a raced fresh entry instead of evicting it (see RemoveChannelEntry).
     ///
     /// Duplicate suppression: feeds republish unchanged values constantly; identical
     /// consecutive payloads are compared as raw bytes (no string decoding) and skipped
@@ -116,6 +117,14 @@ namespace RedisExcel
         /// is a caller-defined tag (for example "RTD" or "UDF") used only for counting
         /// via <see cref="ListenerCountWithOrigin(string)"/> / <see cref="ChannelCountWithOrigin(string)"/>.
         /// </summary>
+        /// <remarks>
+        /// A concurrent <see cref="Dispose"/> can have a third outcome beyond
+        /// "throws" / "rolled back": when the final disposal check loses the race
+        /// by an instant, the registration is returned and is disposed together
+        /// with the manager (or when its own token is disposed); it is never left
+        /// half-installed. Disposing the returned token is always safe and
+        /// idempotent.
+        /// </remarks>
         public IDisposable Subscribe(string host, string channel, bool pattern, Action<string> onMessage, string origin = null)
         {
             if (_disposed)
@@ -219,13 +228,31 @@ namespace RedisExcel
 
         /// <summary>
         /// Removes the registry entry only if it still maps to this exact state.
-        /// .NET Framework has no atomic value-checked TryRemove, so a mismatched
-        /// (freshly re-created) entry is simply restored instead of retried.
+        /// .NET Framework has no atomic value-checked TryRemove, so the mapping
+        /// is re-checked and a raced fresh entry that got evicted is restored
+        /// with a bounded retry; an entry that is currently installed is never
+        /// removed, so a live state stays reachable.
         /// </summary>
         private void RemoveChannelEntry(string key, ChannelState state)
         {
-            if (_channels.TryRemove(key, out var removed) && !ReferenceEquals(removed, state))
-                _channels.TryAdd(key, removed);
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                if (!_channels.TryGetValue(key, out var current))
+                    return; // already gone (Dispose cleared it or a remover won)
+                if (!ReferenceEquals(current, state))
+                    return; // a fresh live state owns the key: leave it alone
+                if (_channels.TryRemove(key, out var removed))
+                {
+                    if (ReferenceEquals(removed, state))
+                        return; // our state was removed cleanly
+                    // The mapping changed between the check and the remove:
+                    // put the evicted live entry back (retry if the restore
+                    // races with yet another insert).
+                    if (_channels.TryAdd(key, removed))
+                        return;
+                }
+            }
+            logger.Debug($"RemoveChannelEntry: gave up restoring a raced entry for key={key}");
         }
 
         public void Dispose()
@@ -342,9 +369,12 @@ namespace RedisExcel
             public void ResetLastMessage()
             {
                 // HandleMessage runs on the subscriber thread without this lock.
-                // A benign race with it only causes one redundant fan-out (the
-                // joiner is in the rebuilt snapshot), never a lost message.
-                _hasLastMessage = false;
+                // The flag is published/released with Volatile accesses (paired
+                // with HandleMessage), so a concurrent check either observes the
+                // reset or the fully published payload. A benign race with it
+                // only causes one redundant fan-out (the joiner is in the
+                // rebuilt snapshot), never a lost message.
+                Volatile.Write(ref _hasLastMessage, false);
                 _lastMessage = RedisValue.Null;
             }
 
@@ -435,10 +465,13 @@ namespace RedisExcel
                 // skip the string decode and the whole fan-out. StackExchange.Redis
                 // delivers messages for a channel sequentially, so no lock is needed.
                 // Patterns are excluded because different channels interleave here.
-                if (_skipRepeated && !Pattern && _hasLastMessage && message == _lastMessage)
+                // The flag is the publication point: Volatile read/write pairs with
+                // ResetLastMessage, and _lastMessage is only read after observing
+                // the flag (release/acquire), so the caller-side reset is safe.
+                if (_skipRepeated && !Pattern && Volatile.Read(ref _hasLastMessage) && message == _lastMessage)
                     return;
                 _lastMessage = message;
-                _hasLastMessage = true;
+                Volatile.Write(ref _hasLastMessage, true);
 
                 string text = message; // implicit RedisValue -> string conversion (may be null, as in the original code)
                 var listeners = _listenersSnapshot;

@@ -112,5 +112,28 @@ namespace RedisExcel
                 _connections = null;
             }
         }
+
+        /// <summary>
+        /// Clears the shutdown tombstone so a surviving AppDomain (add-in
+        /// unloaded and reloaded without an Excel restart) can lazily recreate
+        /// the managers on the next access. No-op when the runtime was not
+        /// shut down; thread-safe under the same lock used by
+        /// <see cref="Shutdown"/>.
+        /// </summary>
+        public static void ResetAfterAddInReload()
+        {
+            lock (Sync)
+            {
+                if (!_shutdown)
+                    return;
+                // Managers were disposed and nulled by Shutdown; clear the
+                // fields again for clarity, then drop the tombstone last so a
+                // racing EnsureInitialized never observes a cleared flag with
+                // stale managers.
+                _subscriptions = null;
+                _connections = null;
+                _shutdown = false;
+            }
+        }
     }
 }

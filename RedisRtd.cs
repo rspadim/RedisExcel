@@ -18,6 +18,9 @@ namespace RedisExcel
     {
         public void AutoOpen()
         {
+            // A same-process reload (Excel re-opening the add-in without a new
+            // AppDomain) must not reuse the shut-down runtime.
+            RedisRuntime.ResetAfterAddInReload();
             ComServer.DllRegisterServer();
             UpdateCheck.Start();
         }
@@ -40,7 +43,12 @@ namespace RedisExcel
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private readonly object _sync = new object();
+        private readonly object _subscribeSync = new object();
         private string _lastValue;
+
+        /// <summary>Maximum payload length embedded in ToString()/log lines.</summary>
+        private const int LastValueLogLimit = 64;
+
         // Not dirty initially: the "(ConnectData)" placeholder returned by
         // ConnectData must stay visible until the first real value arrives
         // (poll result or subscription message); flushing the initial null
@@ -61,7 +69,57 @@ namespace RedisExcel
         public string KeyOrChannel { get; }
         public string Field { get; }
         public string Host { get; }
-        public IDisposable Subscription { get; set; }
+        public IDisposable Subscription { get; private set; }
+
+        /// <summary>
+        /// Failed Subscribe attempts for this topic: the first failure is logged at
+        /// Warning, later retries at Debug (see RedisRtd.TrySubscribe).
+        /// </summary>
+        public int SubscribeAttempts;
+
+        private int _subscribeGate;
+
+        /// <summary>
+        /// TRUE when the caller acquired the exclusive right to run Subscribe for
+        /// this topic. Guards against ConnectData's initial attempt and the Redis
+        /// tick retry subscribing the same topic twice (which would leak one
+        /// registration).
+        /// </summary>
+        public bool TryBeginSubscribe() => Interlocked.CompareExchange(ref _subscribeGate, 1, 0) == 0;
+
+        public void EndSubscribe() => Interlocked.Exchange(ref _subscribeGate, 0);
+
+        /// <summary>
+        /// Installs the subscription unless the topic was disconnected meanwhile.
+        /// Returns false when disconnected: the caller must dispose the fresh token.
+        /// </summary>
+        public bool InstallSubscription(IDisposable subscription)
+        {
+            lock (_subscribeSync)
+            {
+                if (Disconnected)
+                    return false;
+                Subscription = subscription;
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// Marks the topic disconnected and atomically detaches (and returns) the
+        /// installed subscription, so a concurrent install can never be lost.
+        /// Returns null when there is no subscription (for example a SUB/PSUB
+        /// topic whose initial Subscribe failed and is awaiting a retry).
+        /// </summary>
+        public IDisposable DetachSubscription()
+        {
+            lock (_subscribeSync)
+            {
+                Disconnected = true;
+                var subscription = Subscription;
+                Subscription = null;
+                return subscription;
+            }
+        }
 
         /// <summary>Set when the RTD server removed this topic; callbacks and flushes must stop publishing.</summary>
         public volatile bool Disconnected;
@@ -201,7 +259,18 @@ namespace RedisExcel
 
         public override string ToString()
         {
-            return $"TopicId={Topic.TopicId}, Type={Type}, KeyOrChannel={KeyOrChannel}, Field={Field}, Host={Host}, LastValue={LastValue}, Dirty={Dirty}";
+            return $"TopicId={Topic.TopicId}, Type={Type}, KeyOrChannel={KeyOrChannel}, Field={Field}, Host={Host}, LastValue={TruncateForLog(LastValue)}, Dirty={Dirty}";
+        }
+
+        /// <summary>
+        /// Caps the payload embedded in log lines: a subscription message can be
+        /// arbitrarily large, and a full ToString() would dump it into the log.
+        /// </summary>
+        private static string TruncateForLog(string value)
+        {
+            if (value == null || value.Length <= LastValueLogLimit)
+                return value;
+            return value.Substring(0, LastValueLogLimit) + "...(truncated)";
         }
     }
 
@@ -214,10 +283,17 @@ namespace RedisExcel
         private static readonly object InstancesSync = new object();
         private static volatile RedisRtd Instance;
 
+        // Monotonic start ordinal per RTD server instance: when the last-started
+        // server terminates, the status/default surface falls back to the
+        // highest-ordinal survivor instead of an arbitrary one.
+        private static long _nextStartOrdinal;
+        private long _startOrdinal;
+
         private readonly ConcurrentDictionary<int, TopicData> _polledTopics = new ConcurrentDictionary<int, TopicData>();
         private readonly ConcurrentDictionary<int, TopicData> _subscribedTopics = new ConcurrentDictionary<int, TopicData>();
 
         private long _messageCount;
+        private long _previousSecondCount;
         private long _messageCounterThreshold;
         private volatile bool _realTimeUpdates = true;
         private ENUMExcelUpdateStyle _excelUpdateStyle = ENUMExcelUpdateStyle.Automatic;
@@ -240,10 +316,12 @@ namespace RedisExcel
         public static long CurrentMessagesCounter()
         {
             var instance = Instance;
-            return instance == null ? 0 : Interlocked.Read(ref instance._messageCount);
+            // Last COMPLETED second (swapped by OnCounterTick), not the partial
+            // in-flight count that grows through the current second.
+            return instance == null ? 0 : Interlocked.Read(ref instance._previousSecondCount);
         }
 
-        public static int RedisConnectionsCount() => RedisRuntime.Connections.RtdConnectionCount;
+        public static int RedisConnectionsCount() => RedisRuntime.Connections.LiveConnectionCount();
 
         /// <summary>
         /// Number of active Redis pub/sub listeners registered by the RTD layer. RTD-only
@@ -279,6 +357,7 @@ namespace RedisExcel
             lock (InstancesSync)
             {
                 Instance = this;
+                _startOrdinal = Interlocked.Increment(ref _nextStartOrdinal);
                 Instances[this] = 0;
             }
 
@@ -330,7 +409,10 @@ namespace RedisExcel
             {
                 try
                 {
-                    td.Subscription?.Dispose();
+                    // DetachSubscription tolerates a null Subscription (a SUB/PSUB
+                    // topic whose ConnectData Subscribe failed and is awaiting a
+                    // retry) and wins any race with a retry installing a fresh token.
+                    td.DetachSubscription()?.Dispose();
                 }
                 catch (Exception ex)
                 {
@@ -344,8 +426,23 @@ namespace RedisExcel
             {
                 Instances.TryRemove(this, out _);
                 if (ReferenceEquals(Instance, this))
-                    Instance = Instances.Keys.FirstOrDefault();
+                    Instance = HighestOrdinalInstance();
             }
+        }
+
+        /// <summary>
+        /// Survivor with the highest start ordinal; called under InstancesSync so
+        /// a terminating server never promotes an older instance by accident.
+        /// </summary>
+        private static RedisRtd HighestOrdinalInstance()
+        {
+            RedisRtd best = null;
+            foreach (var candidate in Instances.Keys)
+            {
+                if (best == null || candidate._startOrdinal > best._startOrdinal)
+                    best = candidate;
+            }
+            return best;
         }
 
         private static System.Timers.Timer CreateTimer(double intervalMs, string name, Action action)
@@ -416,7 +513,10 @@ namespace RedisExcel
                     case "HGETALL":
                         if (param2 == null)
                             throw new Exception($"{command} requires a key as the second argument");
+                        // Documented arguments: key + optional host.
+                        RejectExtraArguments(command, topicInfo, 3);
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        ValidateHost(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "HGET":
@@ -424,18 +524,30 @@ namespace RedisExcel
                             throw new Exception("HGET requires a key as the second argument");
                         if (param3 == null)
                             throw new Exception("HGET requires a field as the third argument");
+                        // Documented arguments: key + field + optional host.
+                        RejectExtraArguments(command, topicInfo, 4);
                         td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
+                        ValidateHost(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "SUB":
                     case "PSUB":
                         if (param2 == null)
                             throw new Exception($"{command} requires a channel as the second argument");
+                        // Documented arguments: channel + optional host.
+                        RejectExtraArguments(command, topicInfo, 3);
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
-                        // Register the subscription first: if it throws, the catch below
-                        // returns the error and no topic is stored.
-                        td.Subscription = Subscribe(td);
+                        // A malformed host can never subscribe successfully, so
+                        // reject it up front instead of retrying it forever.
+                        ValidateHost(td.Host);
+                        // Register BEFORE subscribing: a transient Subscribe failure
+                        // keeps the topic (Subscription == null) so OnRedisTick
+                        // retries it, and the cell starts with the #ERROR text
+                        // below until the first message overwrites it.
                         _subscribedTopics[topic.TopicId] = td;
+                        var subscribeError = TrySubscribe(td);
+                        if (subscribeError != null)
+                            return $"#ERROR: ConnectData: {subscribeError}";
                         break;
                     default:
                         throw new Exception($"unknown command '{command}', expected one of [GET, HGET, HGETALL, SUB, PSUB]");
@@ -457,6 +569,41 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>
+        /// Validates the resolved host with the StackExchange.Redis parser WITHOUT
+        /// connecting. ConnectData then fails fast for a malformed endpoint (for
+        /// example a port above 65535), so the cell shows the #ERROR text instead
+        /// of staying on "(ConnectData)" while every poll tick only logs the
+        /// failure. The "#ERROR: ConnectData: ..." prefix matches SUB/PSUB and the
+        /// UDF error behavior.
+        /// </summary>
+        private static void ValidateHost(string host)
+        {
+            try
+            {
+                ConfigurationOptions.Parse(host);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"invalid Redis host '{host}'", ex);
+            }
+        }
+
+        /// <summary>
+        /// Rejects topic arguments beyond the documented ones for the command.
+        /// Excel may append trailing blank/empty tokens, so only a non-blank extra
+        /// is an error; a typo such as =RTD(...,"GET","k","host","extra") must
+        /// fail loudly instead of being silently ignored.
+        /// </summary>
+        private static void RejectExtraArguments(string command, IList<string> topicInfo, int documentedCount)
+        {
+            for (int i = documentedCount; i < topicInfo.Count; i++)
+            {
+                if (!string.IsNullOrWhiteSpace(topicInfo[i]))
+                    throw new Exception($"{command} accepts at most {documentedCount - 1} argument(s); unexpected extra argument '{topicInfo[i]}' at topic position {i + 1}");
+            }
+        }
+
         protected override void DisconnectData(Topic topic)
         {
             try
@@ -464,10 +611,11 @@ namespace RedisExcel
                 if (_subscribedTopics.TryRemove(topic.TopicId, out var sub))
                 {
                     // Mark first so in-flight callbacks stop publishing before the
-                    // shared subscription is torn down.
-                    sub.Disconnected = true;
-                    sub.Subscription?.Dispose();
-                    sub.Subscription = null;
+                    // shared subscription is torn down. DetachSubscription also
+                    // tolerates a null Subscription (failed initial Subscribe,
+                    // retry pending) and wins any race with a retry that is
+                    // installing a fresh token.
+                    sub.DetachSubscription()?.Dispose();
                     logger.Info($"DisconnectData: removed subscription {sub}");
                 }
                 else if (_polledTopics.TryRemove(topic.TopicId, out var polled))
@@ -511,6 +659,72 @@ namespace RedisExcel
             return subscription;
         }
 
+        /// <summary>
+        /// Attempts to subscribe a registered SUB/PSUB topic (idempotent). Returns
+        /// the failure message, or null on success/already-subscribed. The first
+        /// failure is logged at Warning; the Redis-tick retries at Debug, so a
+        /// permanently unreachable host does not flood the log.
+        /// </summary>
+        private string TrySubscribe(TopicData td)
+        {
+            if (td.Disconnected || td.Subscription != null)
+                return null;
+            // Only one thread may run Subscribe for a topic at a time: both the
+            // Excel thread (ConnectData) and the Redis tick (retry) can get here.
+            if (!td.TryBeginSubscribe())
+                return null;
+            try
+            {
+                if (td.Disconnected || td.Subscription != null)
+                    return null;
+                var subscription = Subscribe(td);
+                if (!td.InstallSubscription(subscription))
+                {
+                    // DisconnectData/ServerTerminate raced with the install: the
+                    // topic was removed while subscribing, so tear the fresh
+                    // registration down instead of leaking it.
+                    try
+                    {
+                        subscription.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Debug(ex, $"TrySubscribe: error disposing raced subscription, TopicId={td.Topic.TopicId}");
+                    }
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                int attempt = Interlocked.Increment(ref td.SubscribeAttempts);
+                if (attempt == 1)
+                    logger.Warn(ex, $"Subscribe failed, will retry on the next Redis tick: {td}");
+                else if (logger.IsDebugEnabled)
+                    logger.Debug(ex, $"Subscribe retry failed (attempt {attempt}): {td}");
+                return ex.Message;
+            }
+            finally
+            {
+                td.EndSubscribe();
+            }
+        }
+
+        /// <summary>
+        /// Retries SUB/PSUB topics whose Subscribe failed at ConnectData
+        /// (Subscription is null). A successful retry lets messages flow into the
+        /// cell, which still shows the initial "#ERROR: ConnectData: ..." text
+        /// until the first message overwrites it.
+        /// </summary>
+        private void RetryPendingSubscriptions()
+        {
+            foreach (var td in _subscribedTopics.Values)
+            {
+                if (td.Disconnected || td.Subscription != null)
+                    continue;
+                TrySubscribe(td);
+            }
+        }
+
         private void OnCounterTick()
         {
             if (!_counterTickGate.TryEnter())
@@ -522,7 +736,10 @@ namespace RedisExcel
             try
             {
                 UpdateRealtimeMode(allowReenable: true);
-                Interlocked.Exchange(ref _messageCount, 0);
+                // Report the last COMPLETED second instead of a partial in-flight
+                // count: swap the interval counter into _previousSecondCount
+                // (read by RedisRTDMessagesCounter) and reset the in-flight one.
+                Interlocked.Exchange(ref _previousSecondCount, Interlocked.Exchange(ref _messageCount, 0));
             }
             finally
             {
@@ -592,11 +809,19 @@ namespace RedisExcel
             }
             try
             {
+                // Failed SUB/PSUB registrations are retried even when this server
+                // instance has no polled topics.
+                RetryPendingSubscriptions();
                 if (_polledTopics.IsEmpty)
                     return;
+                var hostGroups = _polledTopics.Values.GroupBy(t => t.Host).ToList();
                 if (logger.IsDebugEnabled)
-                    logger.Debug($"OnRedisTick: polling {_polledTopics.Count} topic(s), rate={_redisUpdateRateMs}ms");
-                foreach (var group in _polledTopics.Values.GroupBy(t => t.Host))
+                    logger.Debug($"OnRedisTick: polling {_polledTopics.Count} topic(s) across {hostGroups.Count} host(s), rate={_redisUpdateRateMs}ms");
+                // Bounded parallelism so one slow/unreachable host cannot delay the
+                // others in the same tick. The per-host try/catch keeps the hosts
+                // isolated, and the TickGate is held until every host completed, so
+                // ticks never overlap (same reentrancy behavior as before).
+                Parallel.ForEach(hostGroups, new ParallelOptions { MaxDegreeOfParallelism = 4 }, group =>
                 {
                     try
                     {
@@ -606,7 +831,7 @@ namespace RedisExcel
                     {
                         logger.Error(ex, $"OnRedisTick: host={group.Key}");
                     }
-                }
+                });
             }
             finally
             {

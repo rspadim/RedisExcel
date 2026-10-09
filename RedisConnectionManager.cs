@@ -42,6 +42,36 @@ namespace RedisExcel
         public int RtdConnectionCount => _rtdData.Count + _rtdSub.Count;
         public int UdfConnectionCount => _udfData.Count;
 
+        /// <summary>
+        /// Number of multiplexers actually created across all pools (RtdData,
+        /// RtdSub, UdfData). A cached entry whose Lazy never ran (offline host)
+        /// holds nothing and is not counted, unlike RtdConnectionCount /
+        /// UdfConnectionCount, which report cached entries.
+        /// </summary>
+        public int LiveConnectionCount()
+        {
+            // Shutdown is the only place that disposes a cached multiplexer,
+            // and it clears each pool immediately after its walk; reporting
+            // zero while the fence is set skips entries that are being
+            // disposed during that window (ConnectionMultiplexer.IsDisposed
+            // is internal in StackExchange.Redis 2.8, so it cannot be checked
+            // from here; the fence stands in for it).
+            if (_shutdown)
+                return 0;
+            return CountCreated(_rtdData) + CountCreated(_rtdSub) + CountCreated(_udfData);
+        }
+
+        private static int CountCreated(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary)
+        {
+            int total = 0;
+            foreach (var kv in dictionary)
+            {
+                if (kv.Value.IsValueCreated)
+                    total++;
+            }
+            return total;
+        }
+
         public IDatabase GetDatabase(string host, RedisPool pool)
         {
             // Cache the lightweight wrappers: volatile worksheet functions call this
@@ -106,6 +136,16 @@ namespace RedisExcel
             {
                 connection = lazy.Value;
             }
+            catch (ArgumentException)
+            {
+                // Non-transient host error: ParseOptions (and Connect's
+                // wrapper) normalizes a malformed endpoint to ArgumentException.
+                // The same host fails identically on every retry, so drop the
+                // entry instead of replacing it - no dead placeholder
+                // accumulates and the pool counters stay clean.
+                dictionary.TryRemove(host, out _);
+                throw;
+            }
             catch
             {
                 if (_shutdown)
@@ -117,8 +157,9 @@ namespace RedisExcel
                 }
                 else
                 {
-                    // Atomically replace the failed attempt with a fresh Lazy so the next call
-                    // retries. TryUpdate only swaps when the current entry is still ours, so a
+                    // Genuine (transient) connection failure: atomically replace the
+                    // failed attempt with a fresh Lazy so the next call retries.
+                    // TryUpdate only swaps when the current entry is still ours, so a
                     // concurrently created entry is never removed (no leak, no double connect).
                     dictionary.TryUpdate(host,
                         new Lazy<ConnectionMultiplexer>(() => Connect(host, pool), LazyThreadSafetyMode.ExecutionAndPublication),
@@ -128,9 +169,21 @@ namespace RedisExcel
             }
             if (_shutdown)
             {
-                // Shutdown started while this connection was in flight. Keep the
-                // entry so Shutdown's walk still sees and disposes it, but fail
-                // the caller instead of returning a dying connection.
+                // Shutdown started while this connection was in flight. The
+                // walk may have run before the Lazy published its value (and
+                // then skipped/cleared the entry), or may already have closed
+                // it: disposing here is idempotent and guarantees the mux can
+                // never leak, while still failing the caller instead of
+                // returning a dying connection.
+                try
+                {
+                    connection.Close();
+                    connection.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.Debug(ex, "GetConnection: error disposing connection created during shutdown");
+                }
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
             }
             return connection;
@@ -203,7 +256,7 @@ namespace RedisExcel
             return mux;
         }
 
-        private static ConfigurationOptions ParseOptions(string host)
+        internal static ConfigurationOptions ParseOptions(string host)
         {
             try
             {
@@ -243,8 +296,21 @@ namespace RedisExcel
             {
                 foreach (var kv in dictionary)
                 {
+                    var lazy = kv.Value;
+                    if (!lazy.IsValueCreated)
+                    {
+                        // Nothing was ever created for this entry: forcing
+                        // Lazy.Value here could block for seconds behind an
+                        // in-flight connect to an unreachable host. The racing
+                        // connect sees _shutdown when it completes and disposes
+                        // its own multiplexer (post-create re-check in Connect),
+                        // so there is nothing left to close for this entry.
+                        continue;
+                    }
                     try
                     {
+                        // IsValueCreated: the value is materialized, so this
+                        // read cannot block behind a connect.
                         kv.Value.Value.Close();
                         kv.Value.Value.Dispose();
                     }

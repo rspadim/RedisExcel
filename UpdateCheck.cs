@@ -17,11 +17,15 @@ namespace RedisExcel
     {
         private const string LatestReleaseUrl = "https://api.github.com/repos/rspadim/RedisExcel/releases/latest";
 
+        /// <summary>Retry delay after a failed check (offline, rate limit, ...).</summary>
+        private static readonly TimeSpan FailureRetryDelay = TimeSpan.FromMinutes(5);
+
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private static readonly object Sync = new object();
 
         private static bool _inFlight;
         private static DateTime _lastAttemptUtc;
+        private static DateTime _lastSuccessUtc;
         private static string _latestTag;
 
         internal static string CurrentTag => BuildInfo.Tag;
@@ -30,8 +34,10 @@ namespace RedisExcel
         internal static void Start() => EnsureFresh(TimeSpan.Zero);
 
         /// <summary>
-        /// Schedules a background refresh when the last attempt is older than
-        /// <paramref name="maxAge"/>. Safe to call from worksheet functions.
+        /// Schedules a background refresh when the last SUCCESSFUL check is older
+        /// than <paramref name="maxAge"/>. After a failure the refresh is retried
+        /// after <see cref="FailureRetryDelay"/> instead of consuming the full
+        /// window silently. Safe to call from worksheet functions.
         /// </summary>
         internal static void EnsureFresh(TimeSpan maxAge)
         {
@@ -41,8 +47,19 @@ namespace RedisExcel
             {
                 if (_inFlight)
                     return;
-                if (_lastAttemptUtc != default(DateTime) && DateTime.UtcNow - _lastAttemptUtc < maxAge)
-                    return;
+                if (maxAge > TimeSpan.Zero && _lastAttemptUtc != default(DateTime))
+                {
+                    // Gate on the last success (full interval) once a check
+                    // worked; while the last attempt failed, use the short
+                    // backoff so recovery does not wait maxAge. maxAge=Zero
+                    // (Start at add-in load) keeps its original "check now"
+                    // semantics, unaffected by a previous failure's backoff.
+                    bool lastAttemptSucceeded = _lastSuccessUtc >= _lastAttemptUtc;
+                    DateTime gateFrom = lastAttemptSucceeded ? _lastSuccessUtc : _lastAttemptUtc;
+                    TimeSpan window = lastAttemptSucceeded ? maxAge : FailureRetryDelay;
+                    if (DateTime.UtcNow - gateFrom < window)
+                        return;
+                }
                 _inFlight = true;
                 _lastAttemptUtc = DateTime.UtcNow;
             }
@@ -76,7 +93,14 @@ namespace RedisExcel
                     client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
                     string json = client.GetStringAsync(LatestReleaseUrl).GetAwaiter().GetResult();
                     string tag = (string)JObject.Parse(json)["tag_name"];
-                    lock (Sync) { _latestTag = tag; }
+                    lock (Sync)
+                    {
+                        _latestTag = tag;
+                        // A response without a tag is treated as a failure (no
+                        // success marker), so the short backoff still applies.
+                        if (tag != null)
+                            _lastSuccessUtc = DateTime.UtcNow;
+                    }
                     if (logger.IsInfoEnabled)
                         logger.Info($"UpdateCheck: current={CurrentTag}, latest={tag}");
                 }

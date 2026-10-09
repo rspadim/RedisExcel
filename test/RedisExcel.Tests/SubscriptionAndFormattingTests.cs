@@ -50,10 +50,13 @@ namespace RedisExcel.Tests
     public class RedisResultFormatterTests
     {
         [Fact]
-        public void FormatHash_NullOrEmptyReturnsSentinel()
+        public void FormatHash_NullOrEmptyReturnsEmptyJsonObject()
         {
-            Assert.Equal("(no value)", RedisResultFormatter.FormatHash(null));
-            Assert.Equal("(no value)", RedisResultFormatter.FormatHash(new HashEntry[0]));
+            // A Redis hash is never empty: a missing hash is expressed as "{}"
+            // (valid JSON) instead of the "(no value)" sentinel, which stays for
+            // GET/HGET only.
+            Assert.Equal("{}", RedisResultFormatter.FormatHash(null));
+            Assert.Equal("{}", RedisResultFormatter.FormatHash(new HashEntry[0]));
         }
 
         [Fact]
@@ -86,6 +89,27 @@ namespace RedisExcel.Tests
             Assert.False(RedisResultFormatter.HashEquals(a, changed));
             Assert.False(RedisResultFormatter.HashEquals(a, new[] { new HashEntry("f1", "v1") }));
             Assert.False(RedisResultFormatter.HashEquals(null, a));
+        }
+
+        [Fact]
+        public void HashEquals_ComparesFieldNamesAsTextNotNumericValue()
+        {
+            // "1" and "01" are distinct Redis hash fields; comparing the names
+            // with RedisValue equality would normalize them to the same number
+            // and wrongly suppress an update when a field is renamed.
+            var a = new[] { new HashEntry("1", "v") };
+            var b = new[] { new HashEntry("01", "v") };
+            Assert.False(RedisResultFormatter.HashEquals(a, b));
+        }
+
+        [Fact]
+        public void HashEquals_ValuesKeepRedisValueEquality()
+        {
+            // Values keep RedisValue semantics: numeric formatting differences
+            // ("1" vs "1.00") are the same value and must not trigger an update.
+            var a = new[] { new HashEntry("f", "1") };
+            var b = new[] { new HashEntry("f", "1.00") };
+            Assert.True(RedisResultFormatter.HashEquals(a, b));
         }
     }
 }

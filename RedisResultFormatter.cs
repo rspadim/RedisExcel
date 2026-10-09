@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using StackExchange.Redis;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace RedisExcel
@@ -7,19 +8,28 @@ namespace RedisExcel
     /// <summary>Formatting helpers for values sent to Excel.</summary>
     internal static class RedisResultFormatter
     {
-        /// <summary>HGETALL as a valid JSON object: {"field":"value",...}.</summary>
+        /// <summary>
+        /// HGETALL as a valid JSON object: {"field":"value",...}. A missing hash
+        /// (null/empty entries) returns "{}": a Redis hash is never empty, so the
+        /// empty object is unambiguous and always valid JSON. The "(no value)"
+        /// sentinel is reserved for GET/HGET, which have no JSON representation.
+        /// </summary>
         internal static string FormatHash(HashEntry[] entries)
         {
             if (entries == null || entries.Length == 0)
-                return "(no value)";
+                return "{}";
             return "{" + string.Join(",", entries.Select(e =>
                 $"{JsonConvert.ToString(e.Name.ToString())}:{JsonConvert.ToString(e.Value.ToString())}")) + "}";
         }
         /// <summary>
         /// TRUE when two HGETALL results have the same fields and values.
-        /// The comparison assumes unique field names, as guaranteed by a Redis hash:
-        /// the scan is order-insensitive, so duplicated field names would not be
-        /// detected (multiplicity is ignored).
+        /// Order-insensitive and O(n): "b" is indexed by field NAME as text
+        /// (so the distinct Redis fields "1" and "01" never collide), then every
+        /// entry of "a" is looked up and its value compared with RedisValue
+        /// equality (numeric formatting differences such as "1" and "1.00" are
+        /// still the same value and must not trigger an update). The comparison
+        /// assumes unique field names, as guaranteed by a Redis hash: a
+        /// duplicated name collapses to a single dictionary entry.
         /// </summary>
         internal static bool HashEquals(HashEntry[] a, HashEntry[] b)
         {
@@ -27,23 +37,13 @@ namespace RedisExcel
                 return true;
             if (a == null || b == null || a.Length != b.Length)
                 return false;
-            // Order-insensitive: Redis may return the same hash with fields in a
-            // different order after a rehash, which is not a value change. Hash
-            // field names are unique, so for each entry in "a" we require the same
-            // Name/Value pair to exist anywhere in "b". The O(n^2) scan avoids
-            // allocating a set/dictionary on this hot polling path (hashes are small).
+            var valuesByName = new Dictionary<string, RedisValue>(b.Length, System.StringComparer.Ordinal);
+            for (int i = 0; i < b.Length; i++)
+                valuesByName[b[i].Name.ToString()] = b[i].Value;
             for (int i = 0; i < a.Length; i++)
             {
-                bool found = false;
-                for (int j = 0; j < b.Length; j++)
-                {
-                    if (a[i].Name == b[j].Name && a[i].Value == b[j].Value)
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
+                RedisValue value;
+                if (!valuesByName.TryGetValue(a[i].Name.ToString(), out value) || value != a[i].Value)
                     return false;
             }
             return true;
