@@ -15,6 +15,10 @@ namespace RedisExcel
     /// the channel is unsubscribed when the last listener leaves. On connection restore,
     /// all channels of the host are automatically re-subscribed.
     ///
+    /// Listeners may carry a caller-defined origin tag (for example "RTD" or "UDF"),
+    /// used only by the origin-scoped counters (ListenerCountWithOrigin(string) /
+    /// ChannelCountWithOrigin(string)); message delivery ignores it.
+    ///
     /// Hardened lifecycle: network calls (Subscribe/Unsubscribe) are serialized per
     /// channel through a dedicated lock but always run outside the listener lock, so
     /// message fan-out never blocks behind socket I/O. Subscribe racing with Dispose()
@@ -48,8 +52,10 @@ namespace RedisExcel
             _skipRepeated = AppConfig.Current.SkipRepeatedMessages;
         }
 
+        /// <summary>Total number of channel states (literal and pattern).</summary>
         public int ChannelCount => _channels.Count;
 
+        /// <summary>Total number of registered listeners across all channels.</summary>
         public int ListenerCount
         {
             get
@@ -61,7 +67,57 @@ namespace RedisExcel
             }
         }
 
-        public IDisposable Subscribe(string host, string channel, bool pattern, Action<string> onMessage)
+        /// <summary>
+        /// Number of channel states that have at least one listener with the given
+        /// caller-defined origin tag (for example "RTD" or "UDF"). Comparison is
+        /// ordinal (case-sensitive); a null origin matches untagged listeners.
+        /// </summary>
+        public int ChannelCountWithOrigin(string origin)
+        {
+            int total = 0;
+            foreach (var state in _channels.Values)
+            {
+                if (HasListenerWithOrigin(state, origin))
+                    total++;
+            }
+            return total;
+        }
+
+        /// <summary>
+        /// Number of registered listeners with the given caller-defined origin tag
+        /// (for example "RTD" or "UDF"). Comparison is ordinal (case-sensitive);
+        /// a null origin matches untagged listeners.
+        /// </summary>
+        public int ListenerCountWithOrigin(string origin)
+        {
+            int total = 0;
+            foreach (var state in _channels.Values)
+            {
+                foreach (var listener in state.Listeners.Values)
+                {
+                    if (listener != null && string.Equals(listener.Origin, origin, StringComparison.Ordinal))
+                        total++;
+                }
+            }
+            return total;
+        }
+
+        private static bool HasListenerWithOrigin(ChannelState state, string origin)
+        {
+            foreach (var listener in state.Listeners.Values)
+            {
+                if (listener != null && string.Equals(listener.Origin, origin, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Registers a listener for the channel. The optional <paramref name="origin"/>
+        /// is a caller-defined tag (for example "RTD" or "UDF") used only for counting
+        /// via <see cref="ListenerCountWithOrigin(string)"/> / <see cref="ChannelCountWithOrigin(string)"/>.
+        /// </summary>
+        public IDisposable Subscribe(string host, string channel, bool pattern, Action<string> onMessage, string origin = null)
         {
             if (_disposed)
                 throw new ObjectDisposedException(nameof(RedisSubscriptionManager));
@@ -74,8 +130,10 @@ namespace RedisExcel
             long id;
             while (true)
             {
+                if (_disposed)
+                    throw new ObjectDisposedException(nameof(RedisSubscriptionManager));
+
                 state = _channels.GetOrAdd(key, _ => new ChannelState(host, channel, pattern, _skipRepeated));
-                bool needSubscribe;
                 lock (state.Sync)
                 {
                     if (state.Disposed)
@@ -84,52 +142,88 @@ namespace RedisExcel
                         continue;
                     }
                     id = Interlocked.Increment(ref _nextListenerId);
-                    state.Listeners[id] = onMessage;
-                    needSubscribe = state.Listeners.Count == 1;
+                    state.Listeners[id] = new Listener(onMessage, origin);
                     state.RebuildSnapshot();
                     // Network I/O is deliberately kept outside this lock (below).
                 }
 
-                if (needSubscribe)
+                // Always ensure the handler is installed: a joiner may arrive while the
+                // first subscriber's Subscribe is still failing/rolling back, so the
+                // fast path (_subscriber != null) matters, not a listener count.
+                bool subscribed;
+                try
                 {
-                    bool subscribed;
-                    try
-                    {
-                        subscribed = state.TryEnsureSubscribed(_connections);
-                    }
-                    catch
-                    {
-                        // StackExchange.Redis may have registered the handler before
-                        // throwing; undo everything so no zombie subscription is left.
-                        lock (state.Sync)
-                        {
-                            state.Listeners.TryRemove(id, out _);
-                            state.RebuildSnapshot();
-                        }
-                        ((ICollection<KeyValuePair<string, ChannelState>>)_channels)
-                            .Remove(new KeyValuePair<string, ChannelState>(key, state));
-                        state.ReleaseSubscription();
-                        throw;
-                    }
+                    subscribed = state.TryEnsureSubscribed(_connections, this);
+                }
+                catch
+                {
+                    // Roll back only this listener; other joiners on the same state
+                    // keep the channel alive and retry on their own path.
+                    RollbackListener(state, id);
+                    throw;
+                }
 
-                    if (!subscribed)
-                    {
-                        // The state was disposed while this lock was released (manager
-                        // shutdown): drop the listener and retry. The leading _disposed
-                        // check throws on the next iteration.
-                        lock (state.Sync)
-                        {
-                            state.Listeners.TryRemove(id, out _);
-                            state.RebuildSnapshot();
-                        }
-                        continue;
-                    }
+                if (!subscribed)
+                {
+                    // State or manager disposed while the listener lock was released;
+                    // undo this listener and retry (the loop re-checks _disposed).
+                    RollbackListener(state, id);
+                    continue;
+                }
+
+                if (_disposed)
+                {
+                    // Dispose() completed while we were subscribing: the manager is
+                    // shutting down, so fail with the documented contract.
+                    RollbackListener(state, id);
+                    throw new ObjectDisposedException(nameof(RedisSubscriptionManager));
                 }
 
                 break;
             }
-            logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, listeners={state.Listeners.Count}");
+            logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, origin={origin ?? "<null>"}, listeners={state.Listeners.Count}");
             return new Registration(this, state, id);
+        }
+
+        /// <summary>
+        /// Removes a single listener after a failed/lost Subscribe. Only when this was
+        /// the last listener the state is marked disposed, evicted (value-checked) and
+        /// unsubscribed; otherwise concurrent joiners keep the channel alive.
+        /// </summary>
+        private void RollbackListener(ChannelState state, long id)
+        {
+            bool lastListener;
+            lock (state.Sync)
+            {
+                if (!state.Listeners.TryRemove(id, out _))
+                    return;
+                state.RebuildSnapshot();
+                lastListener = state.Listeners.IsEmpty;
+                if (lastListener)
+                    state.Disposed = true;
+            }
+            if (!lastListener)
+                return;
+            RemoveChannelEntry(MakeKey(state.Host, state.Name, state.Pattern), state);
+            state.ReleaseSubscription();
+        }
+
+        /// <summary>
+        /// Removes the registry entry only if it still maps to this exact state.
+        /// .NET Framework has no atomic value-checked TryRemove, so a mismatched
+        /// entry (a state re-created under the same key) is put back and retried.
+        /// </summary>
+        private void RemoveChannelEntry(string key, ChannelState state)
+        {
+            while (true)
+            {
+                if (!_channels.TryRemove(key, out var removed))
+                    return;
+                if (ReferenceEquals(removed, state))
+                    return;
+                _channels.TryAdd(key, removed);
+                Thread.Yield();
+            }
         }
 
         public void Dispose()
@@ -159,11 +253,7 @@ namespace RedisExcel
             if (!lastListener)
                 return;
 
-            // Value-checked atomic remove: a state concurrently re-created under the
-            // same registry key must never be evicted by this stale removal.
-            ((ICollection<KeyValuePair<string, ChannelState>>)_channels)
-                .Remove(new KeyValuePair<string, ChannelState>(
-                    MakeKey(state.Host, state.Name, state.Pattern), state));
+            RemoveChannelEntry(MakeKey(state.Host, state.Name, state.Pattern), state);
             state.ReleaseSubscription();
             logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
@@ -178,6 +268,22 @@ namespace RedisExcel
             return $"{(pattern ? 'P' : 'L')}\u0001{host.Length}:{host}{channel}";
         }
 
+        /// <summary>
+        /// One registered listener plus its caller-defined origin tag ("RTD", "UDF",
+        /// ...). The tag is never used for delivery, only for diagnostics/counting.
+        /// </summary>
+        private sealed class Listener
+        {
+            public readonly Action<string> Callback;
+            public readonly string Origin;
+
+            public Listener(Action<string> callback, string origin)
+            {
+                Callback = callback;
+                Origin = origin;
+            }
+        }
+
         private sealed class ChannelState
         {
             private static readonly Action<string>[] EmptyListeners = new Action<string>[0];
@@ -186,8 +292,8 @@ namespace RedisExcel
             public readonly string Name;
             public readonly bool Pattern;
             public readonly RedisChannel Channel;
-            public readonly ConcurrentDictionary<long, Action<string>> Listeners =
-                new ConcurrentDictionary<long, Action<string>>();
+            public readonly ConcurrentDictionary<long, Listener> Listeners =
+                new ConcurrentDictionary<long, Listener>();
             public readonly object Sync = new object();
             public bool Disposed;
 
@@ -220,17 +326,19 @@ namespace RedisExcel
                 var snapshot = new Action<string>[Listeners.Count];
                 int index = 0;
                 foreach (var kvp in Listeners)
-                    snapshot[index++] = kvp.Value;
+                    snapshot[index++] = kvp.Value.Callback;
                 _listenersSnapshot = snapshot;
             }
 
             /// <summary>
             /// Ensures exactly one StackExchange.Redis handler is registered for this
             /// channel. Serialized by _serSync; the listener lock is only touched to
-            /// observe disposal. Returns false when the state was disposed before the
-            /// handler could be installed.
+            /// observe disposal. Returns false when the state OR the owning manager
+            /// was disposed before the handler could be installed. On a failed
+            /// Subscribe the stored subscriber is reset and best-effort unsubscribed,
+            /// so a concurrent joiner retries cleanly.
             /// </summary>
-            public bool TryEnsureSubscribed(RedisConnectionManager connections)
+            public bool TryEnsureSubscribed(RedisConnectionManager connections, RedisSubscriptionManager manager)
             {
                 lock (_serSync)
                 {
@@ -239,39 +347,61 @@ namespace RedisExcel
                         if (Disposed)
                             return false;
                     }
+                    // The manager sets its flag before touching any state, so this
+                    // closes the window where a state is not yet marked disposed
+                    // while the manager is already shutting down.
+                    if (manager._disposed)
+                        return false;
                     if (_subscriber != null)
                         return true;
                     var subscriber = connections.GetSubscriber(Host);
                     // Assign first: if Subscribe throws after registering the handler,
                     // the rollback path can still unsubscribe it.
                     _subscriber = subscriber;
-                    subscriber.Subscribe(Channel, HandleMessage);
+                    try
+                    {
+                        subscriber.Subscribe(Channel, HandleMessage);
+                    }
+                    catch
+                    {
+                        // Reset the slot so the next joiner (or retry) attempts a fresh
+                        // Subscribe instead of trusting a half-installed handler.
+                        _subscriber = null;
+                        try
+                        {
+                            subscriber.Unsubscribe(Channel, HandleMessage);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.Debug(ex, $"TryEnsureSubscribed rollback: host={Host}, channel={Name}");
+                        }
+                        throw;
+                    }
                     return true;
                 }
             }
 
             /// <summary>
-            /// Clears the stored subscriber under _serSync and unsubscribes the handler
-            /// outside every lock. Nulling first makes concurrent ReleaseSubscription
-            /// calls no-ops instead of double-unsubscribing the same handler.
+            /// Clears the stored subscriber and unsubscribes it while holding _serSync,
+            /// so a concurrent TryEnsureSubscribed can never install a fresh handler
+            /// between the clear and the unsubscribe. The listener lock is not held.
             /// </summary>
             public void ReleaseSubscription()
             {
-                ISubscriber subscriber;
                 lock (_serSync)
                 {
-                    subscriber = _subscriber;
+                    var subscriber = _subscriber;
                     _subscriber = null;
-                }
-                if (subscriber == null)
-                    return;
-                try
-                {
-                    subscriber.Unsubscribe(Channel, HandleMessage);
-                }
-                catch (Exception ex)
-                {
-                    logger.Debug(ex, $"ReleaseSubscription: host={Host}, channel={Name}");
+                    if (subscriber == null)
+                        return;
+                    try
+                    {
+                        subscriber.Unsubscribe(Channel, HandleMessage);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Debug(ex, $"ReleaseSubscription: host={Host}, channel={Name}");
+                    }
                 }
             }
 

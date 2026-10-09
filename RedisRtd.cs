@@ -99,6 +99,8 @@ namespace RedisExcel
 
         public void UpdateAndSendToExcel(string data)
         {
+            if (Disconnected)
+                return;
             Topic.UpdateValue(data);
             lock (_sync)
             {
@@ -166,10 +168,10 @@ namespace RedisExcel
         private System.Timers.Timer _redisTimer;
         private System.Timers.Timer _counterTimer;
 
-        // Reentrancy gates: 1 while the matching timer callback is running.
-        private int _redisTickGate;
-        private int _excelTickGate;
-        private int _counterTickGate;
+        // Reentrancy gates: a tick is skipped while the matching timer callback is still running.
+        private readonly TickGate _redisTickGate = new TickGate();
+        private readonly TickGate _excelTickGate = new TickGate();
+        private readonly TickGate _counterTickGate = new TickGate();
 
         public static long CurrentMessagesCounter()
         {
@@ -180,10 +182,10 @@ namespace RedisExcel
         public static int RedisConnectionsCount() => RedisRuntime.Connections.RtdConnectionCount;
 
         /// <summary>
-        /// Number of active Redis pub/sub listeners. This is process-wide: it includes
-        /// listeners registered by the UDF layer (shared RedisSubscriptionManager).
+        /// Number of active Redis pub/sub listeners registered by the RTD layer. RTD-only
+        /// (UDF listeners are excluded; they use a separate origin).
         /// </summary>
-        public static int RedisSubscriptionsCount() => RedisRuntime.Subscriptions.ListenerCount;
+        public static int RedisSubscriptionsCount() => RedisRuntime.Subscriptions.ListenerCountWithOrigin("RTD");
 
         public static int TopicsCount()
         {
@@ -194,10 +196,10 @@ namespace RedisExcel
         }
 
         /// <summary>
-        /// Number of Redis channels/patterns with at least one listener. This is process-wide:
-        /// it includes channels subscribed by the UDF layer (shared RedisSubscriptionManager).
+        /// Number of Redis channels/patterns with at least one RTD listener. RTD-only
+        /// (UDF-subscribed channels are excluded; they use a separate origin).
         /// </summary>
-        public static int ChannelTopicsCount() => RedisRuntime.Subscriptions.ChannelCount;
+        public static int ChannelTopicsCount() => RedisRuntime.Subscriptions.ChannelCountWithOrigin("RTD");
 
         public static string DefaultHost() => Instance?._defaultHost;
 
@@ -248,6 +250,13 @@ namespace RedisExcel
             DisposeTimer(ref _redisTimer);
             DisposeTimer(ref _excelTimer);
             DisposeTimer(ref _counterTimer);
+
+            // Mark every topic first so in-flight callbacks and poll ticks stop
+            // publishing before subscriptions are torn down and registries cleared.
+            foreach (var td in _polledTopics.Values)
+                td.Disconnected = true;
+            foreach (var td in _subscribedTopics.Values)
+                td.Disconnected = true;
 
             foreach (var td in _subscribedTopics.Values)
             {
@@ -408,14 +417,14 @@ namespace RedisExcel
                     td.UpdateAndSendToExcel(message);
                 else
                     td.UpdateOnly(message);
-            });
+            }, "RTD");
             logger.Info($"Subscribe: subscribed {td}");
             return subscription;
         }
 
         private void OnCounterTick()
         {
-            if (Interlocked.CompareExchange(ref _counterTickGate, 1, 0) != 0)
+            if (!_counterTickGate.TryEnter())
             {
                 if (logger.IsDebugEnabled)
                     logger.Debug("OnCounterTick: previous tick still running, skipping");
@@ -428,13 +437,13 @@ namespace RedisExcel
             }
             finally
             {
-                Interlocked.Exchange(ref _counterTickGate, 0);
+                _counterTickGate.Exit();
             }
         }
 
         private void OnExcelTick()
         {
-            if (Interlocked.CompareExchange(ref _excelTickGate, 1, 0) != 0)
+            if (!_excelTickGate.TryEnter())
             {
                 if (logger.IsDebugEnabled)
                     logger.Debug("OnExcelTick: previous tick still running, skipping");
@@ -456,7 +465,7 @@ namespace RedisExcel
             }
             finally
             {
-                Interlocked.Exchange(ref _excelTickGate, 0);
+                _excelTickGate.Exit();
             }
         }
 
@@ -484,7 +493,7 @@ namespace RedisExcel
 
         private void OnRedisTick()
         {
-            if (Interlocked.CompareExchange(ref _redisTickGate, 1, 0) != 0)
+            if (!_redisTickGate.TryEnter())
             {
                 if (logger.IsDebugEnabled)
                     logger.Debug("OnRedisTick: previous tick still running, skipping");
@@ -510,7 +519,7 @@ namespace RedisExcel
             }
             finally
             {
-                Interlocked.Exchange(ref _redisTickGate, 0);
+                _redisTickGate.Exit();
             }
         }
 

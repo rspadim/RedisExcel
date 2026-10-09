@@ -130,9 +130,9 @@ You can find other connection string formats in the [StackExchange.Redis configu
 | Function                    | Description                            | 
 | --------------------------- | -------------------------------------- | 
 | RedisRTDConnectionCount     | Number of active Redis connections     | 
-| RedisRTDSubscriptionCount   | Number of active Redis subscriptions   | 
+| RedisRTDSubscriptionCount   | Active subscriptions (RTD only; UDF excluded) | 
 | RedisRTDTopicCount          | Total number of RTD topics registered  | 
-| RedisRTDChannelCount        | Number of distinct subscribed channels | 
+| RedisRTDChannelCount        | Distinct subscribed channels (RTD only) | 
 | RedisRTDDefaultHost         | Current default Redis host             | 
 | RedisRTDExcelUpdateInterval | Excel update interval (ms)             | 
 | RedisRTDRedisUpdateInterval | Redis polling interval (ms)            | 
@@ -185,6 +185,8 @@ Functions to use directly in Excel cells:
 | RedisUDFSetJSON                  | Set JSON-encoded data            | key, matrix, optionalHost                 |
 | RedisUDFSetKV / SetKVPair        | Set key-value pairs              | keys, values / pairs, optionalHost        |
 | RedisUDFGetMultiple              | Get multiple keys                | keys\[], multipleColumnsOpt, optionalHost |
+| RedisUDFType                     | Get the key type                 | key, optionalHost                         |
+| RedisUDFRename                   | Rename a key                     | key, newKey, optionalHost                 |
 | RedisUDFExists / ExistsMultiples | Check key existence              | key / keys\[], optionalHost               |
 | RedisUDFTTL / TTLMultiples       | Time-to-live (TTL) for keys      | key / keys\[], optionalHost               |
 | RedisUDFSetEx                    | Set a key with a TTL             | key, value, ttlSeconds, optionalHost      |
@@ -192,10 +194,13 @@ Functions to use directly in Excel cells:
 | RedisUDFDel                      | Delete a key (returns deleted count) | key, optionalHost                     |
 | RedisUDFIncr / RedisUDFIncrBy    | Atomic counters                  | key, optionalHost / key, increment, optionalHost |
 | RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
+| RedisUDFHashDel                  | Delete a hash field              | hashKey, field, optionalHost              |
 | RedisUDFListPushRight / Left     | Push to a list (returns length)  | key, value, optionalHost                  |
 | RedisUDFListRange                | Get a range of list elements     | key, start, stop, optionalHost            |
+| RedisUDFListPopRight / Left      | Pop a list element               | key, optionalHost                         |
 | RedisUDFSetAdd                   | Add a member to a set (returns added count) | key, value, optionalHost        |
 | RedisUDFSetMembers               | Get all members of a set         | key, optionalHost                         |
+| RedisUDFSetRemove                | Remove a set member              | key, value, optionalHost                  |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
 | RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |

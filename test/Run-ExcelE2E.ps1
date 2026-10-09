@@ -241,6 +241,18 @@ function Wait-CellNotEmpty($Sheet, [string]$Address, [int]$TimeoutSeconds = 20) 
     return $false
 }
 
+function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$TimeoutSeconds = 20) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $text = ''
+    while ((Get-Date) -lt $deadline) {
+        $text = Get-CellText $Sheet $Address
+        if ($text -match $Pattern) { return $true }
+        Start-Sleep -Milliseconds 300
+    }
+    Write-Host ("      {0} = '{1}' (expected /{2}/)" -f $Address, $text, $Pattern) -ForegroundColor DarkGray
+    return $false
+}
+
 # ---------------------------------------------------------------- setup ----
 
 Resolve-RedisCli
@@ -332,7 +344,14 @@ try {
         @{ Row = 24; Func = 'SetAdd';         Fx = '=RedisUDFSetAdd("{1}.set","x","{0}")' -f $h, $kp;                                                      Expected = $null },
         @{ Row = 25; Func = 'SetMembers';     Fx = '=INDEX(RedisUDFSetMembers("{1}.set","{0}"),1,1)' -f $h, $kp;                                           Expected = 'x' },
         @{ Row = 26; Func = 'Set locale';     Fx = '=RedisUDFSet("{1}.locale",$H$2,"{0}")' -f $h, $kp;                                               Expected = 'OK' },
-        @{ Row = 27; Func = 'Get locale';     Fx = '=RedisUDFGet("{1}.locale","{0}")' -f $h, $kp;                                                    Expected = '67000.5' }
+        @{ Row = 27; Func = 'Get locale';     Fx = '=RedisUDFGet("{1}.locale","{0}")' -f $h, $kp;                                                    Expected = '67000.5' },
+        @{ Row = 28; Func = 'Set numeric key'; Fx = '=RedisUDFSet($H$2,"dec-key","{0}")' -f $h;                                                       Expected = 'OK' },
+        @{ Row = 29; Func = 'Get numeric key'; Fx = '=RedisUDFGet($H$2,"{0}")' -f $h;                                                                 Expected = 'dec-key' },
+        @{ Row = 30; Func = 'HashDel missing'; Fx = '=RedisUDFHashDel("{1}.hash","missing","{0}")' -f $h, $kp;                                             Expected = '0' },
+        @{ Row = 31; Func = 'SetRemove missing'; Fx = '=RedisUDFSetRemove("{1}.set","missing","{0}")' -f $h, $kp;                                          Expected = '0' },
+        @{ Row = 32; Func = 'Type missing'; Fx = '=RedisUDFType("{1}.missingkey","{0}")' -f $h, $kp;                                                       Expected = 'none' },
+        @{ Row = 33; Func = 'Type string'; Fx = '=RedisUDFType("{1}.key","{0}")' -f $h, $kp;                                                               Expected = 'string' },
+        @{ Row = 34; Func = 'Type list'; Fx = '=RedisUDFType("{1}.list","{0}")' -f $h, $kp;                                                                Expected = 'list' }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -410,13 +429,20 @@ try {
     if (-not $ttlOk) { Write-Host ("      B19 = '{0}'" -f $ttlLast) -ForegroundColor DarkGray }
     Check $ttlOk 'UDF TTL sees the SetEx expiry'
     Check (Wait-CellText $udf 'B20' '0')                     'UDF Del reports 0 for a missing key'
-    Check ((Get-CellText $udf 'B21') -match '^\d+$')         'UDF Incr returns an integer'
-    Check ((Get-CellText $udf 'B22') -match '^\d+$')         'UDF ListPushRight returns an integer'
+    Check (Wait-CellRegex $udf 'B21' '^\d+$')                'UDF Incr returns an integer'
+    Check (Wait-CellRegex $udf 'B22' '^\d+$')                'UDF ListPushRight returns an integer'
     Check (Wait-CellText $udf 'B23' 'a')                     'UDF ListRange returns the first element'
-    Check ((Get-CellText $udf 'B24') -match '^\d+$')         'UDF SetAdd returns an integer'
+    Check (Wait-CellRegex $udf 'B24' '^\d+$')                'UDF SetAdd returns an integer'
     Check (Wait-CellText $udf 'B25' 'x')                     'UDF SetMembers returns the member'
     Check (Wait-CellText $udf 'B26' 'OK')                        'UDF Set stores numeric cells invariantly'
     Check (Wait-CellText $udf 'B27' '67000.5')                   'UDF Get returns the invariant number'
+    Check (Wait-CellText $udf 'B28' 'OK')                     'UDF Set stores numeric keys invariantly'
+    Check (Wait-CellText $udf 'B29' 'dec-key')                'UDF Get reads numeric keys invariantly'
+    Check (Wait-CellText $udf 'B30' '0')                      'UDF HashDel reports 0 for a missing field'
+    Check (Wait-CellText $udf 'B31' '0')                      'UDF SetRemove reports 0 for a missing member'
+    Check (Wait-CellText $udf 'B32' 'none')                   'UDF Type returns none for a missing key'
+    Check (Wait-CellText $udf 'B33' 'string')                 'UDF Type returns string'
+    Check (Wait-CellText $udf 'B34' 'list')                   'UDF Type returns list'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

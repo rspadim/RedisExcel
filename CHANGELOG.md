@@ -34,13 +34,19 @@
   - `RedisUDFSetAdd(key, value, optionalHost)` - set add (returns the number
     of members added).
   - `RedisUDFSetMembers(key, optionalHost)` - set members.
+  - `RedisUDFHashDel(hashKey, field, optionalHost)` - deletes a hash field.
+  - `RedisUDFSetRemove(key, value, optionalHost)` - removes a set member.
+  - `RedisUDFListPopRight(key, optionalHost)` /
+    `RedisUDFListPopLeft(key, optionalHost)` - pops a list element.
+  - `RedisUDFType(key, optionalHost)` - returns the key type.
+  - `RedisUDFRename(key, newKey, optionalHost)` - renames a key.
   - `RedisUDFKeys(pattern, optionalHost, pageSize)` gained an optional
     `pageSize` argument (SCAN page size).
 
 ### Robustness
 
 - Timer reentrancy gates: a slow poll/update tick no longer overlaps the next
-  one.
+  one; `TickGate`, a tested helper, implements the guard.
 - RTD polling isolates GET-multi failures per host, so `HGET`/`HGETALL` topics
   still run in that tick.
 - Failed Redis connects are no longer cached: the connection entry is dropped
@@ -50,6 +56,16 @@
   lock, a manager dispose flag, value-checked channel removal (no state
   eviction races) and length-prefixed subscription keys (no collision when
   hosts/channels contain control characters).
+- Subscription manager shutdown race closed: a channel state created
+  concurrently with `Dispose()` can no longer subscribe after shutdown.
+- Joiner retry: every `Subscribe` re-ensures the single StackExchange.Redis
+  handler (idempotent fast path), so a failed subscribe followed by another
+  listener no longer leaves a channel silently unsubscribed.
+- `ServerTerminate` marks all topics as disconnected before teardown, so
+  in-flight ticks cannot update cells after terminate.
+- Subscription listeners carry an origin tag ("RTD"/"UDF"); the RTD status
+  counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) now report RTD
+  listeners only.
 - `RedisRuntime` publication order fixed (connections/subscriptions no longer
   observable half-initialized).
 - `HGETALL` comparison is now order-insensitive: a rehash that reorders fields
@@ -65,6 +81,8 @@
 - Numeric cell values are written to Redis with the invariant culture
   (`67000.5`, not `67000,5` on comma-decimal locales), covering single sets,
   matrix/key-value setters, hash fields, channel publishes and list pushes.
+  Identifiers (keys, hash keys, fields, channels, patterns) are now also
+  converted with the invariant culture.
 
 ## v1.1.3
 

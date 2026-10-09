@@ -213,6 +213,39 @@ internal static class Program
             Check(true, "blank channel rejected");
         }
 
+        // Origin tags: caller-defined labels ("RTD"/"UDF" in the add-in) scope the
+        // counters to one consumer; the parameterless counters stay totals.
+        string originChannelA = "smoke:originA:" + Guid.NewGuid().ToString("N");
+        string originChannelB = "smoke:originB:" + Guid.NewGuid().ToString("N");
+        int totalListenersBefore = subscriptions.ListenerCount;
+        int totalChannelsBefore = subscriptions.ChannelCount;
+
+        var originTokenA = subscriptions.Subscribe(host, originChannelA, pattern: false,
+            onMessage: m => { }, origin: "smokeA");
+        var originTokenB = subscriptions.Subscribe(host, originChannelB, pattern: false,
+            onMessage: m => { }, origin: "smokeB");
+
+        Check(WaitUntil(() =>
+                subscriptions.ListenerCountWithOrigin("smokeA") == 1 && subscriptions.ListenerCountWithOrigin("smokeB") == 1, 5000),
+            "origin listener counts track each tag");
+        Check(subscriptions.ChannelCountWithOrigin("smokeA") == 1 && subscriptions.ChannelCountWithOrigin("smokeB") == 1,
+            "origin channel counts track channels with that tag");
+        Check(subscriptions.ListenerCount >= subscriptions.ListenerCountWithOrigin("smokeA") + subscriptions.ListenerCountWithOrigin("smokeB")
+              && subscriptions.ChannelCount >= subscriptions.ChannelCountWithOrigin("smokeA") + subscriptions.ChannelCountWithOrigin("smokeB"),
+            "parameterless counters remain >= origin counts");
+
+        originTokenA.Dispose();
+        originTokenB.Dispose();
+
+        Check(WaitUntil(() =>
+                subscriptions.ListenerCountWithOrigin("smokeA") == 0 && subscriptions.ListenerCountWithOrigin("smokeB") == 0, 5000),
+            "origin listener counts drop after disposal");
+        Check(WaitUntil(() =>
+                subscriptions.ChannelCountWithOrigin("smokeA") == 0 && subscriptions.ChannelCountWithOrigin("smokeB") == 0, 5000),
+            "origin channel counts drop after disposal");
+        Check(subscriptions.ListenerCount == totalListenersBefore && subscriptions.ChannelCount == totalChannelsBefore,
+            "parameterless counters back to baseline after the origin test");
+
         Console.WriteLine(_failures == 0 ? "ALL PASS" : _failures + " FAILURE(S)");
         return _failures == 0 ? 0 : 1;
     }

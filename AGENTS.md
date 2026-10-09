@@ -57,6 +57,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   server instance.
 - One StackExchange.Redis handler per channel broadcasts to every listener;
   a channel is unsubscribed only when its last listener leaves.
+- Subscription listeners carry an origin tag ("RTD"/"UDF"): the RTD status
+  counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) report RTD
+  listeners only, so UDF subscriptions no longer inflate them.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
@@ -69,8 +72,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   status/config compatibility, while delivery is coalesced by default
   (`CoalesceRealtimeUpdates`).
 - `HGETALL` output is valid JSON: `{"field":"value",...}`.
-- Values written to Redis always use the invariant culture (decimal point),
-  regardless of the Excel locale.
+- Values and identifiers (keys, hash keys, fields, channels, patterns) written
+  to Redis always use the invariant culture (decimal point), regardless of the
+  Excel locale.
 - Identical consecutive payloads are skipped before decoding
   (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET
   polling; unchanged HGETALL hashes are compared field-by-field and skipped
@@ -102,7 +106,7 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
 Covers: `ExcelJson` conversions, `AppConfig.Sanitize`/`ResolveHostCore`,
-subscription keys, HGETALL formatting.
+subscription keys, HGETALL formatting, the `TickGate` reentrancy helper.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
 
