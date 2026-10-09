@@ -142,9 +142,17 @@ namespace RedisExcel
                         Thread.Yield();
                         continue;
                     }
+                    bool wasActive = !state.Listeners.IsEmpty;
                     id = Interlocked.Increment(ref _nextListenerId);
                     state.Listeners[id] = new Listener(onMessage, origin);
                     state.RebuildSnapshot();
+                    // A listener joining an already-active state never saw the
+                    // payload currently held by the shared dedup marker, so clear
+                    // the marker: the next publish - even an identical repeat -
+                    // must be fanned out to the joiner (and everyone else) instead
+                    // of being suppressed and leaving the new cell blank.
+                    if (wasActive)
+                        state.ResetLastMessage();
                     // Network I/O is deliberately kept outside this lock (below).
                 }
 
@@ -322,6 +330,22 @@ namespace RedisExcel
                 foreach (var kvp in Listeners)
                     snapshot[index++] = kvp.Value.Callback;
                 _listenersSnapshot = snapshot;
+            }
+
+            /// <summary>
+            /// Clears the duplicate-suppression marker so the next payload is
+            /// treated as new for the whole channel. Called when a listener joins
+            /// an already-active state: the marker is shared, and the joiner never
+            /// saw the suppressed payload, so an identical republish must be
+            /// fanned out instead of skipped.
+            /// </summary>
+            public void ResetLastMessage()
+            {
+                // HandleMessage runs on the subscriber thread without this lock.
+                // A benign race with it only causes one redundant fan-out (the
+                // joiner is in the rebuilt snapshot), never a lost message.
+                _hasLastMessage = false;
+                _lastMessage = RedisValue.Null;
             }
 
             /// <summary>

@@ -70,22 +70,28 @@ namespace RedisExcel
                     if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                         continue;
 
+                    // First existing candidate wins: if it exists but cannot be
+                    // parsed, stop here with safe defaults instead of silently
+                    // falling through to a lower-priority file.
                     var config = JsonConvert.DeserializeObject<ConfigRoot>(File.ReadAllText(path));
                     if (config != null)
                     {
                         logger.Info($"AppConfig: loaded configuration from {path}");
                         return Sanitize(config);
                     }
+                    logger.Error($"AppConfig: config file {path} deserialized to null, using defaults");
                 }
                 catch (Exception ex)
                 {
-                    logger.Error(ex, $"AppConfig: error reading config file {path}");
+                    logger.Error(ex, $"AppConfig: error reading config file {path}, using defaults");
                 }
+                // The first existing candidate stops the search, even on failure.
+                break;
             }
-            logger.Info("AppConfig: no configuration file found, using defaults");
+            logger.Info("AppConfig: no configuration file loaded, using defaults");
             var fallback = Sanitize(new ConfigRoot());
             // The original no-file fallback used 1000ms for the Excel flush timer;
-            // keep that legacy behavior when no configuration file exists.
+            // keep that legacy behavior when no configuration file could be loaded.
             fallback.RTD.ExcelUpdateRateMs = 1000;
             return fallback;
         }

@@ -36,6 +36,10 @@ namespace RedisExcel
             new ConcurrentDictionary<string, ChannelListener>();
         private static readonly ConcurrentDictionary<string, string> _latestMessages =
             new ConcurrentDictionary<string, string>();
+        // Last payload published per host/channel key, so PublishIfChanged can
+        // skip a message that did not change since the last successful publish.
+        private static readonly ConcurrentDictionary<string, string> _lastPublishedMessages =
+            new ConcurrentDictionary<string, string>();
 
         private static string ChannelKey(string host, string channel) => $"{host}\u0001{channel}";
 
@@ -191,19 +195,25 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Unsubscribes from a Redis channel", IsVolatile = true)]
         public static string RedisUDFChannelUnsubscribe(
-            [ExcelArgument(Description = "Redis channel to unsubscribe from")] object channel
+            [ExcelArgument(Description = "Redis channel to unsubscribe from")] object channel,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost = null
         )
         {
+            string host = null;
             try
             {
+                host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
                 // A blank channel matches nothing; report it instead of
                 // claiming success.
-                if (string.IsNullOrEmpty(channelStr))
+                if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
+                // Only listeners registered for this host/channel pair are
+                // removed; the same channel on another host stays subscribed.
+                string key = ChannelKey(host, channelStr);
                 foreach (var kv in _channelListeners)
                 {
-                    if (!string.Equals(kv.Value.Channel, channelStr, StringComparison.Ordinal))
+                    if (!string.Equals(kv.Key, key, StringComparison.Ordinal))
                         continue;
                     if (_channelListeners.TryRemove(kv.Key, out var listener))
                     {
@@ -215,12 +225,12 @@ namespace RedisExcel
                     }
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr} unsubscribed");
+                    logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr}, host={host} unsubscribed");
                 return $"Channel '{channelStr}' unsubscribed successfully.";
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFChannelUnsubscribe", ex, $"channel={channel}");
+                return Fail("RedisUDFChannelUnsubscribe", ex, $"channel={channel}, host={host}");
             }
         }
 
@@ -244,6 +254,8 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
+                if (string.IsNullOrEmpty(channelStr))
+                    throw new ArgumentException("a channel is required");
                 string key = ChannelKey(host, channelStr);
                 if (!_channelListeners.ContainsKey(key))
                 {
@@ -280,6 +292,8 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
+            if (range == null)
+                return "Error: a range is required";
             string json = ExcelJson.RedisUDFMatrixToJSON(range);
             // Do not publish conversion errors; return them to Excel instead.
             if (json.StartsWith("Error:", StringComparison.Ordinal))
@@ -299,9 +313,22 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
-                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
+                if (string.IsNullOrEmpty(channelStr))
+                    throw new ArgumentException("a channel is required");
                 string messageStr = ToRedisString(message) ?? "";
+                string key = ChannelKey(host, channelStr);
+                // Re-publishing an identical payload is a no-op; the last
+                // successfully published payload is tracked per host/channel.
+                if (_lastPublishedMessages.TryGetValue(key, out var previous) &&
+                    string.Equals(previous, messageStr, StringComparison.Ordinal))
+                {
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, host={host}, unchanged");
+                    return "No change";
+                }
+                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
+                _lastPublishedMessages[key] = messageStr;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
                 return readers > 0 ? $"{readers} readers(s)" : "No Readers";
@@ -318,6 +345,8 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
+            if (range == null)
+                return "Error: a range is required";
             string json = ExcelJson.RedisUDFMatrixToJSON(range);
             // Do not publish conversion errors; return them to Excel instead.
             if (json.StartsWith("Error:", StringComparison.Ordinal))
@@ -337,6 +366,8 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
+                if (string.IsNullOrEmpty(channelStr))
+                    throw new ArgumentException("a channel is required");
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 string messageStr = ToRedisString(message) ?? "";
                 long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
@@ -493,6 +524,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (values == null)
+                    throw new ArgumentException("a range is required");
                 json = ExcelJson.RedisUDFMatrixToJSON(values);
                 // Surface conversion errors to Excel instead of storing them as the value.
                 if (json.StartsWith("Error:", StringComparison.Ordinal))
@@ -545,6 +578,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (keys == null || values == null)
+                    throw new ArgumentException("a range is required");
                 var keyCells = FlattenRowMajor(keys);
                 var valueCells = FlattenRowMajor(values);
                 if (keyCells.Count == 0 || keyCells.Count != valueCells.Count)
@@ -557,6 +592,8 @@ namespace RedisExcel
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
+                if (entries.Count == 0)
+                    throw new ArgumentException("no entries to write");
                 GetDb(host).StringSet(entries.ToArray());
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetKV: {entries.Count} pairs sent, host={host}");
@@ -578,6 +615,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (keyValuePairs == null)
+                    throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(keyValuePairs);
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
                 foreach (var pair in pairs)
@@ -587,6 +626,8 @@ namespace RedisExcel
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
+                if (entries.Count == 0)
+                    throw new ArgumentException("no entries to write");
                 GetDb(host).StringSet(entries.ToArray());
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetKVPair: {entries.Count} pairs sent, host={host}");
@@ -609,6 +650,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (keys == null)
+                    throw new ArgumentException("a range is required");
                 if (multipleColumnsOpt is ExcelError)
                     throw new ArgumentException("Excel error cells are not valid arguments");
                 if (multipleColumnsOpt is Array)
@@ -780,6 +823,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (keys == null)
+                    throw new ArgumentException("a range is required");
                 int rows = keys.GetLength(0);
                 int cols = keys.GetLength(1);
                 int count = rows * cols;
@@ -873,6 +918,8 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
+                if (ttl <= 0)
+                    throw new ArgumentException("ttl must be a positive number of seconds");
                 string keyStr = ToRedisString(key);
                 string valueStr = ToRedisString(value);
                 // A null RedisValue would issue DEL instead of storing an empty string.
@@ -969,6 +1016,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (keys == null)
+                    throw new ArgumentException("a range is required");
                 int rows = keys.GetLength(0);
                 int cols = keys.GetLength(1);
                 int count = rows * cols;
@@ -996,7 +1045,9 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     var ttl = tasks[i].GetAwaiter().GetResult();
-                    result[i, 1] = ttl.HasValue ? ttl.Value.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture) : "-1";
+                    // Same representation as RedisUDFTTL: fractional seconds,
+                    // -1 when the key is missing or has no expiry.
+                    result[i, 1] = ttl.HasValue ? ToRedisString(ttl.Value.TotalSeconds) : "-1";
                 }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFTTLMultiples: {count} keys, host={host}");
@@ -1046,6 +1097,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (fieldValuePairs == null)
+                    throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(fieldValuePairs);
                 var entries = new List<HashEntry>();
                 foreach (var pair in pairs)
@@ -1055,6 +1108,8 @@ namespace RedisExcel
                     if (!string.IsNullOrWhiteSpace(field))
                         entries.Add(new HashEntry(field, value ?? ""));
                 }
+                if (entries.Count == 0)
+                    throw new ArgumentException("no entries to write");
                 string hashKeyStr = ToRedisString(hashKey);
                 GetDb(host).HashSet(hashKeyStr, entries.ToArray());
                 if (logger.IsTraceEnabled)
@@ -1132,6 +1187,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (hashKeys == null)
+                    throw new ArgumentException("a range is required");
                 int rows = hashKeys.GetLength(0);
                 int cols = hashKeys.GetLength(1);
                 int count = rows * cols;

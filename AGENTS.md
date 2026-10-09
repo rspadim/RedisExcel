@@ -67,6 +67,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   instances.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
+- A `SUB`/`PSUB` RTD topic that fails to subscribe at connect time stays
+  `#ERROR` until the formula is edited; polled commands (`GET`/`HGET`/`HGETALL`)
+  retry on every tick.
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
   timer (`ExcelUpdateRateMs`) flushes dirty values. Real-time updates are
   coalesced per topic by default (`CoalesceRealtimeUpdates`, on): the latest
@@ -83,6 +86,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Excel error cells are rejected in every scalar argument position; date/time cells
   arrive as their Excel serial number and boolean cells serialize as
   `true`/`false`.
+- An empty-string cell is a valid Redis name/pattern while a truly blank cell
+  is a missing argument.
+- 2x2 pair ranges are read as 2 rows x 2 columns (vertical pairs).
 - Identical consecutive payloads are skipped before decoding for literal
   subscriptions and GET/HGET polling (`SkipRepeatedMessages`, default on):
   payloads are compared without a decode step, using `RedisValue` equality;

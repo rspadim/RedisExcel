@@ -48,8 +48,21 @@ namespace RedisExcel
             // constantly, and ConnectionMultiplexer.GetDatabase() allocates per call.
             // If the factory throws (connect failure), GetOrAdd does not insert the
             // entry, so the next call retries instead of caching the failure.
+            //
+            // Shutdown fence: never hand out a wrapper bound to a multiplexer that
+            // Shutdown is closing. The flag is re-checked after GetOrAdd because a
+            // racing call could otherwise insert the entry after the caches were
+            // cleared; that entry is dropped instead of being left behind.
+            if (_shutdown)
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
             string key = PoolKey(host, pool);
-            return _databases.GetOrAdd(key, _ => GetConnection(host, pool).GetDatabase());
+            var database = _databases.GetOrAdd(key, _ => GetConnection(host, pool).GetDatabase());
+            if (_shutdown)
+            {
+                _databases.TryRemove(key, out _);
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+            }
+            return database;
         }
 
         public ISubscriber GetSubscriber(string host) => GetSubscriber(host, RedisPool.RtdSub);
@@ -57,9 +70,19 @@ namespace RedisExcel
         public ISubscriber GetSubscriber(string host, RedisPool pool)
         {
             // Same GetOrAdd semantics as GetDatabase: a throwing factory leaves the
-            // cache empty, so transient connect failures are not cached.
+            // cache empty, so transient connect failures are not cached. The same
+            // shutdown fence applies: no wrapper is handed out after Shutdown, and
+            // an entry that raced with the cache clear is removed again.
+            if (_shutdown)
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
             string key = PoolKey(host, pool);
-            return _subscribers.GetOrAdd(key, _ => GetConnection(host, pool).GetSubscriber());
+            var subscriber = _subscribers.GetOrAdd(key, _ => GetConnection(host, pool).GetSubscriber());
+            if (_shutdown)
+            {
+                _subscribers.TryRemove(key, out _);
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+            }
+            return subscriber;
         }
 
         private static string PoolKey(string host, RedisPool pool)
@@ -69,24 +92,48 @@ namespace RedisExcel
 
         public ConnectionMultiplexer GetConnection(string host, RedisPool pool)
         {
+            // Shutdown fence: a cached multiplexer is already being closed by
+            // Shutdown, so never hand it out once the flag is set.
+            if (_shutdown)
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+
             var dictionary = DictionaryFor(pool);
             // Lazy avoids creating duplicate connections when GetOrAdd is called concurrently.
             var lazy = dictionary.GetOrAdd(host, h => new Lazy<ConnectionMultiplexer>(
                 () => Connect(h, pool), LazyThreadSafetyMode.ExecutionAndPublication));
+            ConnectionMultiplexer connection;
             try
             {
-                return lazy.Value;
+                connection = lazy.Value;
             }
             catch
             {
-                // Atomically replace the failed attempt with a fresh Lazy so the next call
-                // retries. TryUpdate only swaps when the current entry is still ours, so a
-                // concurrently created entry is never removed (no leak, no double connect).
-                dictionary.TryUpdate(host,
-                    new Lazy<ConnectionMultiplexer>(() => Connect(host, pool), LazyThreadSafetyMode.ExecutionAndPublication),
-                    lazy);
+                if (_shutdown)
+                {
+                    // Shutdown won the race: Connect already refused/disposed the
+                    // multiplexer, so drop the failed entry instead of replacing
+                    // it - no re-insertion into a cache Shutdown just cleared.
+                    dictionary.TryRemove(host, out _);
+                }
+                else
+                {
+                    // Atomically replace the failed attempt with a fresh Lazy so the next call
+                    // retries. TryUpdate only swaps when the current entry is still ours, so a
+                    // concurrently created entry is never removed (no leak, no double connect).
+                    dictionary.TryUpdate(host,
+                        new Lazy<ConnectionMultiplexer>(() => Connect(host, pool), LazyThreadSafetyMode.ExecutionAndPublication),
+                        lazy);
+                }
                 throw;
             }
+            if (_shutdown)
+            {
+                // Shutdown started while this connection was in flight. Keep the
+                // entry so Shutdown's walk still sees and disposes it, but fail
+                // the caller instead of returning a dying connection.
+                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+            }
+            return connection;
         }
 
         private ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> DictionaryFor(RedisPool pool)
@@ -107,7 +154,7 @@ namespace RedisExcel
             var config = AppConfig.Current;
             int timeoutMs = pool == RedisPool.UdfData ? config.UDF.timeout : config.RTD.timeout;
 
-            var options = ConfigurationOptions.Parse(host);
+            var options = ParseOptions(host);
             options.AbortOnConnectFail = false;
             options.ConnectTimeout = timeoutMs;
             options.SyncTimeout = timeoutMs;
@@ -116,7 +163,19 @@ namespace RedisExcel
                 $"{Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
 
             logger.Info($"RedisConnect: opening {pool} connection to {host} (timeout={timeoutMs}ms, client={options.ClientName})");
-            var mux = ConnectionMultiplexer.Connect(options);
+            ConnectionMultiplexer mux;
+            try
+            {
+                mux = ConnectionMultiplexer.Connect(options);
+            }
+            catch (Exception ex) when (IsInvalidHostError(ex))
+            {
+                // A malformed endpoint (for example a port above 65535) surfaces
+                // through the endpoint/DNS layer as a localized argument error;
+                // normalize it to a stable English message. Real connection
+                // failures (RedisConnectionException and friends) pass through.
+                throw new ArgumentException($"invalid Redis host '{host}'", ex);
+            }
             if (_shutdown)
             {
                 // Shutdown started while this connect was in flight: dispose the
@@ -142,6 +201,29 @@ namespace RedisExcel
                 logger.Info($"RedisConnect: connection restored ({pool}) host={host}");
             };
             return mux;
+        }
+
+        private static ConfigurationOptions ParseOptions(string host)
+        {
+            try
+            {
+                return ConfigurationOptions.Parse(host);
+            }
+            catch (Exception ex) when (IsInvalidHostError(ex))
+            {
+                // StackExchange.Redis surfaces a malformed endpoint with a
+                // localized argument/format error; give callers a stable
+                // English message instead (inner exception preserved).
+                throw new ArgumentException($"invalid Redis host '{host}'", ex);
+            }
+        }
+
+        private static bool IsInvalidHostError(Exception ex)
+        {
+            // ArgumentException covers ArgumentOutOfRangeException raised by the
+            // endpoint layer (localized message); Format/Overflow cover raw
+            // numeric port parse failures. Connection failures are other types.
+            return ex is ArgumentException || ex is FormatException || ex is OverflowException;
         }
 
         private static string ClientNamePrefix(RedisPool pool)

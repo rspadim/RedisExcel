@@ -188,6 +188,32 @@ internal static class Program
         Check(subscriptions.ChannelCount == 0 && subscriptions.ListenerCount == 0,
             "all pattern/literal channels released");
 
+        // Late-joiner dedup regression (v1.2.6): the duplicate-suppression marker
+        // lives on the shared channel state, so a listener joining a channel that
+        // already had listeners must still receive a republished identical payload
+        // (previously the marker suppressed it and the new cell stayed blank).
+        string lateJoinChannel = "smoke:late:" + Guid.NewGuid().ToString("N");
+        var receivedLateA = new List<string>();
+        var receivedLateB = new List<string>();
+        var lateTokenA = subscriptions.Subscribe(host, lateJoinChannel, pattern: false,
+            onMessage: m => { lock (Sync) receivedLateA.Add(m); });
+        Check(WaitUntil(() => numsubOf(lateJoinChannel) == 1, 5000),
+            "late-join channel active on the server");
+        publisher.Publish(new RedisChannel(lateJoinChannel, RedisChannel.PatternMode.Literal), "same");
+        Check(WaitUntil(() => { lock (Sync) return receivedLateA.Count == 1; }, 5000),
+            "late-join baseline: existing listener received the initial payload");
+
+        var lateTokenB = subscriptions.Subscribe(host, lateJoinChannel, pattern: false,
+            onMessage: m => { lock (Sync) receivedLateB.Add(m); });
+        publisher.Publish(new RedisChannel(lateJoinChannel, RedisChannel.PatternMode.Literal), "same");
+        Check(WaitUntil(() => { lock (Sync) return receivedLateB.Count >= 1 && receivedLateB[0] == "same"; }, 5000),
+            "late joiner received the republished identical payload");
+
+        lateTokenA.Dispose();
+        lateTokenB.Dispose();
+        Check(WaitUntil(() => numsubOf(lateJoinChannel) == 0, 5000),
+            "late-join channel unsubscribed after both listeners left");
+
         // Disposing the same token twice is a safe no-op.
         string doubleDisposeChannel = "smoke:double:" + Guid.NewGuid().ToString("N");
         int channelsBefore = subscriptions.ChannelCount;

@@ -41,7 +41,11 @@ namespace RedisExcel
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private readonly object _sync = new object();
         private string _lastValue;
-        private bool _dirty = true;
+        // Not dirty initially: the "(ConnectData)" placeholder returned by
+        // ConnectData must stay visible until the first real value arrives
+        // (poll result or subscription message); flushing the initial null
+        // _lastValue on the first Excel tick would blank the cell.
+        private bool _dirty = false;
 
         public TopicData(Topic topic, string type, string keyOrChannel, string field, string host)
         {
@@ -650,7 +654,11 @@ namespace RedisExcel
                             // Per-item try so one failing Excel push cannot abort the whole MGET batch.
                             try
                             {
-                                Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                                // IsNull, not HasValue: HasValue is also false for the empty
+                                // string (RedisValue.HasValue => !IsNullOrEmpty), so an existing
+                                // key holding "" must display as an empty cell; only a genuinely
+                                // missing key gets the sentinel.
+                                Publish(td, values[i].IsNull ? "(no value)" : values[i].ToString());
                                 td.CommitPolledValue(values[i]);
                             }
                             catch (Exception ex)
@@ -697,7 +705,9 @@ namespace RedisExcel
                     var value = pair.Value.GetAwaiter().GetResult();
                     if (_skipRepeatedMessages && !pair.Key.HasChangedPolledValue(value))
                         continue;
-                    Publish(pair.Key, value.HasValue ? value.ToString() : "(no value)");
+                    // HGET and GET (UseGetMultiple=false): IsNull distinguishes a missing
+                    // key/field from an existing one holding the empty string (same as MGET).
+                    Publish(pair.Key, value.IsNull ? "(no value)" : value.ToString());
                     pair.Key.CommitPolledValue(value);
                 }
                 catch (Exception ex)

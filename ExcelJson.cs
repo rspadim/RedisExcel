@@ -19,6 +19,8 @@ namespace RedisExcel
         {
             try
             {
+                if (range == null)
+                    throw new ArgumentException("a range is required");
                 int rows = range.GetLength(0);
                 int cols = range.GetLength(1);
                 var array = new object[rows][];

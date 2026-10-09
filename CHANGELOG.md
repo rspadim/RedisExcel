@@ -1,5 +1,39 @@
 # Changelog
 
+## v1.2.6 (unreleased)
+
+### Fixed
+
+- A listener that attaches to an already-active Pub/Sub channel now receives
+  the next payload even if it is identical to the last one (the per-channel
+  dedup could starve late joiners).
+- `RedisUDFChannelPublishIfChanged` actually suppresses unchanged payloads
+  (returns `No change` instead of publishing again).
+- `RedisUDFChannelUnsubscribe` only removes the given host's listeners (new
+  optional host argument; omitted = default host) and rejects blank channels;
+  publish/latest reject empty channels with a clear message.
+- `RedisUDFSetEx` validates the TTL like `RedisUDFExpire` (0/negative no longer
+  reaches the server).
+- `TTLMultiples` reports fractional seconds like `TTL` (was rounded).
+- Batch writers with no valid entries return an `Error:` cell instead of a
+  silent `OK`; null range arguments return `Error: a range is required`.
+- `RedisConnectionManager` wrappers respect the shutdown fence; a malformed
+  high-priority config file no longer falls through to a lower-priority file;
+  malformed hosts produce a stable English message.
+- RTD: an existing empty value no longer displays as `(no value)`; the
+  `(ConnectData)` placeholder stays until the first real value.
+
+### Changed
+
+- `RedisUDFChannelUnsubscribe` now scopes removal to a host: sheets that
+  subscribed with a non-default host must pass the host to unsubscribe
+  (previously it removed every host's listeners for that channel).
+
+### Tests
+
+- Smoke late-joiner dedup case; unit + E2E coverage for the new validations
+  (rows 44-45).
+
 ## v1.2.5
 
 ### Fixed
