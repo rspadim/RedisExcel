@@ -7,10 +7,10 @@ using System.Threading.Tasks;
 namespace RedisExcel
 {
     /// <summary>
-    /// Non-blocking GitHub release check. It runs in a background task with a
-    /// short timeout, never touches the Excel main thread, caches the result and
-    /// exposes it through the RedisUDFUpdate* worksheet functions. Failures
-    /// (offline, rate limit) are silent and only logged.
+    /// Non-blocking GitHub release check: runs in a background task at add-in
+    /// load and refreshes at most every 6 hours when the worksheet function
+    /// recalculates. The result is stored so functions never block Excel.
+    /// Failures (offline, rate limit) are silent and only logged.
     /// </summary>
     internal static class UpdateCheck
     {
@@ -18,31 +18,24 @@ namespace RedisExcel
 
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private static readonly object Sync = new object();
-        private static readonly TimeSpan MinInterval = TimeSpan.FromHours(6);
 
         private static bool _inFlight;
         private static DateTime _lastAttemptUtc;
         private static string _latestTag;
-        private static string _releaseUrl;
-        private static string _status = "checking...";
 
         internal static string CurrentTag => BuildInfo.Tag;
 
-        /// <summary>Kicks off a check at add-in load time.</summary>
-        internal static void Start() => RefreshIfStale(TimeSpan.Zero);
+        /// <summary>Starts the check at add-in load time.</summary>
+        internal static void Start() => EnsureFresh(TimeSpan.Zero);
 
         /// <summary>
         /// Schedules a background refresh when the last attempt is older than
         /// <paramref name="maxAge"/>. Safe to call from worksheet functions.
         /// </summary>
-        internal static void RefreshIfStale(TimeSpan maxAge)
+        internal static void EnsureFresh(TimeSpan maxAge)
         {
-            if (!AppConfig.Current.UpdateCheck.enabled)
-            {
-                lock (Sync) { _status = "update check disabled"; }
+            if (!AppConfig.Current.UpdateCheck)
                 return;
-            }
-
             lock (Sync)
             {
                 if (_inFlight)
@@ -51,10 +44,7 @@ namespace RedisExcel
                     return;
                 _inFlight = true;
                 _lastAttemptUtc = DateTime.UtcNow;
-                if (_latestTag == null)
-                    _status = "checking...";
             }
-
             Task.Run(() =>
             {
                 try
@@ -68,36 +58,11 @@ namespace RedisExcel
             });
         }
 
-        /// <summary>Single-line summary for the worksheet.</summary>
-        internal static string Summary()
+        /// <summary>TRUE when a newer release is known to exist (no I/O, never blocks).</summary>
+        internal static bool IsUpdateAvailable()
         {
             lock (Sync)
-            {
-                if (_latestTag == null)
-                    return _status;
-                return IsNewer(_latestTag, CurrentTag)
-                    ? "update available: " + _latestTag
-                    : "up to date (" + _latestTag + ")";
-            }
-        }
-
-        /// <summary>Detailed 5x2 matrix for the worksheet.</summary>
-        internal static object[,] Info()
-        {
-            lock (Sync)
-            {
-                string availability = _latestTag == null
-                    ? _status
-                    : (IsNewer(_latestTag, CurrentTag) ? "YES" : "no");
-                return new object[,]
-                {
-                    { "Current version", CurrentTag },
-                    { "Latest version", (object)_latestTag ?? "(unknown)" },
-                    { "Update available", availability },
-                    { "Release page", (object)_releaseUrl ?? "(unknown)" },
-                    { "Status", _status }
-                };
-            }
+                return _latestTag != null && IsNewer(_latestTag, CurrentTag);
         }
 
         private static void Refresh()
@@ -109,23 +74,14 @@ namespace RedisExcel
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("RedisExcel-UpdateCheck");
                     client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
                     string json = client.GetStringAsync(LatestReleaseUrl).GetAwaiter().GetResult();
-                    var release = JObject.Parse(json);
-                    string tag = (string)release["tag_name"];
-                    string url = (string)release["html_url"];
-
-                    lock (Sync)
-                    {
-                        _latestTag = tag;
-                        _releaseUrl = url;
-                        _status = IsNewer(tag, CurrentTag) ? "update available: " + tag : "up to date (" + tag + ")";
-                    }
+                    string tag = (string)JObject.Parse(json)["tag_name"];
+                    lock (Sync) { _latestTag = tag; }
                     if (logger.IsInfoEnabled)
-                        logger.Info($"UpdateCheck: current={CurrentTag}, latest={tag}, url={url}");
+                        logger.Info($"UpdateCheck: current={CurrentTag}, latest={tag}");
                 }
             }
             catch (Exception ex)
             {
-                lock (Sync) { _status = "release check failed"; }
                 if (logger.IsInfoEnabled)
                     logger.Info($"UpdateCheck: {ex.Message}");
             }

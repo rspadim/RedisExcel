@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.2 (unreleased)
+
+### Changed
+
+- Update check simplified: `UpdateCheck` is a plain boolean in
+  `RedisExcel.json` (`"UpdateCheck": true`, default on) and a single worksheet
+  function, `RedisUDFUpdateAvailable()`, returns TRUE/FALSE. The intermediate
+  `{ "enabled": ... }` shape and the `RedisUDFUpdateInfo` matrix from v1.1.1
+  are gone. The check runs in the background at add-in load and refreshes at
+  most every 6 hours when the function recalculates; it never blocks Excel.
+
 ## v1.1.1
 
 ### Added

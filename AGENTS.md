@@ -48,7 +48,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `RedisUDF.cs` | `[ExcelFunction]` implementations; thin wrappers over the managers. |
 | `ExcelJson.cs` | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix`. |
 | `RedisResultFormatter.cs` | Value formatting sent to Excel (HGETALL as valid JSON). |
-| `UpdateCheck.cs` | Non-blocking GitHub release check (background task, cached, exposed via UDFs). |
+| `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
 
 ## Runtime model (why it is the way it is)
 

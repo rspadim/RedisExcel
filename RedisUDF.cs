@@ -676,18 +676,11 @@ namespace RedisExcel
             }
         }
 
-        [ExcelFunction(Description = "Returns the RedisExcel update check result: 'update available: vX.Y.Z', 'up to date (vX.Y.Z)' or a status text.", IsVolatile = true)]
-        public static string RedisUDFUpdateAvailable()
+        [ExcelFunction(Description = "Returns TRUE while a newer RedisExcel release is known to exist (background check, never blocks Excel).", IsVolatile = true)]
+        public static bool RedisUDFUpdateAvailable()
         {
-            UpdateCheck.RefreshIfStale(TimeSpan.FromHours(6));
-            return UpdateCheck.Summary();
-        }
-
-        [ExcelFunction(Description = "Returns update check details: current version, latest release, update availability and release page.", IsVolatile = true)]
-        public static object[,] RedisUDFUpdateInfo()
-        {
-            UpdateCheck.RefreshIfStale(TimeSpan.FromHours(6));
-            return UpdateCheck.Info();
+            UpdateCheck.EnsureFresh(TimeSpan.FromHours(6));
+            return UpdateCheck.IsUpdateAvailable();
         }
     }
 }

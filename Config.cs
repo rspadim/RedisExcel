@@ -30,17 +30,12 @@ namespace RedisExcel
         public bool UseGetMultiple { get; set; } = true;
     }
 
-    public class UpdateCheckConfig
-    {
-        public bool enabled { get; set; } = true;
-    }
-
     public class ConfigRoot
     {
         public RTDConfig RTD { get; set; }
         public ConfigSection UDF { get; set; }
         public Dictionary<string, string> Servers { get; set; }
-        public UpdateCheckConfig UpdateCheck { get; set; }
+        public bool UpdateCheck { get; set; } = true;
     }
 
     /// <summary>
@@ -112,7 +107,6 @@ namespace RedisExcel
         {
             config.RTD = config.RTD ?? new RTDConfig();
             config.UDF = config.UDF ?? new ConfigSection();
-            config.UpdateCheck = config.UpdateCheck ?? new UpdateCheckConfig();
             if (string.IsNullOrWhiteSpace(config.RTD.host)) config.RTD.host = DefaultHost;
             if (string.IsNullOrWhiteSpace(config.UDF.host)) config.UDF.host = DefaultHost;
             if (config.RTD.timeout <= 0) config.RTD.timeout = 1000;
