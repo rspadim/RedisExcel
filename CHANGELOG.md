@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.3 (unreleased)
+
+### Changed
+
+- Subscription broadcast hot path optimized: listeners are kept in a
+  copy-on-write snapshot, so each incoming message no longer allocates a list
+  copy from the `ConcurrentDictionary`. Measured against a live server
+  (30s, `PSUBSCRIBE *`): broadcast overhead per message dropped from ~212 B to
+  ~68 B (total allocation per message ~30% lower, less GC pressure) with no
+  delivery regression.
+- Added `test/LoadTests`: reusable load test harness for the subscription path
+  (throughput, bytes/message, GC counts; internal or external load).
+
 ## v1.1.2
 
 ### Changed

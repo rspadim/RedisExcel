@@ -1,0 +1,148 @@
+using RedisExcel;
+using StackExchange.Redis;
+using System;
+using System.Diagnostics;
+using System.Threading;
+using System.Threading.Tasks;
+
+/// <summary>
+/// Load test for the subscription broadcast hot path.
+///
+/// Usage: dotnet run --project test\LoadTests -c Release -- [mode] [host] [seconds] [publishers] [listeners] [pattern]
+///   mode       manager (default) = RedisSubscriptionManager, raw = plain SE.Redis subscriber baseline
+///   host       default "127.0.0.1:6379,abortConnect=False"
+///   seconds    default 10
+///   publishers default 2 (internal fire-and-forget threads); 0 = listen-only,
+///              use an external generator such as:
+///              docker exec &lt;redis&gt; redis-benchmark -t publish -n 3000000 -P 16
+///   listeners  default 1 (logical listeners registered on the same channel)
+///   pattern    default false; true subscribes to the given channel as a pattern
+///              (use channel "*" through the host-less listen mode to receive
+///              every message of a server for a short stress test)
+///
+/// Reports throughput, allocated bytes per received message and GC counts.
+/// </summary>
+internal static class Program
+{
+    private static long _received;
+
+    private static int Main(string[] args)
+    {
+        string mode = args.Length > 0 ? args[0] : "manager";
+        string host = args.Length > 1 ? args[1] : "127.0.0.1:6379,abortConnect=False";
+        int seconds = args.Length > 2 ? int.Parse(args[2]) : 10;
+        int publishers = args.Length > 3 ? int.Parse(args[3]) : 2;
+        int listeners = args.Length > 4 ? int.Parse(args[4]) : 1;
+        bool pattern = args.Length > 5 && bool.Parse(args[5]);
+
+        AppDomain.MonitoringIsEnabled = true;
+
+        string channel = pattern && publishers == 0 ? "*" : "load:" + Guid.NewGuid().ToString("N");
+        var connections = new RedisConnectionManager();
+        var tokens = new IDisposable[listeners];
+
+        if (mode == "manager")
+        {
+            var subscriptions = new RedisSubscriptionManager(connections);
+            for (int i = 0; i < listeners; i++)
+            {
+                tokens[i] = subscriptions.Subscribe(host, channel, pattern,
+                    m => Interlocked.Increment(ref _received));
+            }
+        }
+        else
+        {
+            var subscriber = connections.GetConnection(host, RedisPool.RtdSub).GetSubscriber();
+            var redisChannel = new RedisChannel(channel,
+                pattern ? RedisChannel.PatternMode.Pattern : RedisChannel.PatternMode.Literal);
+            for (int i = 0; i < listeners; i++)
+                subscriber.Subscribe(redisChannel, (ch, v) => Interlocked.Increment(ref _received));
+        }
+
+        Console.WriteLine($"mode={mode} listeners={listeners} publishers={publishers} seconds={seconds} pattern={pattern}");
+
+        // Let the subscription settle and, in listen-only mode, confirm that
+        // messages are flowing before starting the measurement window.
+        if (publishers == 0)
+        {
+            var settle = Stopwatch.StartNew();
+            while (settle.Elapsed.TotalSeconds < 5 && Interlocked.Read(ref _received) == 0)
+                Thread.Sleep(100);
+        }
+        Thread.Sleep(500);
+
+        int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+        long allocBefore = AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
+        long published = 0;
+        var token = new CancellationTokenSource();
+        var overall = Stopwatch.StartNew();
+        double elapsedPublish;
+        long receivedAtStop;
+
+        if (publishers == 0)
+        {
+            // Listen-only mode: an external generator provides the load.
+            Thread.Sleep(seconds * 1000);
+            elapsedPublish = overall.Elapsed.TotalSeconds;
+            receivedAtStop = Interlocked.Read(ref _received);
+            Console.WriteLine("published      : (external load, listen-only mode)");
+        }
+        else
+        {
+            var pubConnection = connections.GetConnection(host, RedisPool.UdfData);
+            var publisher = pubConnection.GetSubscriber();
+            var publishChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+            var publisherTasks = new Task[publishers];
+            for (int p = 0; p < publishers; p++)
+            {
+                publisherTasks[p] = Task.Run(() =>
+                {
+                    var payload = "1234567890.12345";
+                    long local = 0;
+                    while (!token.IsCancellationRequested)
+                    {
+                        // Fire-and-forget: generate pressure without waiting a round trip.
+                        publisher.Publish(publishChannel, payload, CommandFlags.FireAndForget);
+                        local++;
+                    }
+                    Interlocked.Add(ref published, local);
+                });
+            }
+
+            Thread.Sleep(seconds * 1000);
+            token.Cancel();
+            Task.WaitAll(publisherTasks);
+            elapsedPublish = overall.Elapsed.TotalSeconds;
+            receivedAtStop = Interlocked.Read(ref _received);
+        }
+
+        // Drain: wait until no new messages arrive for 1s (max 10s).
+        long last = Interlocked.Read(ref _received);
+        var drain = Stopwatch.StartNew();
+        while (drain.Elapsed.TotalSeconds < 10)
+        {
+            Thread.Sleep(500);
+            long now = Interlocked.Read(ref _received);
+            if (now == last)
+                break;
+            last = now;
+        }
+
+        long received = Interlocked.Read(ref _received);
+        long allocAfter = AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
+        long allocDelta = allocAfter - allocBefore;
+
+        if (publishers > 0)
+        {
+            Console.WriteLine($"published      : {published:N0} ({published / elapsedPublish:N0}/s)");
+            Console.WriteLine($"delivery ratio : {(published == 0 ? 0 : 100.0 * receivedAtStop / published):F2}%");
+        }
+        Console.WriteLine($"received       : {receivedAtStop:N0} ({receivedAtStop / elapsedPublish:N0}/s in window, {received:N0} after drain)");
+        Console.WriteLine($"allocated      : {allocDelta:N0} bytes ({allocDelta / Math.Max(received, 1):N0} bytes per received message)");
+        Console.WriteLine($"GC collections : gen0 +{GC.CollectionCount(0) - gc0}, gen1 +{GC.CollectionCount(1) - gc1}, gen2 +{GC.CollectionCount(2) - gc2}");
+
+        for (int i = 0; i < tokens.Length; i++)
+            tokens[i]?.Dispose();
+        return 0;
+    }
+}

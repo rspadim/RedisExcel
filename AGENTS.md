@@ -129,6 +129,20 @@ sample). For remote hosts it is saved to `%TEMP%` so the host never lands in
 the repository. The committed workbook only references `localhost:6379` and
 `test.redisexcel.*`.
 
+### 4. Load tests (requires Redis)
+
+```powershell
+dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 1
+```
+
+`manager` exercises the subscription broadcast path; `raw` is the plain
+StackExchange.Redis baseline. Parameters: host, seconds, publishers (0 =
+listen-only with an external generator like `redis-benchmark -t publish`),
+listeners and pattern. Reports throughput, allocated bytes per received
+message and GC counts. Read-only stress runs against real servers are allowed,
+but pass the host only as a command-line argument (never commit it) and keep
+the runs short.
+
 ## Excel automation lessons (hard-won)
 
 These cost real debugging time — read before writing automation.

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>7.3</LangVersion>
+    <AssemblyName>RedisExcel.LoadTests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NLog" Version="6.0.0-rc3" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- Compiles the production sources directly: no Excel dependency for these files. -->
+  <ItemGroup>
+    <Compile Include="..\..\Config.cs" />
+    <Compile Include="..\..\RedisConnectionManager.cs" />
+    <Compile Include="..\..\RedisSubscriptionManager.cs" />
+    <Compile Include="..\..\RedisRuntime.cs" />
+  </ItemGroup>
+
+</Project>

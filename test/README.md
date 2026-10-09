@@ -33,3 +33,17 @@ Useful parameters: `-RedisHost`, `-KeyPrefix`, `-RealChannel`, `-RealPattern`,
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that
 > reference private hosts.
+
+## 4. Load tests (requires Redis)
+
+```powershell
+dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 1
+```
+
+Modes: `manager` (RedisSubscriptionManager) and `raw` (plain
+StackExchange.Redis baseline). Parameters: host, seconds, publisher threads
+(0 = listen-only with an external generator such as
+`redis-benchmark -t publish`), listeners and pattern. It reports throughput,
+allocated bytes per received message and GC counts. Read-only stress runs
+against real servers are allowed, but pass the host only as a command-line
+argument (never commit it) and keep the runs short.

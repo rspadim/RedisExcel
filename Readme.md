@@ -27,6 +27,13 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 > * The Excel folder
 > * Or `C:\Windows\RedisExcel.json`
 
+> **Tip:** downloaded files may be blocked by Windows (Mark of the Web) —
+> right-click each file > Properties > check **Unblock** before loading the add-in.
+
+> **Updates:** put `=RedisUDFUpdateAvailable()` in a cell to see TRUE when a
+> newer release exists. Toggle the check with `"UpdateCheck": true|false` in
+> `RedisExcel.json` (default on, runs in the background and never blocks Excel).
+
 ---
 
 ## 🚀 Example: Publishing from Python

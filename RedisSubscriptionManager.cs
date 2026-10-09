@@ -82,6 +82,7 @@ namespace RedisExcel
                             throw;
                         }
                     }
+                    state.RebuildSnapshot();
                     break;
                 }
             }
@@ -114,6 +115,7 @@ namespace RedisExcel
             {
                 if (state.Disposed || !state.Listeners.TryRemove(id, out _))
                     return;
+                state.RebuildSnapshot();
                 lastListener = state.Listeners.IsEmpty;
                 if (lastListener)
                     state.Disposed = true;
@@ -133,6 +135,8 @@ namespace RedisExcel
 
         private sealed class ChannelState
         {
+            private static readonly Action<string>[] EmptyListeners = new Action<string>[0];
+
             public readonly string Host;
             public readonly string Name;
             public readonly bool Pattern;
@@ -142,6 +146,7 @@ namespace RedisExcel
             public readonly object Sync = new object();
             public bool Disposed;
 
+            private volatile Action<string>[] _listenersSnapshot = EmptyListeners;
             private ISubscriber _subscriber;
 
             public ChannelState(string host, string channel, bool pattern)
@@ -152,6 +157,21 @@ namespace RedisExcel
                 Channel = new RedisChannel(
                     channel,
                     pattern ? RedisChannel.PatternMode.Pattern : RedisChannel.PatternMode.Literal);
+            }
+
+            /// <summary>
+            /// Copy-on-write snapshot of the listeners: HandleMessage reads it without
+            /// locks. Called under Sync whenever a listener is added or removed.
+            /// (The previous Listeners.Values enumeration allocated a list copy for
+            /// every single message.)
+            /// </summary>
+            public void RebuildSnapshot()
+            {
+                var snapshot = new Action<string>[Listeners.Count];
+                int index = 0;
+                foreach (var kvp in Listeners)
+                    snapshot[index++] = kvp.Value;
+                _listenersSnapshot = snapshot;
             }
 
             public void Subscribe(RedisConnectionManager connections)
@@ -177,11 +197,12 @@ namespace RedisExcel
             private void HandleMessage(RedisChannel channel, RedisValue message)
             {
                 string text = message; // implicit RedisValue -> string conversion (may be null, as in the original code)
-                foreach (var listener in Listeners.Values)
+                var listeners = _listenersSnapshot;
+                for (int i = 0; i < listeners.Length; i++)
                 {
                     try
                     {
-                        listener(text);
+                        listeners[i](text);
                     }
                     catch (Exception ex)
                     {
