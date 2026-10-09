@@ -28,6 +28,12 @@
     `RedisUDFChannelPublishIfChangedJSONNonVolatile`,
     `RedisUDFChannelUnsubscribeNonVolatile`.
 
+### Fixed
+
+- `RedisUDFSetEx`/`RedisUDFExpire` validate huge TTLs against the `TimeSpan`
+  range and return a stable invariant `Error: ttl is out of range` cell
+  instead of a localized runtime overflow message.
+
 ### Changed
 
 - New `SyncWrite` config key (`"sync"` | `"fireforget"` | `"fireforget-all"`,

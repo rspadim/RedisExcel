@@ -330,6 +330,11 @@ namespace RedisExcel
         internal static string SyncWriteOverrideForTests;
 #pragma warning restore 0649
 
+        // TimeSpan.FromSeconds overflows past ~9.22e11 seconds; validate first
+        // so the cell gets a stable invariant message instead of a localized
+        // runtime OverflowException.
+        private static readonly long MaxTtlSeconds = (long)TimeSpan.MaxValue.TotalSeconds;
+
         /// <summary>
         /// Whether a write function should use CommandFlags.FireAndForget,
         /// according to the configured SyncWrite mode: "sync" never fires and
@@ -1498,6 +1503,8 @@ namespace RedisExcel
                 long ttl = ToInt64Invariant(ttlSeconds);
                 if (ttl <= 0)
                     throw new ArgumentException("ttl must be a positive number of seconds");
+                if (ttl > MaxTtlSeconds)
+                    throw new ArgumentException("ttl is out of range");
                 string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
@@ -1544,6 +1551,8 @@ namespace RedisExcel
                 long ttl = ToInt64Invariant(ttlSeconds);
                 if (ttl <= 0)
                     return "Error: ttl must be a positive number of seconds";
+                if (ttl > MaxTtlSeconds)
+                    return "Error: ttl is out of range";
                 string keyStr = RequireText(key, "key");
                 if (ShouldFireAndForget(replyDependent: true))
                 {

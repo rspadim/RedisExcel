@@ -222,6 +222,24 @@ namespace RedisExcel.Tests
             Assert.Equal("Error: ttl must be a positive number of seconds", result);
         }
 
+        [Theory]
+        [InlineData(3e18)]
+        [InlineData(9.3e11)]
+        public void SetEx_HugeTtl_ReturnsTtlOutOfRange(double ttl)
+        {
+            // TimeSpan.FromSeconds overflows past ~9.22e11 seconds; the range
+            // must be validated before any Redis I/O (no server here).
+            var result = RedisUDF.RedisUDFSetEx("k", "v", ttl, ExcelMissing.Value);
+            Assert.Equal("Error: ttl is out of range", result);
+        }
+
+        [Fact]
+        public void Expire_HugeTtl_ReturnsTtlOutOfRange()
+        {
+            var result = RedisUDF.RedisUDFExpire("k", 3e18, ExcelMissing.Value);
+            Assert.Equal("Error: ttl is out of range", result);
+        }
+
         [Fact]
         public void Keys_EmptyPattern_ReturnsKeyPatternRequiredMessage()
         {
