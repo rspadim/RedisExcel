@@ -304,6 +304,7 @@ try {
     Set-Cell $udf 3 3 'Expected'
     Set-Cell $udf 2 6 1; Set-Cell $udf 2 7 'linha1'
     Set-Cell $udf 3 6 2; Set-Cell $udf 3 7 'linha2'
+    Invoke-ExcelAction { $udf.Range('H2').Value2 = 67000.5 } | Out-Null
 
     $h = $RedisHost
     $kp = $KeyPrefix
@@ -329,7 +330,9 @@ try {
         @{ Row = 22; Func = 'ListPushRight';  Fx = '=RedisUDFListPushRight("{1}.list","a","{0}")' -f $h, $kp;                                              Expected = $null },
         @{ Row = 23; Func = 'ListRange';      Fx = '=INDEX(RedisUDFListRange("{1}.list",0,-1,"{0}"),1,1)' -f $h, $kp;                                      Expected = 'a' },
         @{ Row = 24; Func = 'SetAdd';         Fx = '=RedisUDFSetAdd("{1}.set","x","{0}")' -f $h, $kp;                                                      Expected = $null },
-        @{ Row = 25; Func = 'SetMembers';     Fx = '=INDEX(RedisUDFSetMembers("{1}.set","{0}"),1,1)' -f $h, $kp;                                           Expected = 'x' }
+        @{ Row = 25; Func = 'SetMembers';     Fx = '=INDEX(RedisUDFSetMembers("{1}.set","{0}"),1,1)' -f $h, $kp;                                           Expected = 'x' },
+        @{ Row = 26; Func = 'Set locale';     Fx = '=RedisUDFSet("{1}.locale",$H$2,"{0}")' -f $h, $kp;                                               Expected = 'OK' },
+        @{ Row = 27; Func = 'Get locale';     Fx = '=RedisUDFGet("{1}.locale","{0}")' -f $h, $kp;                                                    Expected = '67000.5' }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -412,6 +415,8 @@ try {
     Check (Wait-CellText $udf 'B23' 'a')                     'UDF ListRange returns the first element'
     Check ((Get-CellText $udf 'B24') -match '^\d+$')         'UDF SetAdd returns an integer'
     Check (Wait-CellText $udf 'B25' 'x')                     'UDF SetMembers returns the member'
+    Check (Wait-CellText $udf 'B26' 'OK')                        'UDF Set stores numeric cells invariantly'
+    Check (Wait-CellText $udf 'B27' '67000.5')                   'UDF Get returns the invariant number'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

@@ -60,6 +60,12 @@
 - CI now installs Memurai (Redis for Windows) on the runner and executes the
   smoke suite before the tagged build.
 
+### Fixed
+
+- Numeric cell values are written to Redis with the invariant culture
+  (`67000.5`, not `67000,5` on comma-decimal locales), covering single sets,
+  matrix/key-value setters, hash fields, channel publishes and list pushes.
+
 ## v1.1.3
 
 ### Changed

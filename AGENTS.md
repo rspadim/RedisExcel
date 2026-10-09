@@ -69,6 +69,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   status/config compatibility, while delivery is coalesced by default
   (`CoalesceRealtimeUpdates`).
 - `HGETALL` output is valid JSON: `{"field":"value",...}`.
+- Values written to Redis always use the invariant culture (decimal point),
+  regardless of the Excel locale.
 - Identical consecutive payloads are skipped before decoding
   (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET
   polling; unchanged HGETALL hashes are compared field-by-field and skipped

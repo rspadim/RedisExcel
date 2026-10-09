@@ -4,6 +4,7 @@ using StackExchange.Redis;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 
 namespace RedisExcel
@@ -45,6 +46,23 @@ namespace RedisExcel
         {
             logger.Error(ex, $"{function}: {context}");
             return new object[,] { { "Error: " + ex.Message } };
+        }
+
+        /// <summary>Converts an Excel cell value to the string stored in Redis.
+        /// Uses the invariant culture so numbers are written as 67000.5, not
+        /// 67000,5 on comma-decimal locales. Strings pass through unchanged.</summary>
+        internal static string ToRedisString(object value)
+        {
+            if (value == null || value is ExcelMissing || value is ExcelEmpty)
+                return null;
+            if (value is string s)
+                return s;
+            return Convert.ToString(value, CultureInfo.InvariantCulture);
+        }
+
+        internal static long ToInt64Invariant(object value)
+        {
+            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
         }
 
         [ExcelFunction(Description = "Unsubscribes from a Redis channel", IsVolatile = true)]
@@ -125,7 +143,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present", IsVolatile = true)]
         public static string RedisUDFChannelPublishIfChanged(
             [ExcelArgument(Description = "Redis channel to publish to")] string channel,
-            [ExcelArgument(Description = "Message content to publish")] string message,
+            [ExcelArgument(Description = "Message content to publish")] object message,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -134,7 +152,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
-                long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), message);
+                long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), ToRedisString(message));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channel}, msg={message}, readers={readers}, host={host}");
                 return readers > 0 ? $"{readers} readers(s)" : "No Readers";
@@ -157,7 +175,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Publishes a message to a Redis channel", IsVolatile = true)]
         public static string RedisUDFChannelPublish(
             [ExcelArgument(Description = "Redis channel to publish to")] string channel,
-            [ExcelArgument(Description = "Message content to publish")] string message,
+            [ExcelArgument(Description = "Message content to publish")] object message,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -166,7 +184,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
-                long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), message);
+                long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), ToRedisString(message));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublish: channel={channel}, msg={message}, readers={readers}, host={host}");
                 return $"{readers} readers(s)";
@@ -277,7 +295,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Sets the value of a Redis key", IsVolatile = true)]
         public static string RedisUDFSet(
             [ExcelArgument(Description = "Redis key to set the value for")] string key,
-            [ExcelArgument(Description = "Value to set for the given key")] string value,
+            [ExcelArgument(Description = "Value to set for the given key")] object value,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -285,7 +303,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                GetDb(host).StringSet(key, value);
+                GetDb(host).StringSet(key, ToRedisString(value));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSet: key={key}, value={value}, host={host}");
                 return "OK";
@@ -311,8 +329,8 @@ namespace RedisExcel
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
                 for (int i = 0; i < rows; i++)
                 {
-                    var key = keys[i, 0]?.ToString();
-                    var value = values[i, 0]?.ToString();
+                    var key = ToRedisString(keys[i, 0]);
+                    var value = ToRedisString(values[i, 0]);
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value));
                 }
@@ -340,8 +358,8 @@ namespace RedisExcel
                 var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
                 for (int i = 0; i < keyValuePairs.GetLength(0); i++)
                 {
-                    var key = keyValuePairs[i, 0]?.ToString();
-                    var value = keyValuePairs[i, 1]?.ToString();
+                    var key = ToRedisString(keyValuePairs[i, 0]);
+                    var value = ToRedisString(keyValuePairs[i, 1]);
                     if (!string.IsNullOrWhiteSpace(key))
                         entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value));
                 }
@@ -370,7 +388,7 @@ namespace RedisExcel
                 bool multipleColumns = multipleColumnsOpt is bool b && b;
 
                 var validKeys = keys
-                    .Select(k => k?.ToString() ?? "")
+                    .Select(k => ToRedisString(k) ?? "")
                     .Where(k => !string.IsNullOrWhiteSpace(k))
                     .ToArray();
                 if (validKeys.Length == 0)
@@ -488,7 +506,7 @@ namespace RedisExcel
                 var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
-                    var key = keys[i]?.ToString();
+                    var key = ToRedisString(keys[i]);
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -553,7 +571,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Sets the value of a Redis key with an expiry in seconds", IsVolatile = true)]
         public static string RedisUDFSetEx(
             [ExcelArgument(Description = "Redis key to set the value for")] string key,
-            [ExcelArgument(Description = "Value to set for the given key")] string value,
+            [ExcelArgument(Description = "Value to set for the given key")] object value,
             [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
@@ -562,8 +580,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                int ttl = Convert.ToInt32(ttlSeconds);
-                GetDb(host).StringSet(key, value, TimeSpan.FromSeconds(ttl));
+                int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
+                GetDb(host).StringSet(key, ToRedisString(value), TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetEx: key={key}, value={value}, ttl={ttl}s, host={host}");
                 return "OK";
@@ -585,7 +603,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                int ttl = Convert.ToInt32(ttlSeconds);
+                int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
                 bool expired = GetDb(host).KeyExpire(key, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExpire: key={key}, ttl={ttl}s, expired={expired}, host={host}");
@@ -629,7 +647,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                long incr = Convert.ToInt64(increment);
+                long incr = ToInt64Invariant(increment);
                 long value = GetDb(host).StringIncrement(key, incr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncrBy: key={key}, increment={incr}, value={value}, host={host}");
@@ -657,7 +675,7 @@ namespace RedisExcel
                 var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
-                    var key = keys[i]?.ToString();
+                    var key = ToRedisString(keys[i]);
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -684,7 +702,7 @@ namespace RedisExcel
         public static object RedisUDFHashSet(
             [ExcelArgument(Description = "Redis hash key")] string hashKey,
             [ExcelArgument(Description = "Field name to set within the hash")] string field,
-            [ExcelArgument(Description = "Value to set for the given field")] string value,
+            [ExcelArgument(Description = "Value to set for the given field")] object value,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -692,7 +710,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                GetDb(host).HashSet(hashKey, field, value);
+                GetDb(host).HashSet(hashKey, field, ToRedisString(value));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashSet: {hashKey}[{field}] = {value}, host={host}");
                 return "OK";
@@ -717,8 +735,8 @@ namespace RedisExcel
                 var entries = new List<HashEntry>();
                 for (int i = 0; i < fieldValuePairs.GetLength(0); i++)
                 {
-                    var field = fieldValuePairs[i, 0]?.ToString();
-                    var value = fieldValuePairs[i, 1]?.ToString();
+                    var field = ToRedisString(fieldValuePairs[i, 0]);
+                    var value = ToRedisString(fieldValuePairs[i, 1]);
                     if (!string.IsNullOrWhiteSpace(field))
                         entries.Add(new HashEntry(field, value));
                 }
@@ -799,7 +817,7 @@ namespace RedisExcel
                 var keysList = new List<RedisKey>(hashKeys.Length);
                 for (int i = 0; i < hashKeys.Length; i++)
                 {
-                    string key = hashKeys[i]?.ToString();
+                    string key = ToRedisString(hashKeys[i]);
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -822,7 +840,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Pushes a value onto the right end of a Redis list", IsVolatile = true)]
         public static object RedisUDFListPushRight(
             [ExcelArgument(Description = "Redis list key")] string key,
-            [ExcelArgument(Description = "Value to push onto the list")] string value,
+            [ExcelArgument(Description = "Value to push onto the list")] object value,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -830,7 +848,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                long length = GetDb(host).ListRightPush(key, value);
+                long length = GetDb(host).ListRightPush(key, ToRedisString(value));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushRight: key={key}, value={value}, length={length}, host={host}");
                 return length;
@@ -844,7 +862,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Pushes a value onto the left end of a Redis list", IsVolatile = true)]
         public static object RedisUDFListPushLeft(
             [ExcelArgument(Description = "Redis list key")] string key,
-            [ExcelArgument(Description = "Value to push onto the list")] string value,
+            [ExcelArgument(Description = "Value to push onto the list")] object value,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -852,7 +870,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                long length = GetDb(host).ListLeftPush(key, value);
+                long length = GetDb(host).ListLeftPush(key, ToRedisString(value));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushLeft: key={key}, value={value}, length={length}, host={host}");
                 return length;
@@ -875,7 +893,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var values = GetDb(host).ListRange(key, Convert.ToInt64(start), Convert.ToInt64(stop));
+                var values = GetDb(host).ListRange(key, ToInt64Invariant(start), ToInt64Invariant(stop));
                 if (values.Length == 0)
                 {
                     if (logger.IsTraceEnabled)
