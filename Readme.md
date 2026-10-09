@@ -248,7 +248,8 @@ Functions to use directly in Excel cells:
     "prod": "localhost:6379,defaultDatabase=0",
     "dev": "localhost:6379,defaultDatabase=1"
   },
-  "UpdateCheck": true
+  "UpdateCheck": true,
+  "SkipRepeatedMessages": true
 }
 ```
 

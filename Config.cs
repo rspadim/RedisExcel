@@ -36,6 +36,9 @@ namespace RedisExcel
         public ConfigSection UDF { get; set; }
         public Dictionary<string, string> Servers { get; set; }
         public bool UpdateCheck { get; set; } = true;
+        /// <summary>Skip identical consecutive payloads before decoding/delivering
+        /// (feeds republish unchanged values constantly). Default on.</summary>
+        public bool SkipRepeatedMessages { get; set; } = true;
     }
 
     /// <summary>

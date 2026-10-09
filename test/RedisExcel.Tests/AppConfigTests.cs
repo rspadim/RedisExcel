@@ -96,5 +96,12 @@ namespace RedisExcel.Tests
             Assert.True(AppConfig.Sanitize(new ConfigRoot()).UpdateCheck);
             Assert.False(AppConfig.Sanitize(new ConfigRoot { UpdateCheck = false }).UpdateCheck);
         }
+
+        [Fact]
+        public void ConfigDefaults_SkipRepeatedMessagesEnabled()
+        {
+            Assert.True(new ConfigRoot().SkipRepeatedMessages);
+            Assert.False(new ConfigRoot { SkipRepeatedMessages = false }.SkipRepeatedMessages);
+        }
     }
 }

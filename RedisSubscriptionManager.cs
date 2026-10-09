@@ -14,6 +14,11 @@ namespace RedisExcel
     /// the channel is unsubscribed when the last listener leaves. On connection restore,
     /// all channels of the host are automatically re-subscribed.
     ///
+    /// Duplicate suppression: feeds republish unchanged values constantly; identical
+    /// consecutive payloads are compared as raw bytes (no string decoding) and skipped
+    /// when SkipRepeatedMessages is on (default). Patterns are never deduplicated
+    /// because different channels can interleave messages with the same payload.
+    ///
     /// Before: each topic registered its own handler and DisconnectData called
     /// Unsubscribe(channel) without a handler, tearing down every other topic's handler
     /// on the same channel and never re-subscribing them.
@@ -25,11 +30,13 @@ namespace RedisExcel
         private readonly RedisConnectionManager _connections;
         private readonly ConcurrentDictionary<string, ChannelState> _channels =
             new ConcurrentDictionary<string, ChannelState>();
+        private readonly bool _skipRepeated;
         private long _nextListenerId;
 
         public RedisSubscriptionManager(RedisConnectionManager connections)
         {
             _connections = connections ?? throw new ArgumentNullException(nameof(connections));
+            _skipRepeated = AppConfig.Current.SkipRepeatedMessages;
         }
 
         public int ChannelCount => _channels.Count;
@@ -56,7 +63,7 @@ namespace RedisExcel
             long id;
             while (true)
             {
-                state = _channels.GetOrAdd(key, _ => new ChannelState(host, channel, pattern));
+                state = _channels.GetOrAdd(key, _ => new ChannelState(host, channel, pattern, _skipRepeated));
                 lock (state.Sync)
                 {
                     if (state.Disposed)
@@ -146,14 +153,18 @@ namespace RedisExcel
             public readonly object Sync = new object();
             public bool Disposed;
 
+            private readonly bool _skipRepeated;
             private volatile Action<string>[] _listenersSnapshot = EmptyListeners;
             private ISubscriber _subscriber;
+            private RedisValue _lastMessage;
+            private bool _hasLastMessage;
 
-            public ChannelState(string host, string channel, bool pattern)
+            public ChannelState(string host, string channel, bool pattern, bool skipRepeated)
             {
                 Host = host;
                 Name = channel;
                 Pattern = pattern;
+                _skipRepeated = skipRepeated;
                 Channel = new RedisChannel(
                     channel,
                     pattern ? RedisChannel.PatternMode.Pattern : RedisChannel.PatternMode.Literal);
@@ -196,6 +207,16 @@ namespace RedisExcel
 
             private void HandleMessage(RedisChannel channel, RedisValue message)
             {
+                // Duplicate suppression: identical consecutive payloads (price feeds
+                // republish unchanged values constantly) change nothing in Excel, so
+                // skip the string decode and the whole fan-out. StackExchange.Redis
+                // delivers messages for a channel sequentially, so no lock is needed.
+                // Patterns are excluded because different channels interleave here.
+                if (_skipRepeated && !Pattern && _hasLastMessage && message == _lastMessage)
+                    return;
+                _lastMessage = message;
+                _hasLastMessage = true;
+
                 string text = message; // implicit RedisValue -> string conversion (may be null, as in the original code)
                 var listeners = _listenersSnapshot;
                 for (int i = 0; i < listeners.Length; i++)

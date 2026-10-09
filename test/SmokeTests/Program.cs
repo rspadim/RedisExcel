@@ -95,6 +95,18 @@ internal static class Program
         Check(WaitUntil(() => { lock (Sync) return receivedC.Count == 1 && receivedC[0] == "msg3"; }, 5000), "new listener received msg3");
         tokenC.Dispose();
 
+        // Duplicate suppression: identical consecutive payloads are skipped.
+        var receivedD = new List<string>();
+        var tokenD = subscriptions.Subscribe(host, channel, pattern: false,
+            onMessage: m => { lock (Sync) receivedD.Add(m); });
+        Check(WaitUntil(() => numsub() == 1, 5000), "channel active for the duplicate test");
+        publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup2");
+        Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000), "changed payload delivered");
+        Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 2000), "identical repeated payload skipped");
+        tokenD.Dispose();
+
         Console.WriteLine(_failures == 0 ? "ALL PASS" : _failures + " FAILURE(S)");
         return _failures == 0 ? 0 : 1;
     }

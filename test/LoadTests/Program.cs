@@ -34,10 +34,11 @@ internal static class Program
         int publishers = args.Length > 3 ? int.Parse(args[3]) : 2;
         int listeners = args.Length > 4 ? int.Parse(args[4]) : 1;
         bool pattern = args.Length > 5 && bool.Parse(args[5]);
+        string channelName = args.Length > 6 ? args[6] : null;
 
         AppDomain.MonitoringIsEnabled = true;
 
-        string channel = pattern && publishers == 0 ? "*" : "load:" + Guid.NewGuid().ToString("N");
+        string channel = channelName ?? (pattern && publishers == 0 ? "*" : "load:" + Guid.NewGuid().ToString("N"));
         var connections = new RedisConnectionManager();
         var tokens = new IDisposable[listeners];
 

@@ -63,6 +63,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   real-time is off (`Automatic` over threshold, or `Timer` style), the Excel
   timer (`ExcelUpdateRateMs`) flushes dirty values.
 - `HGETALL` output is valid JSON: `{"field":"value",...}`.
+- Identical consecutive payloads are skipped before decoding
+  (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET
+  polling; PSUB patterns are never deduplicated because channels interleave.
 - Config file is searched in: user profile, Excel folder, `C:\Windows`
   (first found wins).
 

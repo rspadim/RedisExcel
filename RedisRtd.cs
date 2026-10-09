@@ -62,6 +62,22 @@ namespace RedisExcel
 
         public bool Dirty { get { lock (_sync) return _dirty; } }
 
+        private RedisValue _lastPolledValue;
+        private bool _hasLastPolledValue;
+
+        /// <summary>TRUE when the polled value changed since the previous tick.</summary>
+        public bool ShouldUpdatePolledValue(RedisValue value)
+        {
+            lock (_sync)
+            {
+                if (_hasLastPolledValue && _lastPolledValue == value)
+                    return false;
+                _lastPolledValue = value;
+                _hasLastPolledValue = true;
+                return true;
+            }
+        }
+
         public void UpdateAndSendToExcel(string data)
         {
             Topic.UpdateValue(data);
@@ -118,6 +134,7 @@ namespace RedisExcel
         private double _excelUpdateRateMs = 100;
         private double _redisUpdateRateMs = 1000;
         private bool _useGetMultiple = true;
+        private bool _skipRepeatedMessages = true;
         private string _defaultHost;
 
         private System.Timers.Timer _excelTimer;
@@ -165,6 +182,7 @@ namespace RedisExcel
             _excelUpdateStyle = config.ExcelUpdateStyle;
             _messageCounterThreshold = config.MessageCounterThreshold;
             _useGetMultiple = config.UseGetMultiple;
+            _skipRepeatedMessages = AppConfig.Current.SkipRepeatedMessages;
             // in Realtime/Timer styles the mode is fixed; in Automatic it is recalculated from the message counter
             _realTimeUpdates = _excelUpdateStyle != ENUMExcelUpdateStyle.Timer;
 
@@ -416,7 +434,12 @@ namespace RedisExcel
                         logger.Trace($"PollHost: GETMULTI host={host}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
                     var values = db.StringGet(keys);
                     for (int i = 0; i < gets.Count; i++)
-                        Publish(gets[i], values[i].HasValue ? values[i].ToString() : "(no value)");
+                    {
+                        var td = gets[i];
+                        if (_skipRepeatedMessages && !td.ShouldUpdatePolledValue(values[i]))
+                            continue;
+                        Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                    }
                 }
                 topics = topics.Where(t => t.Type != "GET").ToList();
             }
@@ -442,6 +465,8 @@ namespace RedisExcel
                 try
                 {
                     var value = pair.Value.GetAwaiter().GetResult();
+                    if (_skipRepeatedMessages && !pair.Key.ShouldUpdatePolledValue(value))
+                        continue;
                     Publish(pair.Key, value.HasValue ? value.ToString() : "(no value)");
                 }
                 catch (Exception ex)

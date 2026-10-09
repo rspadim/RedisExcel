@@ -10,6 +10,11 @@
   (30s, `PSUBSCRIBE *`): broadcast overhead per message dropped from ~212 B to
   ~68 B (total allocation per message ~30% lower, less GC pressure) with no
   delivery regression.
+- Duplicate suppression for literal subscriptions and GET/HGET polling:
+  identical consecutive payloads are compared as raw bytes and skipped before
+  the string decode and fan-out (`"SkipRepeatedMessages": true`, default on;
+  PSUB patterns are never deduplicated because channels interleave). Feeds
+  that republish identical payloads as a liveness signal should set it false.
 - Added `test/LoadTests`: reusable load test harness for the subscription path
   (throughput, bytes/message, GC counts; internal or external load).
 
