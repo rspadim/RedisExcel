@@ -1,8 +1,7 @@
 # Tests
 
-Four layers (three test suites plus load tests), from fastest to most
-realistic. See `AGENTS.md` for the full guidance and the Excel automation
-lessons.
+Three test layers plus a load test harness. See `AGENTS.md` for the full
+guidance and the Excel automation lessons.
 
 ## 1. Unit tests (no Redis, no Excel)
 
@@ -29,7 +28,9 @@ connection blip). For remote hosts the workbook goes to `%TEMP%` and the
 destructive `CLIENT KILL` step is skipped automatically.
 
 Useful parameters: `-RedisHost`, `-KeyPrefix`, `-RealChannel`, `-RealPattern`,
-`-SkipClientKill`, `-KeepExcelOpen`.
+`-SkipClientKill`, `-RedisCli`, `-KeepExcelOpen`. Supplying a custom
+`-RedisCli` (e.g. `docker exec my-redis redis-cli`) disables the automatic
+`CLIENT KILL` step.
 
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that
@@ -44,7 +45,8 @@ dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 
 Modes: `manager` (RedisSubscriptionManager) and `raw` (plain
 StackExchange.Redis baseline). Parameters: host, seconds, publisher threads
 (0 = listen-only with an external generator such as
-`redis-benchmark -t publish`), listeners and pattern. It reports throughput,
-allocated bytes per received message and GC counts. Read-only stress runs
+`redis-benchmark -t publish`), listeners, pattern and an optional `[channel]`
+(7th argument; defaults to a random `load:<guid>` channel). It reports
+throughput, allocated bytes per received message and GC counts. Read-only stress runs
 against real servers are allowed, but pass the host only as a command-line
 argument (never commit it) and keep the runs short.

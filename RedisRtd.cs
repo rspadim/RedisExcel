@@ -69,9 +69,10 @@ namespace RedisExcel
         private RedisValue _lastPolledValue;
         private bool _hasLastPolledValue;
 
-        // Two-phase commit for polled values: compare first, store only after the Excel
-        // push succeeds. Committing before the push would mark a throwing value as seen
-        // and suppress it until it changes again.
+        // Two-phase commit for polled values: compare first, then store the value
+        // once it was ACCEPTED for delivery (queued via UpdateOnly when coalescing,
+        // or pushed by UpdateAndSendToExcel). A failed Excel push is retried thanks
+        // to the restored dirty flag; the commit never suppresses it.
 
         /// <summary>TRUE when the polled value changed since the previous tick.</summary>
         public bool HasChangedPolledValue(RedisValue value)
@@ -84,7 +85,7 @@ namespace RedisExcel
             }
         }
 
-        /// <summary>Stores the polled value as seen; call only after a successful push.</summary>
+        /// <summary>Stores the polled value as seen; call once the value was accepted for delivery.</summary>
         public void CommitPolledValue(RedisValue value)
         {
             lock (_sync)
@@ -97,8 +98,10 @@ namespace RedisExcel
         private HashEntry[] _lastPolledHash;
         private bool _hasLastPolledHash;
 
-        // Two-phase commit for polled hashes: compare first, store the reference only
-        // after the Excel push succeeds, so a throwing push is retried on the next tick.
+        // Two-phase commit for polled hashes: compare first, then store the reference
+        // once the value was ACCEPTED for delivery (queued via UpdateOnly when coalescing,
+        // or pushed by UpdateAndSendToExcel). A failed Excel push is retried thanks to
+        // the restored dirty flag; the commit never suppresses it.
 
         /// <summary>TRUE when the polled hash changed since the previous tick.</summary>
         public bool HasChangedPolledHash(HashEntry[] entries)
@@ -111,7 +114,7 @@ namespace RedisExcel
             }
         }
 
-        /// <summary>Stores the polled hash as seen; call only after a successful push.</summary>
+        /// <summary>Stores the polled hash as seen; call once the value was accepted for delivery.</summary>
         public void CommitPolledHash(HashEntry[] entries)
         {
             lock (_sync)
@@ -286,9 +289,11 @@ namespace RedisExcel
         {
             logger.Info("ServerTerminate");
 
-            // Mark every topic before disposing the timers: a tick already in flight must
-            // see Disconnected and stop publishing, and no timer may run against live
-            // registries after teardown starts.
+            // Mark every topic before disposing the timers and clearing the registries:
+            // despite its name, Timer.Dispose does not wait for an Elapsed callback that
+            // is already running, so only the Disconnected flags guarantee that such a
+            // tick stops publishing and never touches the live registries after teardown
+            // starts.
             foreach (var td in _polledTopics.Values)
                 td.Disconnected = true;
             foreach (var td in _subscribedTopics.Values)

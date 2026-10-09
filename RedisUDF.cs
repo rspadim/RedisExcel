@@ -20,7 +20,6 @@ namespace RedisExcel
 
         private sealed class ChannelListener
         {
-            public string Host;
             public string Channel;
             public IDisposable Token;
         }
@@ -116,7 +115,7 @@ namespace RedisExcel
                 string key = ChannelKey(host, channelStr);
                 if (!_channelListeners.ContainsKey(key))
                 {
-                    var listener = new ChannelListener { Host = host, Channel = channelStr };
+                    var listener = new ChannelListener { Channel = channelStr };
                     listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
                         onMessage: message => _latestMessages[key] = message ?? "", origin: "UDF");
                     if (!_channelListeners.TryAdd(key, listener))
@@ -155,7 +154,8 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
-                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), ToRedisString(message));
+                string messageStr = ToRedisString(message) ?? "";
+                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
                 return readers > 0 ? $"{readers} readers(s)" : "No Readers";
@@ -188,7 +188,8 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
-                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), ToRedisString(message));
+                string messageStr = ToRedisString(message) ?? "";
+                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, readers={readers}, host={host}");
                 return $"{readers} readers(s)";
@@ -398,7 +399,7 @@ namespace RedisExcel
                     var key = ToRedisString(keys[i, 0]);
                     var value = ToRedisString(values[i, 0]);
                     if (!string.IsNullOrWhiteSpace(key))
-                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value));
+                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
                 GetDb(host).StringSet(entries.ToArray());
                 if (logger.IsTraceEnabled)
@@ -427,7 +428,7 @@ namespace RedisExcel
                     var key = ToRedisString(keyValuePairs[i, 0]);
                     var value = ToRedisString(keyValuePairs[i, 1]);
                     if (!string.IsNullOrWhiteSpace(key))
-                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value));
+                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
                 }
                 GetDb(host).StringSet(entries.ToArray());
                 if (logger.IsTraceEnabled)
@@ -960,7 +961,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = ToRedisString(key);
-                long length = GetDb(host).ListRightPush(keyStr, ToRedisString(value));
+                long length = GetDb(host).ListRightPush(keyStr, ToRedisString(value) ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={host}");
                 return length;
@@ -983,7 +984,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = ToRedisString(key);
-                long length = GetDb(host).ListLeftPush(keyStr, ToRedisString(value));
+                long length = GetDb(host).ListLeftPush(keyStr, ToRedisString(value) ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={host}");
                 return length;

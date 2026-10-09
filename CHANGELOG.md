@@ -49,27 +49,25 @@
   one; `TickGate`, a tested helper, implements the guard.
 - RTD polling isolates GET-multi failures per host, so `HGET`/`HGETALL` topics
   still run in that tick.
-- Failed Redis connects are no longer cached: the connection entry is dropped
-  and retried on the next call instead of poisoning the host until Excel
-  restarts; a failed connection attempt now removes only its own cache entry
-  (a fresh entry created concurrently is preserved).
-- RTD polling commits the dedup state only after a successful Excel push, and
-  a failed Excel update restores the dirty flag so the value is retried on the
-  next tick; `ServerTerminate` marks topics disconnected before stopping the
-  timers.
+- Failed Redis connects are no longer cached: the failed attempt is replaced
+  with a fresh entry atomically (compare-and-swap) so the next call retries
+  instead of the host staying poisoned until Excel restarts; a concurrently
+  created entry is never removed.
+- RTD polling commits the dedup state only after the value is accepted for
+  delivery (queued or pushed without error); a failed Excel push restores the
+  dirty flag so the value is retried on the next tick. `ServerTerminate` marks
+  topics disconnected before stopping the timers.
 - Subscription manager hardened: network I/O moved outside the per-channel
-  lock, a manager dispose flag, value-checked channel removal (no state
-  eviction races) and host-length-prefixed subscription keys (no collision
-  when hosts/channels contain control characters); a late unsubscribe can no
-  longer tear down a freshly installed handler (the network gate is held
-  across Unsubscribe).
+  lock, a manager dispose flag, safe channel removal (a stale removal restores
+  the currently installed entry instead of evicting it) and
+  host-length-prefixed subscription keys (no collision when hosts/channels
+  contain control characters); a late unsubscribe can no longer tear down a
+  freshly installed handler (the network gate is held across Unsubscribe).
 - Subscription manager shutdown race closed: a channel state created
   concurrently with `Dispose()` can no longer subscribe after shutdown.
 - Joiner retry: every `Subscribe` re-ensures the single StackExchange.Redis
   handler (idempotent fast path), so a failed subscribe followed by another
   listener no longer leaves a channel silently unsubscribed.
-- `ServerTerminate` marks all topics as disconnected before teardown, so
-  in-flight ticks cannot update cells after terminate.
 - Subscription listeners carry an origin tag ("RTD"/"UDF"); the RTD status
   counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) now report RTD
   listeners only.
@@ -92,7 +90,8 @@
   converted with the invariant culture. Null/`ExcelMissing`/`ExcelEmpty`/
   `ExcelError` cell values become null and are never sent as a Redis key;
   empty/null values are stored as `""` (they no longer reach Redis as a null
-  `RedisValue` that would delete the key).
+  `RedisValue` that would delete the key), now also covering key-value/matrix
+  setters, list pushes and channel publishes.
 - `RedisUDFExpire` rejects non-positive TTLs; `RedisUDFType` reports `unknown`
   for unrecognized key types; `RedisUDFJSONToMatrix` accepts numeric cells
   invariantly.

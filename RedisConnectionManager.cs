@@ -75,11 +75,12 @@ namespace RedisExcel
             }
             catch
             {
-                // Drop only OUR failed entry; a fresh entry created by another thread
-                // in the meantime must be preserved (.NET Framework has no atomic
-                // value-checked TryRemove).
-                if (dictionary.TryRemove(host, out var removed) && !ReferenceEquals(removed, lazy))
-                    dictionary.TryAdd(host, removed);
+                // Atomically replace the failed attempt with a fresh Lazy so the next call
+                // retries. TryUpdate only swaps when the current entry is still ours, so a
+                // concurrently created entry is never removed (no leak, no double connect).
+                dictionary.TryUpdate(host,
+                    new Lazy<ConnectionMultiplexer>(() => Connect(host, pool), LazyThreadSafetyMode.ExecutionAndPublication),
+                    lazy);
                 throw;
             }
         }

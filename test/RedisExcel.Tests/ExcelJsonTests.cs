@@ -1,6 +1,5 @@
 using ExcelDna.Integration;
 using Newtonsoft.Json.Linq;
-using System;
 using Xunit;
 
 namespace RedisExcel.Tests
@@ -116,6 +115,15 @@ namespace RedisExcel.Tests
 
             var nullToken = ExcelJson.RedisUDFJSONToMatrix("null", "-");
             Assert.Equal("-", nullToken[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_NullJsonReturnsFill()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix((object)null, "vazio");
+            Assert.Equal(1, result.GetLength(0));
+            Assert.Equal(1, result.GetLength(1));
+            Assert.Equal("vazio", result[0, 0]);
         }
 
         [Fact]

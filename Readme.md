@@ -249,7 +249,7 @@ Functions to use directly in Excel cells:
     "host": "localhost:6379",
     "timeout": 1000,
     "RedisUpdateRateMs": 1000,
-    "ExcelUpdateRateMS": 100,
+    "ExcelUpdateRateMs": 100,
     "MessageCounterThreshold": 1000,
     "ExcelUpdateStyle": "Automatic",
     "UseGetMultiple": true

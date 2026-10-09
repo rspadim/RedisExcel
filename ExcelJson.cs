@@ -67,6 +67,10 @@ namespace RedisExcel
         {
             object fill = nullValue == null || nullValue is ExcelMissing || nullValue is ExcelEmpty ? "" : nullValue;
             string jsonText = RedisUDF.ToRedisString(json);
+            // Empty/missing/ExcelError cells convert to null; deserializing null would
+            // throw ArgumentNullException and surface as an Error cell instead of fill.
+            if (jsonText == null)
+                return new object[,] { { fill } };
             try
             {
                 var token = JsonConvert.DeserializeObject<JToken>(jsonText);

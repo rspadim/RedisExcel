@@ -52,5 +52,15 @@ namespace RedisExcel.Tests
             gate.Exit();
             Assert.True(gate.TryEnter());
         }
+
+        [Fact]
+        public void TryEnter_SingleWinnerWhenGateFree()
+        {
+            var gate = new TickGate();
+
+            int winners = 0;
+            Parallel.For(0, 64, _ => { if (gate.TryEnter()) Interlocked.Increment(ref winners); });
+            Assert.Equal(1, winners);
+        }
     }
 }

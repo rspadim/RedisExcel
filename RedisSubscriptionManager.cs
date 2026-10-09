@@ -2,7 +2,6 @@ using NLog;
 using StackExchange.Redis;
 using System;
 using System.Collections.Concurrent;
-using System.Collections.Generic;
 using System.Threading;
 
 namespace RedisExcel
@@ -22,9 +21,9 @@ namespace RedisExcel
     /// Hardened lifecycle: network calls (Subscribe/Unsubscribe) are serialized per
     /// channel through a dedicated lock but always run outside the listener lock, so
     /// message fan-out never blocks behind socket I/O. Subscribe racing with Dispose()
-    /// either throws ObjectDisposedException or fully rolls back its listener, and
-    /// channel entries are removed with a value-checked atomic remove so a stale
-    /// removal can never evict a state concurrently re-created for the same key.
+    /// either throws ObjectDisposedException or fully rolls back its listener. Channel
+    /// entry removal is single-shot: a stale removal restores the currently installed
+    /// entry instead of evicting it (see RemoveChannelEntry).
     ///
     /// Duplicate suppression: feeds republish unchanged values constantly; identical
     /// consecutive payloads are compared as raw bytes (no string decoding) and skipped
@@ -138,6 +137,8 @@ namespace RedisExcel
                 {
                     if (state.Disposed)
                     {
+                        // Bounded busy-wait until the remover finishes evicting the
+                        // state; the next GetOrAdd then creates a fresh one.
                         Thread.Yield();
                         continue;
                     }
@@ -187,8 +188,8 @@ namespace RedisExcel
 
         /// <summary>
         /// Removes a single listener after a failed/lost Subscribe. Only when this was
-        /// the last listener the state is marked disposed, evicted (value-checked) and
-        /// unsubscribed; otherwise concurrent joiners keep the channel alive.
+        /// the last listener the state is marked disposed, removed from the registry
+        /// and unsubscribed; otherwise concurrent joiners keep the channel alive.
         /// </summary>
         private void RollbackListener(ChannelState state, long id)
         {

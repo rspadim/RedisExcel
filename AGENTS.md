@@ -139,6 +139,9 @@ Useful parameters:
   real read-only channels to check live data.
 - `-SkipClientKill` — never run `CLIENT KILL TYPE pubsub`
   (auto-skipped for non-local hosts).
+- `-RedisCli <command>` — custom Redis CLI command (e.g.
+  `docker exec my-redis redis-cli`); a custom CLI disables the automatic
+  `CLIENT KILL` step.
 - `-KeepExcelOpen` — leave Excel open for debugging.
 
 For local hosts the workbook is saved to `test\RedisExcel.Test.xlsx` (committed
@@ -201,4 +204,4 @@ These cost real debugging time — read before writing automation.
 
 Push a `v*` tag; the CI workflow builds and publishes the packed XLLs plus
 `NLog.config` and `RedisExcel.json` as release assets. Current release:
-`v1.1.3`; next planned version: `v1.2.0`.
+`v1.2.0`; next planned version: TBD.

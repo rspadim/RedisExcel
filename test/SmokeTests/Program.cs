@@ -102,7 +102,10 @@ internal static class Program
         Check(WaitUntil(() => { lock (Sync) return receivedC.Count == 1 && receivedC[0] == "msg3"; }, 5000), "new listener received msg3");
         tokenC.Dispose();
 
-        // Duplicate suppression: identical consecutive payloads are skipped.
+        // Duplicate suppression: identical consecutive payloads are skipped when
+        // SkipRepeatedMessages is on (default). A RedisExcel.json in the user
+        // profile may disable it, so adapt the expectations to the loaded config.
+        bool skipRepeated = AppConfig.Current.SkipRepeatedMessages;
         var receivedD = new List<string>();
         var tokenD = subscriptions.Subscribe(host, channel, pattern: false,
             onMessage: m => { lock (Sync) receivedD.Add(m); });
@@ -110,8 +113,18 @@ internal static class Program
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup2");
-        Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000), "changed payload delivered");
-        Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 2000), "identical repeated payload skipped");
+        if (skipRepeated)
+        {
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000), "changed payload delivered");
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 2000), "identical repeated payload skipped");
+        }
+        else
+        {
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000),
+                "changed payload delivered (dedup disabled by config)");
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 3; }, 2000),
+                "identical repeated payloads delivered (dedup disabled by config)");
+        }
         tokenD.Dispose();
 
         // Pattern subscriptions are never deduplicated, and pattern/literal

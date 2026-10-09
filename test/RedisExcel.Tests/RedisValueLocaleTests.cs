@@ -1,3 +1,5 @@
+using System;
+using System.Globalization;
 using ExcelDna.Integration;
 using Xunit;
 
@@ -8,9 +10,21 @@ namespace RedisExcel.Tests
         [Fact]
         public void ToRedisString_UsesInvariantCultureForNumbers()
         {
-            Assert.Equal("67000.5", RedisUDF.ToRedisString(67000.5));
-            Assert.Equal("0.1", RedisUDF.ToRedisString(0.1));
-            Assert.Equal("2", RedisUDF.ToRedisString(2.0));
+            // Force a comma-decimal culture: the fact only proves invariance if it
+            // would fail when the implementation falls back to CurrentCulture.
+            var original = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+
+                Assert.Equal("67000.5", RedisUDF.ToRedisString(67000.5));
+                Assert.Equal("0.1", RedisUDF.ToRedisString(0.1));
+                Assert.Equal("2", RedisUDF.ToRedisString(2.0));
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+            }
         }
 
         [Fact]
@@ -29,7 +43,7 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void ToRedisString_UsesInvariantCultureForBooleans()
+        public void ToRedisString_FormatsBooleansInvariantly()
         {
             Assert.Equal("True", RedisUDF.ToRedisString(true));
         }
@@ -37,8 +51,22 @@ namespace RedisExcel.Tests
         [Fact]
         public void ToInt64Invariant_ParsesInvariantNumbers()
         {
-            Assert.Equal(5L, RedisUDF.ToInt64Invariant(5.0));
-            Assert.Equal(7L, RedisUDF.ToInt64Invariant("7"));
+            var original = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+
+                Assert.Equal(5L, RedisUDF.ToInt64Invariant(5.0));
+                Assert.Equal(7L, RedisUDF.ToInt64Invariant("7"));
+
+                // Under de-DE a culture-sensitive parse would accept "1,5";
+                // the invariant implementation must reject it.
+                Assert.Throws<FormatException>(() => RedisUDF.ToInt64Invariant("1,5"));
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+            }
         }
     }
 }

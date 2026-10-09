@@ -208,11 +208,6 @@ function Get-CellText($Sheet, [string]$Address) {
     }
 }
 
-function Get-CellNumber($Sheet, [string]$Address) {
-    try { return [double](Get-CellText $Sheet $Address) }
-    catch { return [double]::NaN }
-}
-
 function Wait-CellText($Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 20) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $text = ''
@@ -270,11 +265,13 @@ function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$Timeou
 # can be lost before that happens, so repeat it until the cell shows the value.
 function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 30) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $publishResult = ''
     while ((Get-Date) -lt $deadline) {
-        Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-Null
+        $publishResult = (Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-String).Trim()
         if (Wait-CellText $Sheet $Address $Expected 3) { return $true }
         Start-Sleep -Milliseconds 500
     }
+    Write-Host ("      PUBLISH {0} '{1}' last reply: '{2}' (cell {3} never showed '{4}')" -f $Channel, $Message, $publishResult, $Address, $Expected) -ForegroundColor DarkGray
     return $false
 }
 
@@ -488,7 +485,6 @@ try {
     Check (Wait-CellNumberMin $rtd 'B12' 1)                  'RTD ChannelCount >= 1'
 
     if ($RealChannel) {
-        Invoke-RedisCli @('PUBSUB', 'NUMSUB', $RealChannel) | Out-Null
         Check (Wait-CellNotEmpty $rtd 'B17' 30)              'RTD SUB received live data from the real channel'
     }
     if ($RealPattern) {
@@ -511,7 +507,11 @@ try {
     Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveAs($tempOut, 51) } | Out-Null
     if ($tempOut -ne $outPath) {
-        Copy-Item -Path $tempOut -Destination $outPath -Force
+        # Stage next to the target and replace with Move-Item, so the committed
+        # sample is never left half-written if this process dies mid-copy.
+        $stagedPath = "$outPath.tmp"
+        Copy-Item -Path $tempOut -Destination $stagedPath -Force
+        Move-Item -Path $stagedPath -Destination $outPath -Force
     }
     Check (Test-Path $outPath) ("test workbook saved to " + $outPath)
 
@@ -529,9 +529,18 @@ try {
 
     # Duplicate the RTD sheet inside the copy: new topics for the same channel.
     Invoke-ExcelAction { $copyRtd.Copy($copy.Worksheets.Item($copy.Worksheets.Count)) } | Out-Null
-    $dup = $script:Excel.ActiveSheet
-    if ($dup.Name -notlike 'RTD (*') { $dup = @($copy.Worksheets | Where-Object { $_.Name -like 'RTD (*' })[0] }
-    if (-not $dup -or $dup.Name -eq 'RTD') { $dup = $copy.Worksheets.Item(2) }
+    # Pick the duplicated sheet: prefer the sheet copied just now (name starts
+    # with 'RTD ('), rejecting the original 'RTD' sheet; only then fall back.
+    # The whole selection runs inside Invoke-ExcelAction so transient COM
+    # rejections are retried.
+    $dup = Invoke-ExcelAction {
+        $sheet = $script:Excel.ActiveSheet
+        if ($sheet.Name -notlike 'RTD (*') {
+            $sheet = @($copy.Worksheets | Where-Object { $_.Name -like 'RTD (*' })[0]
+        }
+        if (-not $sheet -or $sheet.Name -eq 'RTD') { $sheet = $copy.Worksheets.Item(2) }
+        $sheet
+    }
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $rtd 'B7' 'copy-2')        'original keeps receiving after a sheet is copied'
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $copyRtd 'B7' 'copy-2')    'duplicated workbook keeps receiving'
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $dup 'B7' 'copy-2')        'duplicated sheet receives'
@@ -566,10 +575,18 @@ finally {
             [GC]::Collect(); [GC]::WaitForPendingFinalizers()
         }
     }
-    # Always clean up the temporary workbooks (copy + save-as staging). The
-    # committed sample in test\ is never removed here.
-    Remove-Item (Join-Path $env:TEMP 'RedisExcel.Test.Copy.xlsx') -Force -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $env:TEMP 'RedisExcel.Test.xlsx') -Force -ErrorAction SilentlyContinue
+    # Clean up the temporary workbooks (copy + save-as staging) only when Excel
+    # is gone; with -KeepExcelOpen the open workbooks still lock those files.
+    # The committed sample in test\ is never removed here.
+    $tempCopyPath = Join-Path $env:TEMP 'RedisExcel.Test.Copy.xlsx'
+    $tempSavePath = Join-Path $env:TEMP 'RedisExcel.Test.xlsx'
+    if ($KeepExcelOpen) {
+        Write-Host ("Temporary workbooks kept: {0} ; {1}" -f $tempSavePath, $tempCopyPath) -ForegroundColor DarkYellow
+    }
+    else {
+        Remove-Item $tempSavePath -Force -ErrorAction SilentlyContinue
+        Remove-Item $tempCopyPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 if ($script:Failures -eq 0) {

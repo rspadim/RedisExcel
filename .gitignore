@@ -1,7 +1,7 @@
 obj/
 bin/
 packages/
-properties/
+[Pp]roperties/
 *.user
 *.suo
 *.cache
@@ -11,3 +11,5 @@ TestResults/
 *.xll
 t1.xlsx
 t2.xlsx
+~$*.xlsx
+DESIGN-*.md

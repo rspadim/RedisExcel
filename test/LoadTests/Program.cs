@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 /// <summary>
 /// Load test for the subscription broadcast hot path.
 ///
-/// Usage: dotnet run --project test\LoadTests -c Release -- [mode] [host] [seconds] [publishers] [listeners] [pattern]
+/// Usage: dotnet run --project test\LoadTests -c Release -- [mode] [host] [seconds] [publishers] [listeners] [pattern] [channel]
 ///   mode       manager (default) = RedisSubscriptionManager, raw = plain SE.Redis subscriber baseline
 ///   host       default "127.0.0.1:6379,abortConnect=False"
 ///   seconds    default 10
@@ -19,6 +19,8 @@ using System.Threading.Tasks;
 ///   pattern    default false; true subscribes to the given channel as a pattern
 ///              (use channel "*" through the host-less listen mode to receive
 ///              every message of a server for a short stress test)
+///   channel    default random "load:<guid>"; with pattern=true and
+///              publishers=0 the default is "*"
 ///
 /// Reports throughput, allocated bytes per received message and GC counts.
 /// </summary>
