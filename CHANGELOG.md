@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.2.2 (unreleased)
+## v1.2.2
 
 ### Fixed
 
@@ -35,6 +35,10 @@
 
 - `HashEquals` documents its unique-field-name precondition; `TickGate.Exit`
   doc clarifies it is only safe after a successful `TryEnter`.
+- Test loop is much faster: the unit test project compiles the production
+  sources directly instead of building the add-in (no ExcelDna packing per
+  run), and the E2E polls at 120 ms with shorter fixed sleeps (suite ~28 s,
+  down from ~2 min).
 
 ## v1.2.1
 
