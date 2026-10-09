@@ -30,13 +30,34 @@ namespace RedisExcel
             new ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>>();
         private readonly ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> _udfData =
             new ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>>();
+        private readonly ConcurrentDictionary<string, IDatabase> _databases =
+            new ConcurrentDictionary<string, IDatabase>();
+        private readonly ConcurrentDictionary<string, ISubscriber> _subscribers =
+            new ConcurrentDictionary<string, ISubscriber>();
 
         public int RtdConnectionCount => _rtdData.Count + _rtdSub.Count;
         public int UdfConnectionCount => _udfData.Count;
 
-        public IDatabase GetDatabase(string host, RedisPool pool) => GetConnection(host, pool).GetDatabase();
+        public IDatabase GetDatabase(string host, RedisPool pool)
+        {
+            // Cache the lightweight wrappers: volatile worksheet functions call this
+            // constantly, and ConnectionMultiplexer.GetDatabase() allocates per call.
+            string key = PoolKey(host, pool);
+            return _databases.GetOrAdd(key, _ => GetConnection(host, pool).GetDatabase());
+        }
 
-        public ISubscriber GetSubscriber(string host) => GetConnection(host, RedisPool.RtdSub).GetSubscriber();
+        public ISubscriber GetSubscriber(string host) => GetSubscriber(host, RedisPool.RtdSub);
+
+        public ISubscriber GetSubscriber(string host, RedisPool pool)
+        {
+            string key = PoolKey(host, pool);
+            return _subscribers.GetOrAdd(key, _ => GetConnection(host, pool).GetSubscriber());
+        }
+
+        private static string PoolKey(string host, RedisPool pool)
+        {
+            return ((int)pool) + "\u0001" + host;
+        }
 
         public ConnectionMultiplexer GetConnection(string host, RedisPool pool)
         {
@@ -92,6 +113,8 @@ namespace RedisExcel
 
         public void Shutdown()
         {
+            _databases.Clear();
+            _subscribers.Clear();
             foreach (var dictionary in new[] { _rtdData, _rtdSub, _udfData })
             {
                 foreach (var kv in dictionary)

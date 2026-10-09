@@ -48,6 +48,13 @@ internal static class Program
         var connections = new RedisConnectionManager();
         var subscriptions = new RedisSubscriptionManager(connections);
 
+        var db1 = connections.GetDatabase(host, RedisPool.UdfData);
+        var db2 = connections.GetDatabase(host, RedisPool.UdfData);
+        Check(ReferenceEquals(db1, db2), "IDatabase wrapper is cached per host/pool");
+        var sub1 = connections.GetSubscriber(host);
+        var sub2 = connections.GetSubscriber(host);
+        Check(ReferenceEquals(sub1, sub2), "ISubscriber wrapper is cached per host/pool");
+
         var receivedA = new List<string>();
         var receivedB = new List<string>();
 

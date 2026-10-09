@@ -78,6 +78,22 @@ namespace RedisExcel
             }
         }
 
+        private HashEntry[] _lastPolledHash;
+        private bool _hasLastPolledHash;
+
+        /// <summary>TRUE when the polled hash changed since the previous tick.</summary>
+        public bool ShouldUpdatePolledHash(HashEntry[] entries)
+        {
+            lock (_sync)
+            {
+                if (_hasLastPolledHash && RedisResultFormatter.HashEquals(_lastPolledHash, entries))
+                    return false;
+                _lastPolledHash = entries;
+                _hasLastPolledHash = true;
+                return true;
+            }
+        }
+
         public void UpdateAndSendToExcel(string data)
         {
             Topic.UpdateValue(data);
@@ -479,6 +495,8 @@ namespace RedisExcel
                 try
                 {
                     var entries = pair.Value.GetAwaiter().GetResult();
+                    if (_skipRepeatedMessages && !pair.Key.ShouldUpdatePolledHash(entries))
+                        continue;
                     Publish(pair.Key, RedisResultFormatter.FormatHash(entries));
                 }
                 catch (Exception ex)

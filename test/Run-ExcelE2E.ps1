@@ -318,7 +318,10 @@ try {
         @{ Row = 11; Func = 'HashGet';        Fx = '=RedisUDFHashGet("{1}.hash","campo1","{0}")' -f $h, $kp;                                               Expected = 'valor1' },
         @{ Row = 12; Func = 'ChannelPublish'; Fx = '=RedisUDFChannelPublish("{1}.channel","ola_mundo","{0}")' -f $h, $kp;                                  Expected = '1 readers(s)' },
         @{ Row = 13; Func = 'ChannelLatest';  Fx = '=RedisUDFChannelLatest("{1}.channel","{0}")' -f $h, $kp;                                               Expected = 'ola_mundo' },
-        @{ Row = 14; Func = 'ConnectionCount';Fx = '=RedisUDFConnectionCount()';                                                                           Expected = $null }
+        @{ Row = 14; Func = 'ConnectionCount';Fx = '=RedisUDFConnectionCount()';                                                                           Expected = $null },
+        @{ Row = 15; Func = 'ExistsMultiples';Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing"}},"{0}"),1,2)' -f $h, $kp;                  Expected = '1' },
+        @{ Row = 16; Func = 'TTLMultiples';   Fx = '=INDEX(RedisUDFTTLMultiples({{"{1}.key"}},"{0}"),1,2)' -f $h, $kp;                                  Expected = '-1' },
+        @{ Row = 17; Func = 'HashGetFieldMultipleKeys'; Fx = '=INDEX(RedisUDFHashGetFieldMultipleKeys({{"{1}.hash","{1}.hash"}},"campo1","{0}"),2,2)' -f $h, $kp; Expected = 'valor1' }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -380,6 +383,9 @@ try {
     Check (Wait-CellText $udf 'B11' 'valor1')                'UDF HashGet returns the value'
     Check (Wait-CellText $udf 'B13' 'ola_mundo')             'UDF ChannelLatest received the published message'
     Check ((Get-CellNumber $udf 'B14') -ge 1)                'UDF ConnectionCount >= 1'
+    Check (Wait-CellText $udf 'B15' '1')                     'UDF ExistsMultiples (pipelined) first key exists'
+    Check (Wait-CellText $udf 'B16' '-1')                    'UDF TTLMultiples (pipelined) returns -1'
+    Check (Wait-CellText $udf 'B17' 'valor1')                'UDF HashGetFieldMultipleKeys (pipelined) returns the value'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

@@ -133,7 +133,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var subscriber = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData).GetSubscriber();
+                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), message);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channel}, msg={message}, readers={readers}, host={host}");
@@ -165,7 +165,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var subscriber = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData).GetSubscriber();
+                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 long readers = subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), message);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublish: channel={channel}, msg={message}, readers={readers}, host={host}");
@@ -477,14 +477,22 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var db = GetDb(host);
+                if (keys.Length == 0)
+                    return new object[0, 2];
                 var result = new object[keys.Length, 2];
+                var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
                     var key = keys[i]?.ToString();
                     result[i, 0] = key;
-                    result[i, 1] = db.KeyExists(key) ? "1" : "0";
+                    keysList.Add(key);
                 }
+                // One round trip for all keys instead of one command per key.
+                var batch = GetDb(host).CreateBatch();
+                var tasks = keysList.Select(k => batch.KeyExistsAsync(k)).ToArray();
+                batch.Execute();
+                for (int i = 0; i < tasks.Length; i++)
+                    result[i, 1] = tasks[i].GetAwaiter().GetResult() ? "1" : "0";
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExistsMultiples: {keys.Length} keys, host={host}");
                 return result;
@@ -526,13 +534,23 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var db = GetDb(host);
+                if (keys.Length == 0)
+                    return new object[0, 2];
                 var result = new object[keys.Length, 2];
+                var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
                     var key = keys[i]?.ToString();
-                    var ttl = db.KeyTimeToLive(key);
                     result[i, 0] = key;
+                    keysList.Add(key);
+                }
+                // One round trip for all keys instead of one command per key.
+                var batch = GetDb(host).CreateBatch();
+                var tasks = keysList.Select(k => batch.KeyTimeToLiveAsync(k)).ToArray();
+                batch.Execute();
+                for (int i = 0; i < tasks.Length; i++)
+                {
+                    var ttl = tasks[i].GetAwaiter().GetResult();
                     result[i, 1] = ttl.HasValue ? ttl.Value.TotalSeconds.ToString("F0") : "-1";
                 }
                 if (logger.IsTraceEnabled)
@@ -658,14 +676,22 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var db = GetDb(host);
+                if (hashKeys.Length == 0)
+                    return new object[0, 2];
                 var result = new object[hashKeys.Length, 2];
+                var keysList = new List<RedisKey>(hashKeys.Length);
                 for (int i = 0; i < hashKeys.Length; i++)
                 {
                     string key = hashKeys[i]?.ToString();
                     result[i, 0] = key;
-                    result[i, 1] = (string)db.HashGet(key, field) ?? "";
+                    keysList.Add(key);
                 }
+                // One round trip for all hashes instead of one command per key.
+                var batch = GetDb(host).CreateBatch();
+                var tasks = keysList.Select(k => batch.HashGetAsync(k, field)).ToArray();
+                batch.Execute();
+                for (int i = 0; i < tasks.Length; i++)
+                    result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={field}, hashes={hashKeys.Length}, host={host}");
                 return result;

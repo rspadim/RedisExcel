@@ -55,5 +55,19 @@ namespace RedisExcel.Tests
             Assert.Equal("valor1", parsed["campo1"].ToString());
             Assert.Equal("a\"b\n", parsed["quote"].ToString());
         }
+
+        [Fact]
+        public void HashEquals_ComparesContent()
+        {
+            var a = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "v2") };
+            var b = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "v2") };
+            var changed = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "other") };
+
+            Assert.True(RedisResultFormatter.HashEquals(a, b));
+            Assert.True(RedisResultFormatter.HashEquals(a, a));
+            Assert.False(RedisResultFormatter.HashEquals(a, changed));
+            Assert.False(RedisResultFormatter.HashEquals(a, new[] { new HashEntry("f1", "v1") }));
+            Assert.False(RedisResultFormatter.HashEquals(null, a));
+        }
     }
 }

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.4 (unreleased)
+
+### Changed
+
+- Multi-key worksheet functions (`RedisUDFExistsMultiples`,
+  `RedisUDFTTLMultiples`, `RedisUDFHashGetFieldMultipleKeys`) now pipeline all
+  keys in a single round trip instead of one command per key.
+- `IDatabase` and `ISubscriber` wrappers are cached per host/pool, removing an
+  allocation from every UDF call.
+- Unchanged `HGETALL` hashes are compared field-by-field and no longer
+  re-formatted or pushed to Excel (extends `SkipRepeatedMessages` to hash
+  polling).
+
 ## v1.1.3
 
 ### Changed
