@@ -98,10 +98,12 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void ConfigDefaults_SkipRepeatedMessagesEnabled()
+        public void ConfigDefaults_PerformanceOptionsEnabled()
         {
             Assert.True(new ConfigRoot().SkipRepeatedMessages);
             Assert.False(new ConfigRoot { SkipRepeatedMessages = false }.SkipRepeatedMessages);
+            Assert.True(new ConfigRoot().CoalesceRealtimeUpdates);
+            Assert.False(new ConfigRoot { CoalesceRealtimeUpdates = false }.CoalesceRealtimeUpdates);
         }
     }
 }

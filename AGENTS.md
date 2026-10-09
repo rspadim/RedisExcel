@@ -59,9 +59,10 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   a channel is unsubscribed only when its last listener leaves.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
-- RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; when
-  real-time is off (`Automatic` over threshold, or `Timer` style), the Excel
-  timer (`ExcelUpdateRateMs`) flushes dirty values.
+- RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
+  timer (`ExcelUpdateRateMs`) flushes dirty values. Real-time updates are
+  coalesced per topic by default (`CoalesceRealtimeUpdates`, on): the latest
+  value wins per window instead of one Excel update per message.
 - `HGETALL` output is valid JSON: `{"field":"value",...}`.
 - Identical consecutive payloads are skipped before decoding
   (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET

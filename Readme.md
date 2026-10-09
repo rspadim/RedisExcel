@@ -249,7 +249,8 @@ Functions to use directly in Excel cells:
     "dev": "localhost:6379,defaultDatabase=1"
   },
   "UpdateCheck": true,
-  "SkipRepeatedMessages": true
+  "SkipRepeatedMessages": true,
+  "CoalesceRealtimeUpdates": true
 }
 ```
 

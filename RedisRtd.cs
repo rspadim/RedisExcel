@@ -151,6 +151,7 @@ namespace RedisExcel
         private double _redisUpdateRateMs = 1000;
         private bool _useGetMultiple = true;
         private bool _skipRepeatedMessages = true;
+        private bool _coalesceRealtimeUpdates = true;
         private string _defaultHost;
 
         private System.Timers.Timer _excelTimer;
@@ -199,6 +200,7 @@ namespace RedisExcel
             _messageCounterThreshold = config.MessageCounterThreshold;
             _useGetMultiple = config.UseGetMultiple;
             _skipRepeatedMessages = AppConfig.Current.SkipRepeatedMessages;
+            _coalesceRealtimeUpdates = AppConfig.Current.CoalesceRealtimeUpdates;
             // in Realtime/Timer styles the mode is fixed; in Automatic it is recalculated from the message counter
             _realTimeUpdates = _excelUpdateStyle != ENUMExcelUpdateStyle.Timer;
 
@@ -365,7 +367,7 @@ namespace RedisExcel
                 Interlocked.Increment(ref _messageCount);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={message}");
-                if (_realTimeUpdates)
+                if (_realTimeUpdates && !_coalesceRealtimeUpdates)
                     td.UpdateAndSendToExcel(message);
                 else
                     td.UpdateOnly(message);
@@ -382,7 +384,7 @@ namespace RedisExcel
         private void OnExcelTick()
         {
             UpdateRealtimeMode(allowReenable: false);
-            if (_realTimeUpdates)
+            if (_realTimeUpdates && !_coalesceRealtimeUpdates)
                 return;
             if (_polledTopics.IsEmpty && _subscribedTopics.IsEmpty)
                 return;
@@ -511,7 +513,7 @@ namespace RedisExcel
             Interlocked.Increment(ref _messageCount);
             if (logger.IsTraceEnabled)
                 logger.Trace($"Publish: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
-            if (_realTimeUpdates)
+            if (_realTimeUpdates && !_coalesceRealtimeUpdates)
                 td.UpdateAndSendToExcel(value);
             else
                 td.UpdateOnly(value);

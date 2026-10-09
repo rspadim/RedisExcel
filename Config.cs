@@ -39,6 +39,10 @@ namespace RedisExcel
         /// <summary>Skip identical consecutive payloads before decoding/delivering
         /// (feeds republish unchanged values constantly). Default on.</summary>
         public bool SkipRepeatedMessages { get; set; } = true;
+        /// <summary>In real-time mode, send at most one update per topic per
+        /// ExcelUpdateRateMs window instead of one per incoming message.
+        /// Default on (the more performant option).</summary>
+        public bool CoalesceRealtimeUpdates { get; set; } = true;
     }
 
     /// <summary>

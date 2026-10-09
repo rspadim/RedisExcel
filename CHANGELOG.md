@@ -12,6 +12,11 @@
 - Unchanged `HGETALL` hashes are compared field-by-field and no longer
   re-formatted or pushed to Excel (extends `SkipRepeatedMessages` to hash
   polling).
+- Real-time updates are coalesced per topic by default
+  (`"CoalesceRealtimeUpdates": true`): in real-time mode each topic sends at
+  most one value per `ExcelUpdateRateMs` window (the latest value wins)
+  instead of one Excel update per incoming message. Set it to false to
+  restore per-message delivery.
 
 ## v1.1.3
 
