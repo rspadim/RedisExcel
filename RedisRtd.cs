@@ -128,11 +128,23 @@ namespace RedisExcel
         {
             if (Disconnected)
                 return;
-            Topic.UpdateValue(data);
             lock (_sync)
             {
+                // The state update and the Excel push are serialized per topic,
+                // so an immediate push and a tick flush can never interleave and
+                // overwrite a newer value with an older one. A failed push stays
+                // dirty so the next tick retries it.
                 _lastValue = data;
-                _dirty = false;
+                try
+                {
+                    Topic.UpdateValue(data);
+                    _dirty = false;
+                }
+                catch
+                {
+                    _dirty = true;
+                    throw;
+                }
             }
         }
 
@@ -151,27 +163,22 @@ namespace RedisExcel
         {
             if (Disconnected)
                 return;
-            string value;
             lock (_sync)
             {
                 if (!_dirty)
                     return;
-                _dirty = false;
-                value = _lastValue;
-            }
-            if (Disconnected)
-                return;
-            try
-            {
-                Topic.UpdateValue(value);
-            }
-            catch (Exception ex)
-            {
-                // Mark dirty again so the next Excel tick retries instead of losing the value.
-                logger.Error(ex, "SendToExcelIfDirty: update failed");
-                lock (_sync)
+                try
+                {
+                    // Push while holding the lock: a concurrent state update
+                    // cannot interleave and overwrite the newer value. On
+                    // failure stay dirty so the next Excel tick retries.
+                    Topic.UpdateValue(_lastValue);
+                    _dirty = false;
+                }
+                catch (Exception ex)
                 {
                     _dirty = true;
+                    logger.Error(ex, "SendToExcelIfDirty: update failed");
                 }
             }
         }
@@ -382,27 +389,29 @@ namespace RedisExcel
                 string param4 = topicInfo.Count > 3 ? topicInfo[3] : null;
                 logger.Info($"ConnectData: command={command}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
 
+                // Redis names may be empty or whitespace; only a missing (null)
+                // argument is invalid, which is exactly what StackExchange.Redis rejects.
                 TopicData td;
                 switch (command)
                 {
                     case "GET":
                     case "HGETALL":
-                        if (string.IsNullOrWhiteSpace(param2))
+                        if (param2 == null)
                             throw new Exception($"{command} requires a key as the second argument");
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "HGET":
-                        if (string.IsNullOrWhiteSpace(param2))
+                        if (param2 == null)
                             throw new Exception("HGET requires a key as the second argument");
-                        if (string.IsNullOrWhiteSpace(param3))
+                        if (param3 == null)
                             throw new Exception("HGET requires a field as the third argument");
                         td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "SUB":
                     case "PSUB":
-                        if (string.IsNullOrWhiteSpace(param2))
+                        if (param2 == null)
                             throw new Exception($"{command} requires a channel as the second argument");
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
                         // Register the subscription first: if it throws, the catch below
@@ -582,13 +591,14 @@ namespace RedisExcel
         {
             var db = RedisRuntime.Connections.GetDatabase(host, RedisPool.RtdData);
 
-            // Defense-in-depth: a topic registered with a blank key/field (which
+            // Defense-in-depth: a topic registered with a null key/field (which
             // ConnectData now rejects) must never reach the batch, because it
             // would make StackExchange.Redis throw for the whole host tick.
+            // Empty/whitespace names are valid Redis names and are allowed.
             bool IsMalformed(TopicData td)
             {
-                if (string.IsNullOrWhiteSpace(td.KeyOrChannel) ||
-                    (td.Type == "HGET" && string.IsNullOrWhiteSpace(td.Field)))
+                if (td.KeyOrChannel == null ||
+                    (td.Type == "HGET" && td.Field == null))
                 {
                     logger.Warn($"PollHost: skipping malformed topic, TopicId={td.Topic.TopicId}, Type={td.Type}, host={host}");
                     return true;

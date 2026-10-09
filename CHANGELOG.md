@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.2.3 (unreleased)
+
+### Fixed
+
+- `RedisUDFHashGetFieldMultipleKeys` with an empty input returns a blank cell
+  instead of a zero-width matrix (completes the v1.2.2 zero-row fix).
+- RTD `ConnectData`/`PollHost` reject only null keys/fields again - empty and
+  whitespace key/field names are valid Redis names (v1.2.2 had over-rejected
+  them).
+- RTD topic value updates and dirty flushes are serialized per topic, so a tick
+  flush can no longer overwrite a newer value with an older one; a failed push
+  stays dirty for the next tick.
+
+### Changed
+
+- The E2E script sanitizes the saved sample workbook (removes the local
+  `absPath` and personal document metadata) before it can be committed.
+- Removed the dead `InternalsVisibleTo`; docs note the linked-sources test
+  model.
+
 ## v1.2.2
 
 ### Fixed

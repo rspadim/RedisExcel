@@ -25,6 +25,10 @@
     Link the production sources instead of a ProjectReference to RedisExcel.csproj:
     referencing the add-in project would run the full ExcelDna packing step on every
     test run. The add-in itself is still built by CI and the release build.
+    RedisRtd.cs is intentionally NOT linked: it is the RTD/COM surface, and its
+    ConnectData/PollHost behavior is exercised by the E2E script instead.
+    Any NEW production source file needed by unit tests must be added to this
+    Compile list (and possibly to test\SmokeTests\Program.cs's equivalent list).
   -->
   <ItemGroup>
     <Compile Include="..\..\Config.cs" Link="Production\Config.cs" />

@@ -40,6 +40,17 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MatrixToJSON_LongMinValueStaysLong()
+        {
+            // Negative boundary: long.MinValue must stay an integer, not be
+            // widened to a double.
+            var json = ExcelJson.RedisUDFMatrixToJSON(new object[,] { { long.MinValue } });
+            var parsed = JArray.Parse(json);
+            Assert.Equal(JTokenType.Integer, parsed[0][0].Type);
+            Assert.Equal(long.MinValue, parsed[0][0].Value<long>());
+        }
+
+        [Fact]
         public void JSONToMatrix_BigIntegerBecomesInvariantText()
         {
             // Integers beyond Int64 are parsed as BigInteger and cannot be

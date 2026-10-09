@@ -275,6 +275,46 @@ function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [strin
     return $false
 }
 
+# Removes local machine paths and personal metadata from a saved workbook:
+# Excel stores the save folder in xl/workbook.xml (x15ac:absPath, e.g. the
+# user's TEMP path) and the author in docProps/core.xml. The committed sample
+# must not carry either (see the no-private-data rule in AGENTS.md).
+function Remove-WorkbookMetadata([string]$Path) {
+    Add-Type -AssemblyName System.IO.Compression | Out-Null
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::Open($Path, [System.IO.Compression.ZipArchiveMode]::Update)
+    try {
+        $rules = @{
+            'xl/workbook.xml' = @(
+                @{ Pattern = '<\w+:\w*absPath[^>]*/>'; Replacement = '' }
+            )
+            'docProps/core.xml' = @(
+                @{ Pattern = '<dc:creator>.*?</dc:creator>'; Replacement = '<dc:creator>RedisExcel</dc:creator>' }
+                @{ Pattern = '<cp:lastModifiedBy>.*?</cp:lastModifiedBy>'; Replacement = '<cp:lastModifiedBy>RedisExcel</cp:lastModifiedBy>' }
+            )
+        }
+        foreach ($entryName in $rules.Keys) {
+            $entry = $zip.GetEntry($entryName)
+            if (-not $entry) { continue }
+            $reader = New-Object System.IO.StreamReader($entry.Open())
+            try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
+            $clean = $text
+            foreach ($rule in $rules[$entryName]) {
+                $clean = [regex]::Replace($clean, $rule.Pattern, $rule.Replacement)
+            }
+            if ($clean -eq $text) { continue }
+            # Update mode cannot rewrite an entry in place: delete and recreate
+            # only the entries whose content changed.
+            $entry.Delete()
+            $writer = New-Object System.IO.StreamWriter($zip.CreateEntry($entryName).Open())
+            try { $writer.Write($clean) } finally { $writer.Dispose() }
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
+}
+
 # ---------------------------------------------------------------- setup ----
 
 Resolve-RedisCli
@@ -512,6 +552,10 @@ try {
         $stagedPath = "$outPath.tmp"
         Copy-Item -Path $tempOut -Destination $stagedPath -Force
         Move-Item -Path $stagedPath -Destination $outPath -Force
+        # Strip the local save path and personal metadata before the sample can
+        # be committed. Remote runs keep the workbook in %TEMP% (still open in
+        # Excel and deleted in the cleanup), so there is nothing to sanitize.
+        Remove-WorkbookMetadata -Path $outPath
     }
     Check (Test-Path $outPath) ("test workbook saved to " + $outPath)
 

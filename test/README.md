@@ -9,6 +9,9 @@ guidance and the Excel automation lessons.
 dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
+The test project compiles the production sources directly (no add-in build), so
+a new production file used by the tests must be added to its `Compile` list.
+
 ## 2. Smoke tests (requires Redis, no Excel)
 
 ```powershell
@@ -24,8 +27,10 @@ powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1
 
 The script builds the test workbook (`RedisExcel.Test.xlsx`), asserts UDF/RTD
 values and reproduces the Pub/Sub regression scenario (workbook copy/close and
-connection blip). For remote hosts the workbook goes to `%TEMP%` and the
-destructive `CLIENT KILL` step is skipped automatically.
+connection blip). Before the sample can be committed it is sanitized: the local
+save path and the personal document metadata are removed. For remote hosts the
+workbook goes to `%TEMP%` and the destructive `CLIENT KILL` step is skipped
+automatically.
 
 Useful parameters: `-RedisHost`, `-KeyPrefix`, `-RealChannel`, `-RealPattern`,
 `-SkipClientKill`, `-RedisCli`, `-KeepExcelOpen`. Supplying a custom

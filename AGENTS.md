@@ -114,7 +114,14 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
 Covers: `ExcelJson` conversions, `AppConfig.Sanitize`/`ResolveHostCore`,
-subscription keys, HGETALL formatting, the `TickGate` reentrancy helper.
+subscription keys, HGETALL formatting, the `TickGate` reentrancy helper,
+`UpdateCheckTests` (`IsNewer`/`NormalizeTag`) and `RedisValueLocaleTests`
+(de-DE culture).
+
+The unit, smoke and load test projects compile the production sources directly
+(linked `Compile` items), so a new production `.cs` needed by tests must be
+added to their `Compile` lists. `dotnet test` no longer builds or packs the
+add-in; CI builds it with msbuild.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
 
@@ -140,6 +147,8 @@ connections server-side and verifies automatic recovery.
 
 Useful parameters:
 
+- `-RepoRoot <path>` — repository root; defaults to the parent folder of the
+  script (the repo root).
 - `-RedisHost <host:port>` — default `localhost:6379`.
 - `-KeyPrefix <prefix>` — default `test.redisexcel` (keys and channels).
 - `-RealChannel <name>` / `-RealPattern <pattern>` — optionally subscribe to

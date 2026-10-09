@@ -916,7 +916,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 if (hashKeys.Length == 0)
-                    return new object[0, 2];
+                    return new object[,] { { "" } };
                 var result = new object[hashKeys.Length, 2];
                 var keysList = new List<RedisKey>(hashKeys.Length);
                 for (int i = 0; i < hashKeys.Length; i++)
