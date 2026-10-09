@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.2.1
+
+### Fixed
+
+- Null/empty values are now stored as `""` on every write path (key-value and
+  matrix setters, list pushes and channel publishes included); previously some
+  of them reached Redis as a null `RedisValue` (deleting the key or throwing).
+- `RedisUDFJSONToMatrix` returns the fill value for empty/missing input cells
+  instead of an error cell.
+- A failed Redis connect is now replaced with a fresh entry atomically
+  (compare-and-swap), so the next call retries and a concurrently created
+  entry is never removed.
+
+### Changed
+
+- Test hardening: invariant-culture tests run under a comma-decimal culture
+  (de-DE) and require the invariant parsing behavior; `TickGate` gained a
+  free-gate contention test; the smoke suite adapts when
+  `SkipRepeatedMessages` is disabled by a local config; the E2E script got
+  safer cleanup/save paths (crash-safe sample replace) and better failure
+  diagnostics.
+- CI release step declares `permissions: contents: write` explicitly.
+
 ## v1.2.0
 
 ### Changed
