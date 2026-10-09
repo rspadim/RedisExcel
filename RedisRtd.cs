@@ -73,9 +73,24 @@ namespace RedisExcel
 
         /// <summary>
         /// Failed Subscribe attempts for this topic: the first failure is logged at
-        /// Warning, later retries at Debug (see RedisRtd.TrySubscribe).
+        /// Warning with the exception, later retries at Debug with the message
+        /// only (see RedisRtd.TrySubscribe).
         /// </summary>
         public int SubscribeAttempts;
+
+        private long _nextSubscribeAttemptUtcTicks;
+
+        /// <summary>
+        /// Earliest UTC time for the next Subscribe retry after a failure: the
+        /// delay doubles from 1s up to a 30s cap (1s, 2s, 4s, ...). Reset to
+        /// DateTime.MinValue on success. Backed by long ticks so the timer tick
+        /// and the Excel thread can read/write it without tearing.
+        /// </summary>
+        public DateTime NextSubscribeAttemptUtc
+        {
+            get { return new DateTime(Interlocked.Read(ref _nextSubscribeAttemptUtcTicks), DateTimeKind.Utc); }
+            set { Interlocked.Exchange(ref _nextSubscribeAttemptUtcTicks, value.Ticks); }
+        }
 
         private int _subscribeGate;
 
@@ -321,7 +336,7 @@ namespace RedisExcel
             return instance == null ? 0 : Interlocked.Read(ref instance._previousSecondCount);
         }
 
-        public static int RedisConnectionsCount() => RedisRuntime.Connections.LiveConnectionCount();
+        public static int RedisConnectionsCount() => RedisRuntime.Connections.LiveRtdConnectionCount();
 
         /// <summary>
         /// Number of active Redis pub/sub listeners registered by the RTD layer. RTD-only
@@ -502,10 +517,11 @@ namespace RedisExcel
                 string param4 = topicInfo.Count > 3 ? topicInfo[3] : null;
                 logger.Info($"ConnectData: command={command}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
 
-                // Redis names (keys/fields) may be empty or whitespace; only a
-                // missing (null) argument is invalid here (StackExchange.Redis
-                // rejects null for keys/fields). Empty or whitespace SUB/PSUB
-                // channels are still rejected later by the subscription manager.
+                // Redis keys/fields may be empty or whitespace; only a missing
+                // (null) argument is invalid for them (StackExchange.Redis
+                // rejects null for keys/fields). SUB/PSUB channels are the
+                // exception: a blank channel can never subscribe, so it is
+                // rejected up front below instead of being retried forever.
                 TopicData td;
                 switch (command)
                 {
@@ -532,7 +548,11 @@ namespace RedisExcel
                         break;
                     case "SUB":
                     case "PSUB":
-                        if (param2 == null)
+                        // A blank/whitespace channel can never subscribe, so
+                        // refuse it BEFORE the topic is registered: otherwise
+                        // every Redis tick would retry it forever, with a full
+                        // stack trace per attempt.
+                        if (string.IsNullOrWhiteSpace(param2))
                             throw new Exception($"{command} requires a channel as the second argument");
                         // Documented arguments: channel + optional host.
                         RejectExtraArguments(command, topicInfo, 3);
@@ -662,8 +682,10 @@ namespace RedisExcel
         /// <summary>
         /// Attempts to subscribe a registered SUB/PSUB topic (idempotent). Returns
         /// the failure message, or null on success/already-subscribed. The first
-        /// failure is logged at Warning; the Redis-tick retries at Debug, so a
-        /// permanently unreachable host does not flood the log.
+        /// failure is logged at Warning with the exception; later attempts log at
+        /// Debug with the message only, so a permanently unreachable host does not
+        /// flood the log. Each failure schedules the next retry (1s, 2s, 4s ...
+        /// capped at 30s, see NextSubscribeAttemptUtc).
         /// </summary>
         private string TrySubscribe(TopicData td)
         {
@@ -678,6 +700,8 @@ namespace RedisExcel
                 if (td.Disconnected || td.Subscription != null)
                     return null;
                 var subscription = Subscribe(td);
+                // Subscribe succeeded: clear the retry backoff.
+                td.NextSubscribeAttemptUtc = default(DateTime);
                 if (!td.InstallSubscription(subscription))
                 {
                     // DisconnectData/ServerTerminate raced with the install: the
@@ -697,10 +721,13 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 int attempt = Interlocked.Increment(ref td.SubscribeAttempts);
+                // 1s, 2s, 4s, 8s, 16s, then 30s for every later attempt.
+                int seconds = Math.Min(30, 1 << Math.Min(attempt - 1, 5));
+                td.NextSubscribeAttemptUtc = DateTime.UtcNow.AddSeconds(seconds);
                 if (attempt == 1)
-                    logger.Warn(ex, $"Subscribe failed, will retry on the next Redis tick: {td}");
+                    logger.Warn(ex, $"Subscribe failed, retry in {seconds}s: {td}");
                 else if (logger.IsDebugEnabled)
-                    logger.Debug(ex, $"Subscribe retry failed (attempt {attempt}): {td}");
+                    logger.Debug($"Subscribe retry failed (attempt {attempt}), retry in {seconds}s: {td}: {ex.Message}");
                 return ex.Message;
             }
             finally
@@ -709,18 +736,31 @@ namespace RedisExcel
             }
         }
 
+        // Failed SUB/PSUB registrations are retried with backoff; cap the
+        // number of retries per Redis tick so a large set of unreachable
+        // topics cannot stall the tick.
+        private const int PendingSubscribeRetriesPerTick = 4;
+
         /// <summary>
         /// Retries SUB/PSUB topics whose Subscribe failed at ConnectData
-        /// (Subscription is null). A successful retry lets messages flow into the
-        /// cell, which still shows the initial "#ERROR: ConnectData: ..." text
-        /// until the first message overwrites it.
+        /// (Subscription is null), at most <see cref="PendingSubscribeRetriesPerTick"/>
+        /// per tick and only once each topic's backoff elapsed. A successful
+        /// retry lets messages flow into the cell, which still shows the initial
+        /// "#ERROR: ConnectData: ..." text until the first message overwrites it.
         /// </summary>
         private void RetryPendingSubscriptions()
         {
+            var now = DateTime.UtcNow;
+            int retried = 0;
             foreach (var td in _subscribedTopics.Values)
             {
+                if (retried >= PendingSubscribeRetriesPerTick)
+                    break;
                 if (td.Disconnected || td.Subscription != null)
                     continue;
+                if (td.NextSubscribeAttemptUtc > now)
+                    continue;
+                retried++;
                 TrySubscribe(td);
             }
         }
@@ -973,58 +1013,127 @@ namespace RedisExcel
 
     public static class RedisRtdStatus
     {
+        // Every helper reports a neutral value instead of throwing after
+        // RedisRuntime.Shutdown: the runtime refuses to resurrect the managers,
+        // so an unguarded access would surface InvalidOperationException in the
+        // cell during Excel teardown/reload. The public Excel surface (names
+        // and signatures) is unchanged.
+
         [ExcelFunction(Description = "Returns the number of active Redis connections.", IsVolatile = true)]
         public static int RedisRTDConnectionCount()
         {
-            return RedisRtd.RedisConnectionsCount();
+            try
+            {
+                return RedisRtd.RedisConnectionsCount();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns the number of active Redis subscriptions.", IsVolatile = true)]
         public static int RedisRTDSubscriptionCount()
         {
-            return RedisRtd.RedisSubscriptionsCount();
+            try
+            {
+                return RedisRtd.RedisSubscriptionsCount();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns the total number of active Excel RTD topics.", IsVolatile = true)]
         public static int RedisRTDTopicCount()
         {
-            return RedisRtd.TopicsCount();
+            try
+            {
+                return RedisRtd.TopicsCount();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns the number of Redis channels with subscriptions.", IsVolatile = true)]
         public static int RedisRTDChannelCount()
         {
-            return RedisRtd.ChannelTopicsCount();
+            try
+            {
+                return RedisRtd.ChannelTopicsCount();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns the default Redis host address used by the RTD server.", IsVolatile = true)]
         public static string RedisRTDDefaultHost()
         {
-            return RedisRtd.DefaultHost();
+            try
+            {
+                return RedisRtd.DefaultHost();
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         [ExcelFunction(Description = "Returns the Excel update interval in milliseconds.", IsVolatile = true)]
         public static double RedisRTDExcelUpdateInterval()
         {
-            return RedisRtd.ExcelUpdateRate();
+            try
+            {
+                return RedisRtd.ExcelUpdateRate();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns the Redis polling interval in milliseconds.", IsVolatile = true)]
         public static double RedisRTDRedisUpdateInterval()
         {
-            return RedisRtd.RedisUpdateRate();
+            try
+            {
+                return RedisRtd.RedisUpdateRate();
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Returns TRUE if real-time updates are enabled, FALSE otherwise.", IsVolatile = true)]
         public static bool RedisRTDRealTimeUpdates()
         {
-            return RedisRtd.IsRealTimeEnabled();
+            try
+            {
+                return RedisRtd.IsRealTimeEnabled();
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         [ExcelFunction(Description = "Returns last messages/second counter", IsVolatile = true)]
         public static long RedisRTDMessagesCounter()
         {
-            return RedisRtd.CurrentMessagesCounter();
+            try
+            {
+                return RedisRtd.CurrentMessagesCounter();
+            }
+            catch
+            {
+                return 0;
+            }
         }
     }
 }

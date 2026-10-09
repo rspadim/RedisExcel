@@ -21,6 +21,8 @@ namespace RedisExcel.Tests
             Assert.Equal(0, manager.RtdConnectionCount);
             Assert.Equal(0, manager.UdfConnectionCount);
             Assert.Equal(0, manager.LiveConnectionCount());
+            Assert.Equal(0, manager.LiveRtdConnectionCount());
+            Assert.Equal(0, manager.LiveUdfConnectionCount());
         }
 
         [Fact]
@@ -55,6 +57,24 @@ namespace RedisExcel.Tests
             // A cached Lazy that never ran holds no multiplexer: 0, and no
             // connect is attempted for the pools that were never touched.
             Assert.Equal(0, manager.LiveConnectionCount());
+        }
+
+        [Fact]
+        public void LiveRtdConnectionCount_IsZeroBeforeAnyConnect()
+        {
+            var manager = new RedisConnectionManager();
+
+            // RtdData and RtdSub hold no created multiplexer: 0.
+            Assert.Equal(0, manager.LiveRtdConnectionCount());
+        }
+
+        [Fact]
+        public void LiveUdfConnectionCount_IsZeroBeforeAnyConnect()
+        {
+            var manager = new RedisConnectionManager();
+
+            // UdfData holds no created multiplexer: 0.
+            Assert.Equal(0, manager.LiveUdfConnectionCount());
         }
 
         [Fact]

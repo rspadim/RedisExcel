@@ -39,6 +39,16 @@ namespace RedisExcel
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
 
+        /// <summary>
+        /// Raised after a listener was successfully registered (literal or
+        /// pattern, first listener or joiner, any origin): (host, channel,
+        /// pattern). Consumer-side dedup markers are cleared on join so a
+        /// returning listener still receives the next payload when its value
+        /// did not change. Handler exceptions are caught and logged; they
+        /// never fail the Subscribe call.
+        /// </summary>
+        internal static event Action<string, string, bool> ListenerJoined;
+
         private readonly RedisConnectionManager _connections;
         private readonly ConcurrentDictionary<string, ChannelState> _channels =
             new ConcurrentDictionary<string, ChannelState>();
@@ -200,7 +210,30 @@ namespace RedisExcel
                 break;
             }
             logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, origin={origin ?? "<null>"}, listeners={state.Listeners.Count}");
+            RaiseListenerJoined(host, channel, pattern);
             return new Registration(this, state, id);
+        }
+
+        /// <summary>
+        /// Fans out a join notification with per-handler isolation: a failing
+        /// consumer cleanup must not break an already successful Subscribe.
+        /// </summary>
+        private static void RaiseListenerJoined(string host, string channel, bool pattern)
+        {
+            var handlers = ListenerJoined;
+            if (handlers == null)
+                return;
+            foreach (Action<string, string, bool> handler in handlers.GetInvocationList())
+            {
+                try
+                {
+                    handler(host, channel, pattern);
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"ListenerJoined handler failed: host={host}, channel={channel}, pattern={pattern}");
+                }
+            }
         }
 
         /// <summary>

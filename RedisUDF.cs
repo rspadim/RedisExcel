@@ -63,10 +63,225 @@ namespace RedisExcel
             return _publishLocks[hash % _publishLocks.Length];
         }
 
+        static RedisUDF()
+        {
+            // RTD SUB/PSUB listeners consume UDF publishes too. When such a
+            // listener joins (initially or after a retry), the publish dedup
+            // marker must be dropped, otherwise a recalculation that did not
+            // change the payload answers "No change" while the returning
+            // listener never received it (the ChannelState reset only helps
+            // the subscription-side fan-out).
+            RedisSubscriptionManager.ListenerJoined += HandleListenerJoined;
+        }
+
+        /// <summary>Dedup marker cache, exposed internally so the listener-join
+        /// clearing rules can be unit tested offline.</summary>
+        internal static PublishDedupCache LastPublishedMessagesForTests => _lastPublishedMessages;
+
+        /// <summary>
+        /// Entry point for <see cref="RedisSubscriptionManager.ListenerJoined"/>:
+        /// clears the publish dedup markers that a newly joined listener
+        /// invalidated. Never throws into Subscribe.
+        /// </summary>
+        internal static void HandleListenerJoined(string host, string channel, bool pattern)
+        {
+            try
+            {
+                ClearForListener(host, channel, pattern);
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, $"HandleListenerJoined: host={host}, channel={channel}, pattern={pattern}");
+            }
+        }
+
+        /// <summary>
+        /// Clears the publish dedup markers invalidated by a listener join:
+        /// the exact key for a literal subscription, or every marker of the
+        /// same host whose channel matches the Redis glob for a pattern.
+        /// </summary>
+        internal static void ClearForListener(string host, string channel, bool pattern)
+        {
+            if (!pattern)
+            {
+                ClearMarker(ChannelKey(host, channel));
+                return;
+            }
+
+            // Work from a snapshot: PublishIfChanged takes the per-key stripe
+            // and then the cache lock, so holding the cache lock while taking
+            // a stripe (the opposite order) could deadlock the two.
+            string[] keys = _lastPublishedMessages.SnapshotKeys();
+            for (int i = 0; i < keys.Length; i++)
+            {
+                if (!TryParseChannelKey(keys[i], out var keyHost, out var keyChannel))
+                    continue; // not one of our markers: leave it alone
+                if (!string.Equals(keyHost, host, StringComparison.Ordinal))
+                    continue;
+                if (GlobMatches(channel, keyChannel))
+                    ClearMarker(keys[i]);
+            }
+        }
+
+        private static void ClearMarker(string key)
+        {
+            lock (PublishLock(key))
+                _lastPublishedMessages.Remove(key);
+        }
+
+        /// <summary>
+        /// Splits a <see cref="ChannelKey(string, string)"/> back into host and
+        /// channel. Returns false for malformed keys, so foreign markers are
+        /// skipped instead of being misattributed to a host.
+        /// </summary>
+        internal static bool TryParseChannelKey(string key, out string host, out string channel)
+        {
+            host = null;
+            channel = null;
+            if (string.IsNullOrEmpty(key))
+                return false;
+            int separator = key.IndexOf(':');
+            if (separator <= 0)
+                return false;
+            if (!int.TryParse(key.Substring(0, separator), NumberStyles.None, CultureInfo.InvariantCulture, out int hostLength))
+                return false;
+            int hostStart = separator + 1;
+            int channelStart = hostStart + hostLength;
+            // The channel (which may be empty) is always preceded by ':'.
+            if (channelStart >= key.Length || key[channelStart] != ':')
+                return false;
+            host = key.Substring(hostStart, hostLength);
+            channel = key.Substring(channelStart + 1);
+            return true;
+        }
+
+        /// <summary>
+        /// Case-sensitive Redis-style glob matcher: '*' matches any (possibly
+        /// empty) sequence, '?' exactly one character, '[...]' a character class
+        /// with optional '^' negation and 'a-z' ranges, and '\' escapes the next
+        /// character. Iterative with single-star backtracking, so pathological
+        /// patterns cannot blow up like a backtracking regex.
+        /// </summary>
+        internal static bool GlobMatches(string pattern, string value)
+        {
+            if (pattern == null)
+                return false;
+            value = value ?? "";
+            int p = 0;
+            int v = 0;
+            int starP = -1;
+            int starV = -1;
+            while (v < value.Length)
+            {
+                if (p < pattern.Length && pattern[p] == '*')
+                {
+                    // Try the shortest suffix first; the fallback below extends
+                    // the star match one character at a time.
+                    starP = p++;
+                    starV = v;
+                    continue;
+                }
+                if (p < pattern.Length && MatchOne(pattern, ref p, value[v]))
+                {
+                    v++;
+                    continue;
+                }
+                if (starP >= 0)
+                {
+                    p = starP + 1;
+                    v = ++starV;
+                    continue;
+                }
+                return false;
+            }
+            // Trailing '*' characters may match the (now exhausted) rest.
+            while (p < pattern.Length && pattern[p] == '*')
+                p++;
+            return p == pattern.Length;
+        }
+
+        private static bool MatchOne(string pattern, ref int p, char c)
+        {
+            char current = pattern[p];
+            if (current == '?')
+            {
+                p++;
+                return true;
+            }
+            if (current == '[')
+            {
+                int end = FindClassEnd(pattern, p);
+                if (end < 0)
+                {
+                    // Unterminated class: a literal '[' (like Redis).
+                    p++;
+                    return c == '[';
+                }
+                bool matched = ClassMatches(pattern, p + 1, end, c);
+                if (matched)
+                    p = end + 1;
+                return matched;
+            }
+            if (current == '\\' && p + 1 < pattern.Length)
+            {
+                p += 2;
+                return pattern[p - 1] == c;
+            }
+            p++;
+            return current == c;
+        }
+
+        /// <summary>Index of the ']' closing the class opened at start, or -1
+        /// when the class is unterminated. A ']' directly after '[' or '[^' is
+        /// a literal member, like in Redis.</summary>
+        private static int FindClassEnd(string pattern, int start)
+        {
+            int i = start + 1;
+            if (i < pattern.Length && pattern[i] == '^')
+                i++;
+            if (i < pattern.Length && pattern[i] == ']')
+                i++;
+            while (i < pattern.Length)
+            {
+                if (pattern[i] == '\\' && i + 1 < pattern.Length)
+                {
+                    i += 2;
+                    continue;
+                }
+                if (pattern[i] == ']')
+                    return i;
+                i++;
+            }
+            return -1;
+        }
+
+        private static bool ClassMatches(string pattern, int contentStart, int classEnd, char c)
+        {
+            bool negate = contentStart < classEnd && pattern[contentStart] == '^';
+            int i = negate ? contentStart + 1 : contentStart;
+            bool matched = false;
+            while (i < classEnd)
+            {
+                // 'a-z' range when '-' sits between two members; elsewhere the
+                // dash is a literal member.
+                if (i + 2 < classEnd && pattern[i + 1] == '-')
+                {
+                    if (c >= pattern[i] && c <= pattern[i + 2])
+                        matched = true;
+                    i += 3;
+                    continue;
+                }
+                if (pattern[i] == c)
+                    matched = true;
+                i++;
+            }
+            return negate ? !matched : matched;
+        }
+
         /// <summary>Registry key for a (host, channel) pair. The host length is
         /// length-prefixed so hosts and channels that themselves contain the
-        /// separator cannot collide.</summary>
-        private static string ChannelKey(string host, string channel) => $"{host.Length}:{host}:{channel}";
+        /// separator cannot collide. Format: {host.Length}:{host}:{channel}.</summary>
+        internal static string ChannelKey(string host, string channel) => $"{host.Length}:{host}:{channel}";
 
         /// <summary>Validates and returns a required scalar text argument (key,
         /// hash key, field). Only truly missing cells (null / ExcelEmpty /
@@ -318,7 +533,7 @@ namespace RedisExcel
         [ExcelFunction(Description = "Returns the number of active Redis connections", IsVolatile = true)]
         public static object RedisUDFConnectionCount()
         {
-            int count = RedisRuntime.Connections.UdfConnectionCount;
+            int count = RedisRuntime.Connections.LiveUdfConnectionCount();
             if (logger.IsTraceEnabled)
                 logger.Trace($"RedisUDFConnectionCount: connections={count}");
             return count;
@@ -1588,6 +1803,20 @@ namespace RedisExcel
             {
                 lock (_sync)
                     return _entries.Count;
+            }
+        }
+
+        /// <summary>Snapshot of the tracked keys, taken under the internal lock
+        /// and returned as a plain array so callers can walk it without holding
+        /// that lock: the listener-join cleanup takes per-key stripes next, and
+        /// PublishIfChanged takes them in the opposite order.</summary>
+        public string[] SnapshotKeys()
+        {
+            lock (_sync)
+            {
+                var keys = new string[_entries.Count];
+                _entries.Keys.CopyTo(keys, 0);
+                return keys;
             }
         }
 

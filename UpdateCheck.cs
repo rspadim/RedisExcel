@@ -93,16 +93,25 @@ namespace RedisExcel
                     client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
                     string json = client.GetStringAsync(LatestReleaseUrl).GetAwaiter().GetResult();
                     string tag = (string)JObject.Parse(json)["tag_name"];
+                    string latest;
                     lock (Sync)
                     {
-                        _latestTag = tag;
-                        // A response without a tag is treated as a failure (no
-                        // success marker), so the short backoff still applies.
+                        latest = _latestTag;
+                        // A response without a tag_name is not a usable release:
+                        // treat it as a failed check, i.e. keep the last known
+                        // tag and skip the success marker, so the short retry
+                        // backoff still applies.
                         if (tag != null)
+                        {
+                            _latestTag = tag;
+                            latest = tag;
                             _lastSuccessUtc = DateTime.UtcNow;
+                        }
                     }
                     if (logger.IsInfoEnabled)
-                        logger.Info($"UpdateCheck: current={CurrentTag}, latest={tag}");
+                        logger.Info(tag == null
+                            ? $"UpdateCheck: response without tag_name, keeping latest={latest}"
+                            : $"UpdateCheck: current={CurrentTag}, latest={latest}");
                 }
             }
             catch (Exception ex)

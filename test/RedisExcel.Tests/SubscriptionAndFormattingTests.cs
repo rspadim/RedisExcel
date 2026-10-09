@@ -112,4 +112,130 @@ namespace RedisExcel.Tests
             Assert.True(RedisResultFormatter.HashEquals(a, b));
         }
     }
+
+    /// <summary>
+    /// Offline tests for the publish-dedup markers invalidated when a
+    /// subscription listener joins (RTD SUB/PSUB or UDF ChannelLatest), so an
+    /// unchanged payload is still fanned out to the new listener. No Redis
+    /// server is involved; only the marker cache and the join handler run.
+    /// </summary>
+    public class ListenerJoinDedupTests
+    {
+        private static void Seed(string host, string channel, string payload)
+        {
+            RedisUDF.LastPublishedMessagesForTests.Set(RedisUDF.ChannelKey(host, channel), payload);
+        }
+
+        private static bool HasMarker(string host, string channel)
+        {
+            return RedisUDF.LastPublishedMessagesForTests.TryGet(RedisUDF.ChannelKey(host, channel), out _);
+        }
+
+        [Fact]
+        public void ChannelKey_IsInjectiveAcrossHostChannelBoundaries()
+        {
+            // Without the length prefix both pairs would produce "a:b:c".
+            Assert.NotEqual(RedisUDF.ChannelKey("a", "b:c"), RedisUDF.ChannelKey("a:b", "c"));
+        }
+
+        [Fact]
+        public void ChannelKey_RoundTripsThroughTryParse()
+        {
+            Assert.True(RedisUDF.TryParseChannelKey(RedisUDF.ChannelKey("h:1", "c:2"), out var host, out var channel));
+            Assert.Equal("h:1", host);
+            Assert.Equal("c:2", channel);
+        }
+
+        [Fact]
+        public void ClearForListener_Literal_RemovesOnlyThatChannelsMarker()
+        {
+            string host = "join-literal-host";
+            Seed(host, "orders", "1");
+            Seed(host, "other", "2");
+            Seed(host + ":other", "orders", "3");
+
+            // The HandleListenerJoined entry point is what the manager event
+            // calls; use it here to cover the wrapper too.
+            RedisUDF.HandleListenerJoined(host, "orders", pattern: false);
+
+            Assert.False(HasMarker(host, "orders"));
+            Assert.True(HasMarker(host, "other"));
+            Assert.True(HasMarker(host + ":other", "orders"));
+        }
+
+        [Fact]
+        public void ClearForListener_StarPattern_RemovesMatchingChannelsOfThatHostOnly()
+        {
+            string host = "join-star-host";
+            Seed(host, "orders:1", "1");
+            Seed(host, "orders:2", "2");
+            Seed(host, "other", "3");
+            Seed(host + ":elsewhere", "orders:1", "4");
+
+            RedisUDF.ClearForListener(host, "orders:*", pattern: true);
+
+            Assert.False(HasMarker(host, "orders:1"));
+            Assert.False(HasMarker(host, "orders:2"));
+            Assert.True(HasMarker(host, "other"));
+            Assert.True(HasMarker(host + ":elsewhere", "orders:1"));
+        }
+
+        [Fact]
+        public void ClearForListener_QuestionMarkPattern_MatchesExactlyOneCharacter()
+        {
+            string host = "join-qmark-host";
+            Seed(host, "k:1", "1");
+            Seed(host, "k:a", "2");
+            Seed(host, "k:12", "3");
+            Seed(host, "k:", "4");
+
+            RedisUDF.ClearForListener(host, "k:?", pattern: true);
+
+            Assert.False(HasMarker(host, "k:1"));
+            Assert.False(HasMarker(host, "k:a"));
+            Assert.True(HasMarker(host, "k:12"));
+            Assert.True(HasMarker(host, "k:"));
+        }
+
+        [Fact]
+        public void ClearForListener_CharacterClassPattern_MatchesOnlyClassMembers()
+        {
+            string host = "join-class-host";
+            Seed(host, "c:a", "1");
+            Seed(host, "c:b", "2");
+            Seed(host, "c:c", "3");
+            Seed(host, "c:d", "4");
+            Seed(host, "c:a1", "5");
+
+            RedisUDF.ClearForListener(host, "c:[abc]", pattern: true);
+
+            Assert.False(HasMarker(host, "c:a"));
+            Assert.False(HasMarker(host, "c:b"));
+            Assert.False(HasMarker(host, "c:c"));
+            Assert.True(HasMarker(host, "c:d"));
+            Assert.True(HasMarker(host, "c:a1"));
+        }
+
+        [Theory]
+        [InlineData("*", "", true)]
+        [InlineData("*", "anything", true)]
+        [InlineData("orders:*", "orders:", true)]
+        [InlineData("orders:*", "orders:7", true)]
+        [InlineData("orders:*", "other:7", false)]
+        [InlineData("k:?", "k:1", true)]
+        [InlineData("k:?", "k:12", false)]
+        [InlineData("k:?", "k:", false)]
+        [InlineData("[abc]", "b", true)]
+        [InlineData("[abc]", "d", false)]
+        [InlineData("[a-c]x", "bx", true)]
+        [InlineData("[a-c]x", "dx", false)]
+        [InlineData("[^abc]", "d", true)]
+        [InlineData("[^abc]", "a", false)]
+        [InlineData("a*b*c", "aXXbYYc", true)]
+        [InlineData("a*b*c", "aXXcYYb", false)]
+        public void GlobMatches_SupportsRedisWildcards(string pattern, string value, bool expected)
+        {
+            Assert.Equal(expected, RedisUDF.GlobMatches(pattern, value));
+        }
+    }
 }

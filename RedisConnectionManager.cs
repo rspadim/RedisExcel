@@ -50,15 +50,38 @@ namespace RedisExcel
         /// </summary>
         public int LiveConnectionCount()
         {
-            // Shutdown is the only place that disposes a cached multiplexer,
-            // and it clears each pool immediately after its walk; reporting
-            // zero while the fence is set skips entries that are being
-            // disposed during that window (ConnectionMultiplexer.IsDisposed
-            // is internal in StackExchange.Redis 2.8, so it cannot be checked
-            // from here; the fence stands in for it).
+            // The fence stands in for a per-entry IsDisposed check
+            // (ConnectionMultiplexer.IsDisposed is internal in
+            // StackExchange.Redis 2.8): while it is set, multiplexers are
+            // being disposed by Shutdown's walk or by the shutdown races in
+            // GetConnection/Connect, so report zero instead of counting one
+            // that is being torn down.
             if (_shutdown)
                 return 0;
             return CountCreated(_rtdData) + CountCreated(_rtdSub) + CountCreated(_udfData);
+        }
+
+        /// <summary>
+        /// Live multiplexers for the RTD pools only (RtdData + RtdSub), the
+        /// value behind RedisRTDConnectionCount. Zero while the shutdown
+        /// fence is set, like <see cref="LiveConnectionCount"/>.
+        /// </summary>
+        public int LiveRtdConnectionCount()
+        {
+            if (_shutdown)
+                return 0;
+            return CountCreated(_rtdData) + CountCreated(_rtdSub);
+        }
+
+        /// <summary>
+        /// Live multiplexers for the UDF pool only (UdfData). Zero while the
+        /// shutdown fence is set, like <see cref="LiveConnectionCount"/>.
+        /// </summary>
+        public int LiveUdfConnectionCount()
+        {
+            if (_shutdown)
+                return 0;
+            return CountCreated(_udfData);
         }
 
         private static int CountCreated(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary)
@@ -174,7 +197,9 @@ namespace RedisExcel
                 // then skipped/cleared the entry), or may already have closed
                 // it: disposing here is idempotent and guarantees the mux can
                 // never leak, while still failing the caller instead of
-                // returning a dying connection.
+                // returning a dying connection. Also drop the entry so the
+                // pool never keeps a "host -> disposed mux" placeholder
+                // (mirrors the GetDatabase/GetSubscriber shutdown fences).
                 try
                 {
                     connection.Close();
@@ -184,6 +209,7 @@ namespace RedisExcel
                 {
                     logger.Debug(ex, "GetConnection: error disposing connection created during shutdown");
                 }
+                dictionary.TryRemove(host, out _);
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
             }
             return connection;
@@ -313,6 +339,12 @@ namespace RedisExcel
                         // read cannot block behind a connect.
                         kv.Value.Value.Close();
                         kv.Value.Value.Dispose();
+                        // Drop the host entry together with its multiplexer:
+                        // no "host -> disposed mux" entry may be left behind,
+                        // even for an entry a racing connect published between
+                        // the walk and the Clear below (mirrors
+                        // GetDatabase/GetSubscriber).
+                        dictionary.TryRemove(kv.Key, out _);
                     }
                     catch (Exception ex)
                     {

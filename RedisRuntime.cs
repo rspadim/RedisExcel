@@ -19,8 +19,9 @@ namespace RedisExcel
         private static volatile RedisConnectionManager _connections;
         private static volatile RedisSubscriptionManager _subscriptions;
 
-        // Set at the start of Shutdown, inside the lock, and never cleared:
-        // after an explicit Shutdown (for example AutoClose) no code path may
+        // Set at the start of Shutdown, inside the lock, and cleared only by
+        // ResetAfterAddInReload (a same-process add-in reload): after an
+        // explicit Shutdown (for example AutoClose) no code path may
         // recreate the managers, no matter how many RTD timer ticks or UDF
         // calls race with the teardown.
         private static volatile bool _shutdown;
@@ -88,9 +89,10 @@ namespace RedisExcel
         {
             lock (Sync)
             {
-                // The flag is set BEFORE the managers are disposed/nulled (and is
-                // never cleared), so a racing EnsureInitialized either observes it
-                // and throws, or waits on the lock and then observes it.
+                // The flag is set BEFORE the managers are disposed/nulled (and
+                // is cleared only by ResetAfterAddInReload), so a racing
+                // EnsureInitialized either observes it and throws, or waits
+                // on the lock and then observes it.
                 _shutdown = true;
                 try
                 {
