@@ -12,8 +12,10 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 The test project compiles the production sources directly (no add-in build), so
 a new production file used by the tests must be added to its `Compile` list.
 Coverage includes the JSON conversions, config load/sanitize, the
-connection/subscription managers, the publish-dedup LRU cache, `TickGate` and
-the update-check helpers.
+connection/subscription managers, the publish-dedup LRU cache, `TickGate`, the
+update-check helpers, the `...NonVolatile` signature-parity reflection test and
+the write-mode dispatch (`SyncWrite`/`AsyncWrites` parsing, per-host
+serialization and the synchronous path).
 
 ## 2. Smoke tests (requires Redis, no Excel)
 
@@ -30,10 +32,12 @@ powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1
 
 The script builds the test workbook (`RedisExcel.Test.xlsx`), asserts UDF/RTD
 values and reproduces the Pub/Sub regression scenario (workbook copy/close and
-connection blip). Before the sample can be committed it is sanitized: the local
-save path and the personal document metadata are removed. For remote hosts the
-workbook goes to `%TEMP%` and the destructive `CLIENT KILL` step is skipped
-automatically.
+connection blip). It also covers the write modes (`sync`/`fireforget`/
+`fireforget-all`, async on and off) and asserts that a `...NonVolatile` write
+runs once (a worksheet recalculation must not re-send it). Before the sample
+can be committed it is sanitized: the local save path and the personal document
+metadata are removed. For remote hosts the workbook goes to `%TEMP%` and the
+destructive `CLIENT KILL` step is skipped automatically.
 
 Useful parameters: `-RepoRoot <path>` (repository root; defaults to the
 script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,

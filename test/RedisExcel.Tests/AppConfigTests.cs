@@ -119,6 +119,46 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void Sanitize_SyncWrite_DefaultsToFireForgetWhenAbsent()
+        {
+            // Absent (fresh instance), null, empty and whitespace all fall back.
+            Assert.Equal("fireforget", new ConfigRoot().SyncWrite);
+            Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot()).SyncWrite);
+            Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot { SyncWrite = null }).SyncWrite);
+            Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot { SyncWrite = "" }).SyncWrite);
+            Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot { SyncWrite = "   " }).SyncWrite);
+        }
+
+        [Theory]
+        [InlineData("sync", "sync")]
+        [InlineData("SYNC", "sync")]
+        [InlineData("fireforget", "fireforget")]
+        [InlineData("FireForget", "fireforget")]
+        [InlineData("FIREFORGET-ALL", "fireforget-all")]
+        [InlineData("FireForget-All", "fireforget-all")]
+        public void Sanitize_SyncWrite_NormalizesKnownValuesToLowercase(string configured, string expected)
+        {
+            Assert.Equal(expected, AppConfig.Sanitize(new ConfigRoot { SyncWrite = configured }).SyncWrite);
+        }
+
+        [Fact]
+        public void Sanitize_SyncWrite_UnknownValueFallsBackToFireForget()
+        {
+            Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot { SyncWrite = "bogus" }).SyncWrite);
+            Assert.Equal("fireforget", AppConfig.NormalizeSyncWrite("bogus"));
+            Assert.Equal("sync", AppConfig.NormalizeSyncWrite(" sync "));
+        }
+
+        [Fact]
+        public void Sanitize_AsyncWrites_DefaultsToFalseAndRoundTrips()
+        {
+            Assert.False(new ConfigRoot().AsyncWrites);
+            Assert.False(AppConfig.Sanitize(new ConfigRoot()).AsyncWrites);
+            Assert.True(AppConfig.Sanitize(new ConfigRoot { AsyncWrites = true }).AsyncWrites);
+            Assert.False(AppConfig.Sanitize(new ConfigRoot { AsyncWrites = false }).AsyncWrites);
+        }
+
+        [Fact]
         public void LoadFromPaths_MalformedFirstExisting_StopsAndUsesDefaults()
         {
             using (var temp = new TempFiles())
@@ -189,6 +229,22 @@ namespace RedisExcel.Tests
                 Assert.Equal(9, config.UDF.timeout);
                 Assert.Equal(7, config.PublishDedupCacheSize);
                 Assert.False(config.SkipRepeatedMessages);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_ParsesSyncWriteAndAsyncWrites()
+        {
+            using (var temp = new TempFiles())
+            {
+                // The config may use any case; the sanitized value is lowercase.
+                string valid = temp.Write("writes.json",
+                    "{\"SyncWrite\":\"FIREFORGET-ALL\",\"AsyncWrites\":true}");
+
+                var config = AppConfig.LoadFromPaths(new[] { valid });
+
+                Assert.Equal("fireforget-all", config.SyncWrite);
+                Assert.True(config.AsyncWrites);
             }
         }
 

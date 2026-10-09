@@ -40,6 +40,7 @@
     <Compile Include="..\..\TickGate.cs" Link="Production\TickGate.cs" />
     <Compile Include="..\..\UpdateCheck.cs" Link="Production\UpdateCheck.cs" />
     <Compile Include="..\..\RedisUDF.cs" Link="Production\RedisUDF.cs" />
+    <Compile Include="..\..\RedisUdfAsync.cs" Link="Production\RedisUdfAsync.cs" />
   </ItemGroup>
 
 </Project>

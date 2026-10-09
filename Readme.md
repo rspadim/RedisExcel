@@ -56,6 +56,7 @@ r.publish("canal_alerta", "ALTA")
 
 ```Excel
 =RedisUDFSet("preco_btc", "67000.50")                          // send SET message (key-value database)
+=RedisUDFSetNonVolatile("preco_btc", "67000.50")               // same as Set, but sent only once (not on every recalc)
 =RedisUDFChannelPublish("canal_alerta", "ALTA")                // send PUB/SUB message
 =RedisUDFChannelPublishJSON("range_of_data", A1:C20)           // send PUB/SUB Matrix, encoded as JSON
 ```
@@ -191,12 +192,36 @@ Functions to use directly in Excel cells:
 > and unsubscribe all run again each time. For example, `=RedisUDFIncr("k")`
 > increments the counter every time the sheet recalculates, not once. Use
 > manual calculation (Formulas > Calculation Options > Manual) when that
-> matters, or keep write calls on a sheet you update deliberately.
-> `RedisUDFChannelPublishIfChanged` guards itself: it only publishes when the
-> payload changed since the last delivery. The two JSON conversion helpers
-> (`RedisUDFMatrixToJSON` and `RedisUDFJSONToMatrix`) are the exception: they
-> are pure conversions with no `IsVolatile` flag and recalculate only when
-> their inputs change.
+> matters, keep write calls on a sheet you update deliberately, or use the
+> non-volatile twins below. `RedisUDFChannelPublishIfChanged` guards itself: it
+> only publishes when the payload changed since the last delivery. The two JSON
+> conversion helpers (`RedisUDFMatrixToJSON` and `RedisUDFJSONToMatrix`) were
+> already non-volatile: they are pure conversions with no `IsVolatile` flag and
+> recalculate only when their inputs change.
+>
+> **🧊 NonVolatile write twins (24):** every write function has an additive
+> `...NonVolatile` twin with the same arguments and behavior. Excel evaluates
+> the twin only when the formula is entered and when one of its argument cells
+> changes - `F9` and cell edits do not re-run it. `Ctrl+Alt+F9` (full
+> recalculation) still re-runs it, like it does for every function. Reads stay
+> volatile only (there are no read twins: `Get`, `HashGet`, `ChannelLatest`,
+> ... must refresh by themselves). The 24 twins are
+> `RedisUDFSetNonVolatile`, `RedisUDFSetExNonVolatile`,
+> `RedisUDFDelNonVolatile`, `RedisUDFExpireNonVolatile`,
+> `RedisUDFIncrNonVolatile`, `RedisUDFIncrByNonVolatile`,
+> `RedisUDFRenameNonVolatile`, `RedisUDFSetJSONNonVolatile`,
+> `RedisUDFSetKVNonVolatile`, `RedisUDFSetKVPairNonVolatile`,
+> `RedisUDFHashSetNonVolatile`, `RedisUDFHashSetMultipleNonVolatile`,
+> `RedisUDFHashDelNonVolatile`, `RedisUDFListPushRightNonVolatile`,
+> `RedisUDFListPushLeftNonVolatile`, `RedisUDFListPopRightNonVolatile`,
+> `RedisUDFListPopLeftNonVolatile`, `RedisUDFSetAddNonVolatile`,
+> `RedisUDFSetRemoveNonVolatile`, `RedisUDFChannelPublishNonVolatile`,
+> `RedisUDFChannelPublishJSONNonVolatile`,
+> `RedisUDFChannelPublishIfChangedNonVolatile`,
+> `RedisUDFChannelPublishIfChangedJSONNonVolatile` and
+> `RedisUDFChannelUnsubscribeNonVolatile`.
+> Example: `=RedisUDFSetNonVolatile("k", A1)` sends the pair when it is entered
+> and again whenever `A1` changes, but not when the sheet recalculates.
 
 | Function                         | Description                      | Parameters                                |
 | -------------------------------- | -------------------------------- | ----------------------------------------- |
@@ -231,6 +256,7 @@ Functions to use directly in Excel cells:
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
 | RedisUDFKeys                     | List keys by pattern (SCAN); invalid pageSize values fall back to the default | pattern, optionalHost, pageSize |
 | RedisUDFConnectionCount          | Number of live UDF connections   | None                                      |
+| RedisUDF...NonVolatile (24)      | Non-volatile twins of the write functions (same arguments): run on entry and when an argument cell changes, not on `F9`/edits - see the `NonVolatile` note above | same as the original function |
 
 > **Cell values:** date/time cells are stored as their Excel serial number (use
 > `TEXT()` for a date string) and boolean cells as `true`/`false` (the JSON
@@ -305,7 +331,9 @@ Functions to use directly in Excel cells:
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
   "CoalesceRealtimeUpdates": true,
-  "PublishDedupCacheSize": 10000
+  "PublishDedupCacheSize": 10000,
+  "SyncWrite": "fireforget",
+  "AsyncWrites": false
 }
 ```
 
@@ -317,11 +345,58 @@ Functions to use directly in Excel cells:
 > `RedisUDFChannelPublishIfChanged` to remember the last payload published per
 > host/channel.
 
+### Write Behavior (`SyncWrite` / `AsyncWrites`)
+
+These keys control how UDF writes reach Redis; the `...NonVolatile` twins use
+the same write path. Like the rest of the file they are read once per Excel
+process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
+`fireforget`.
+
+| Key | Default | Values | Effect |
+| --- | ------- | ------ | ------ |
+| `SyncWrite` | `"fireforget"` | `"sync"`, `"fireforget"`, `"fireforget-all"` | How a write waits for the Redis reply (modes below). |
+| `AsyncWrites` | `false` | `true` / `false` | Where a write runs: on the Excel calculation thread (`false`) or on a per-host serial worker (`true`). |
+
+`SyncWrite` modes:
+
+- `"sync"` - every write blocks until Redis replies and the cell shows the real
+  result or error (the pre-v1.3.0 behavior).
+- `"fireforget"` (default) - result-agnostic writes (`Set`, `SetJSON`,
+  `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`, `HashSetMultiple`, list
+  pushes and channel publishes) are sent with FireAndForget and return the
+  marker `OK FireForget`; reply-dependent writes (`Del`, `Incr`, `IncrBy`,
+  `Expire`, `SetAdd`, `SetRemove`, `HashDel` and the list pops) still block and
+  return their real result. `RedisUDFChannelUnsubscribe` never uses the
+  fire-and-forget path: it removes the local listeners deterministically and
+  returns its own result.
+- `"fireforget-all"` - every write uses FireAndForget (except
+  `RedisUDFChannelUnsubscribe`, which always completes its listener
+  bookkeeping): result-agnostic writes return `OK FireForget`, reply-dependent
+  writes return `OK-FireForgetAll`.
+
+In the fire-and-forget modes a Redis or delivery error is only logged - the
+cell keeps the marker - and a publish returns the marker instead of
+`N readers(s)` (`RedisUDFChannelPublishIfChanged` reports `No change` when the
+payload was suppressed). The markers mean the write was sent, not confirmed by
+Redis.
+
+`AsyncWrites: true` dispatches writes through Excel-DNA's async support
+instead of the Excel calculation thread: the cell first shows Excel's pending
+marker (`#N/A`) and then updates to the real value/error (or the
+fire-and-forget marker). Each formula writes exactly once - the recalculation
+that delivers the result returns the cached value (the call identity is the
+cell plus its arguments) instead of re-running the write. Same-host writes are
+serialized by a per-host FIFO queue (other hosts are not blocked); the order is
+the dispatch order. `SyncWrite` still decides whether that write waits for the
+reply - so `"sync"` + `AsyncWrites: true` returns real results and errors
+without blocking Excel.
+
 ---
 
 ## ♻️ Force Update in Excel
 
-* Press `F9`
+* Press `F9` (this re-runs the volatile functions; the `...NonVolatile` twins
+  only re-run on a full recalculation, `Ctrl+Alt+F9`)
 * Or use VBA:
 
 ```vba

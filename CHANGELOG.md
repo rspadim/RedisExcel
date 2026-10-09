@@ -1,5 +1,75 @@
 # Changelog
 
+## v1.3.0 (unreleased)
+
+### Added
+
+- 24 non-volatile write twins (`...NonVolatile`), additive and
+  argument-compatible with the existing volatile write functions. Excel
+  evaluates a twin only when the formula is entered and when an argument cell
+  changes - not on `F9`/edits; `Ctrl+Alt+F9` (full recalculation) still re-runs
+  it. Reads stay volatile only and the JSON conversions were already
+  non-volatile:
+  - keys/expiry/counters: `RedisUDFSetNonVolatile`,
+    `RedisUDFSetExNonVolatile`, `RedisUDFDelNonVolatile`,
+    `RedisUDFExpireNonVolatile`, `RedisUDFIncrNonVolatile`,
+    `RedisUDFIncrByNonVolatile`, `RedisUDFRenameNonVolatile`;
+  - JSON and key-value writers: `RedisUDFSetJSONNonVolatile`,
+    `RedisUDFSetKVNonVolatile`, `RedisUDFSetKVPairNonVolatile`;
+  - hashes: `RedisUDFHashSetNonVolatile`, `RedisUDFHashSetMultipleNonVolatile`,
+    `RedisUDFHashDelNonVolatile`;
+  - lists: `RedisUDFListPushRightNonVolatile`,
+    `RedisUDFListPushLeftNonVolatile`, `RedisUDFListPopRightNonVolatile`,
+    `RedisUDFListPopLeftNonVolatile`;
+  - sets: `RedisUDFSetAddNonVolatile`, `RedisUDFSetRemoveNonVolatile`;
+  - Pub/Sub: `RedisUDFChannelPublishNonVolatile`,
+    `RedisUDFChannelPublishJSONNonVolatile`,
+    `RedisUDFChannelPublishIfChangedNonVolatile`,
+    `RedisUDFChannelPublishIfChangedJSONNonVolatile`,
+    `RedisUDFChannelUnsubscribeNonVolatile`.
+
+### Changed
+
+- New `SyncWrite` config key (`"sync"` | `"fireforget"` | `"fireforget-all"`,
+  default `"fireforget"`). `fireforget` sends result-agnostic writes (`Set`,
+  `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`,
+  `HashSetMultiple`, list pushes, channel publishes) with
+  `CommandFlags.FireAndForget` and returns `OK FireForget`; reply-dependent
+  writes (`Del`, `Incr`, `IncrBy`, `Expire`, `SetAdd`, `SetRemove`, `HashDel`,
+  list pops) still block and return their real result. `fireforget-all` sends
+  every write FireAndForget (the reply-dependent set returns
+  `OK-FireForgetAll`, the result-agnostic set keeps `OK FireForget`).
+  `ChannelUnsubscribe` always removes its listeners deterministically (never
+  fire-and-forget). `sync` restores the old blocking behavior with real
+  replies. In the fire-and-forget modes errors are only logged (the cell shows
+  the marker) and a publish returns the marker instead of `N readers(s)`.
+- New `AsyncWrites` config key (default `false`). When `true`, writes are
+  dispatched through Excel-DNA's async support (`ExcelAsyncUtil.Run`,
+  RTD-based): the cell shows the pending marker (`#N/A`) and then the real
+  value/error (or the fire-and-forget marker). Each registered call enqueues
+  the write exactly once (the enqueue lives inside Excel-DNA's single-shot
+  delegate, so the recalculation that delivers the result never re-runs the
+  write); the async identity is the calling cell + host + the UDF's arguments,
+  so different cells never merge and an argument change dispatches a new
+  write. Same-host writes are serialized by a per-host FIFO queue (dispatch
+  order). `AsyncWrites` decides where a write blocks (Excel thread vs worker)
+  and `SyncWrite` decides whether the reply is awaited, so `"sync"` + async
+  returns real replies without blocking Excel. The defaults (`fireforget`,
+  `AsyncWrites: false`) keep writes on the Excel thread, with status-only
+  writes no longer waiting for a reply.
+- Existing volatile functions (names, arguments and behavior) are unchanged;
+  the twins are additive. Write sheets can use the `...NonVolatile` twins
+  instead of manual calculation to avoid re-sending on every recalculation.
+
+### Tests
+
+- Reflection signature-parity test for the 24 volatile/`NonVolatile` pairs.
+- Unit tests for the `SyncWrite`/`AsyncWrites` config parsing and the async
+  write dispatch (per-host serial order, synchronous path).
+- E2E coverage for the write modes (`sync`/`fireforget`/`fireforget-all`,
+  async on and off) and the `...NonVolatile` "runs once" check (a
+  recalculation must not re-send).
+
 ## v1.2.7
 
 ### Fixed

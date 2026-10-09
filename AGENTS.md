@@ -17,7 +17,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 2. **Never change the public Excel surface** — function names, argument order,
    `[ExcelArgument]`/`[ExcelFunction]` attributes, RTD commands
    (`GET`, `HGET`, `HGETALL`, `SUB`, `PSUB`) and the ProgId `RedisRtd`.
-   Users' spreadsheets depend on every one of them.
+   Users' spreadsheets depend on every one of them. New additive functions
+   (e.g. the v1.3.0 `...NonVolatile` twins) are fine; renames, argument
+   changes and removals are not.
 3. Keep the `RedisExcel.json` shape backward compatible
    (`RTD` / `UDF` / `Servers`).
 4. All Redis access goes through `RedisRuntime`
@@ -45,7 +47,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
 | `RedisRtd.cs` | RTD server lifecycle, topic registries, timers, polling; `RedisRtdStatus` functions. |
-| `RedisUDF.cs` | `[ExcelFunction]` implementations; thin wrappers over the managers. |
+| `RedisUDF.cs` | `[ExcelFunction]` implementations; thin wrappers over the managers; 24 `...NonVolatile` write twins. |
+| `RedisUdfAsync.cs` | Optional async write dispatch (`AsyncWrites`, default off): per-host FIFO queue + Excel-DNA `ExcelAsyncUtil.Run`; pure sync passthrough when disabled. |
 | `ExcelJson.cs` | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix`. |
 | `RedisResultFormatter.cs` | Value formatting sent to Excel (HGETALL as valid JSON). |
 | `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks. |
@@ -90,13 +93,41 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   host - so a late subscriber is never starved by a publish it did not see.
   The cache is safe under concurrent recalculation and LRU-capped by
   `PublishDedupCacheSize` (default 10000).
-- Every function that accesses Redis is volatile by design: it re-executes on
-  every recalculation (F9/edit). The pure JSON conversions
-  (`RedisUDFMatrixToJSON`/`RedisUDFJSONToMatrix`) are the exception - no
-  `IsVolatile`. Write functions (`Set`, `SetEx`, `Expire`, `Incr`,
-  `IncrBy`, `Rename`, pushes, publishes, ...) really run each time - document
-  manual calculation (Formulas > Calculation Options > Manual) for sheets
-  where that matters.
+- Reads and status functions are volatile by design: they re-execute on every
+  recalculation (F9/edit) so they stay fresh. Every write function also has an
+  additive `...NonVolatile` twin (same args/defaults, thin delegation, no
+  `IsVolatile`): Excel evaluates it only on entry and when an argument cell
+  changes - `F9`/edits do not re-run it, `Ctrl+Alt+F9` (full recalculation)
+  does. Reads have no twins (`ChannelLatest` must refresh by itself), and the
+  pure JSON conversions (`RedisUDFMatrixToJSON`/`RedisUDFJSONToMatrix`) were
+  already non-volatile. Keep a reflection signature-parity test for every pair.
+- Write delivery is configurable (`SyncWrite`): `sync` blocks for every reply
+  (pre-v1.3.0 behavior); `fireforget` (default) sends result-agnostic writes
+  (`Set`, `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`,
+  `HashSetMultiple`, list pushes, channel publishes) with
+  `CommandFlags.FireAndForget` and returns `OK FireForget`, while
+  reply-dependent writes (`Del`, `Incr`, `IncrBy`, `Expire`, `SetAdd`,
+  `SetRemove`, `HashDel`, list pops) stay blocking; `fireforget-all` sends
+  every write FireAndForget (reply-dependent writes return
+  `OK-FireForgetAll`). `ChannelUnsubscribe` always removes the local listeners
+  deterministically (never fire-and-forget). In fire-and-forget modes errors
+  are only logged (the cell shows the marker) and publishes return the marker
+  instead of the readers count.
+- `AsyncWrites` (default false) dispatches writes through Excel-DNA's async
+  support (`ExcelAsyncUtil.Run`, RTD-based) so the Excel thread never blocks:
+  the cell shows the pending marker (`#N/A`) and then the real value/error (or
+  the fire-and-forget marker). The write is enqueued exactly once per
+  registered call - the enqueue lives inside Excel-DNA's single-shot delegate,
+  and the recalculation that delivers the result returns the cached value for
+  the same identity instead of re-running the write. The async identity is the
+  calling cell + resolved host + the UDF's own arguments (the cell reference is
+  structurally equal across the completed re-call), so different cells never
+  share one call and an argument change dispatches a new write. Same-host
+  writes are serialized by a per-host FIFO queue; the order is the dispatch
+  order (strict formula order is not guaranteed). `AsyncWrites` decides where a
+  write blocks (Excel thread vs worker) and `SyncWrite` decides whether the
+  reply is awaited on that thread, so `sync` + async yields real replies
+  without blocking Excel.
 - Connection counters report live multiplexers per pool only (closed/failed
   entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
   only), and shutdown no longer blocks on closing connections.
@@ -150,7 +181,10 @@ Covers: `ExcelJson` conversions, `AppConfig` load/sanitize and
 `ResolveHostCore`, the `RedisConnectionManager`/`RedisSubscriptionManager`
 behavior, the `PublishIfChanged` dedup LRU cache, subscription keys, HGETALL
 formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
-(`IsNewer`/`NormalizeTag`) and `RedisValueLocaleTests` (de-DE culture).
+(`IsNewer`/`NormalizeTag`), `RedisValueLocaleTests` (de-DE culture), the
+`...NonVolatile` signature-parity reflection test, and the write-mode
+(`SyncWrite`/`AsyncWrites`) parsing plus async write dispatch (per-host serial
+order and the synchronous path).
 
 The unit, smoke and load test projects compile the production sources directly
 (linked `Compile` items), so a new production `.cs` needed by tests must be
@@ -177,7 +211,10 @@ Uses a hidden Excel instance: loads the packed XLL, builds UDF/RTD test sheets,
 asserts values against Redis, then reproduces the reported regression
 (`v1.1.0`): opens a COPY of the workbook, publishes messages, closes the copy
 and verifies the original keeps receiving; finally kills the Pub/Sub
-connections server-side and verifies automatic recovery.
+connections server-side and verifies automatic recovery. It also exercises the
+write modes (`sync`/`fireforget`/`fireforget-all`, async on and off) and
+asserts that a `...NonVolatile` write runs once (a worksheet recalculation must
+not re-send it).
 
 Useful parameters:
 

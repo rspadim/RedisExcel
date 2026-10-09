@@ -53,6 +53,16 @@ Never run CLIENT KILL TYPE pubsub (automatically skipped for non-local hosts).
 Command used to publish and to run CLIENT KILL. Defaults to redis-cli on PATH,
 or "docker exec redisexcel-test redis-cli" when that container is running.
 
+.PARAMETER SyncWrite
+Write delivery mode for this run: sync, fireforget (default) or
+fireforget-all. The value is written to %USERPROFILE%\RedisExcel.json before
+Excel starts; the user's own config file is restored afterwards.
+
+.PARAMETER AsyncWrites
+Dispatch writes asynchronously for this run (same config handling as
+SyncWrite). The cell shows Excel's pending marker first, then the settled
+reply; the checks wait for the settled text.
+
 .PARAMETER KeepExcelOpen
 Do not quit Excel at the end (useful for debugging).
 
@@ -72,10 +82,17 @@ param(
     [string]$RealPattern = $null,
     [switch]$SkipClientKill,
     [string]$RedisCli = $null,
+    [ValidateSet('sync', 'fireforget', 'fireforget-all')]
+    [string]$SyncWrite = 'fireforget',
+    [switch]$AsyncWrites,
     [switch]$KeepExcelOpen
 )
 
 $ErrorActionPreference = 'Stop'
+
+# ValidateSet is case-insensitive; normalize so RedisExcel.json always carries
+# the exact contract spelling.
+$SyncWrite = $SyncWrite.ToLowerInvariant()
 
 $script:Failures = 0
 $script:RedisExe = $null
@@ -83,6 +100,34 @@ $script:RedisPrefix = @()
 $script:RedisArgs = @()
 $script:Excel = $null
 $script:Workbook = $null
+
+# ------------------------------------------------------------- write mode ----
+# v1.3.0 SyncWrite/AsyncWrites (written to RedisExcel.json before Excel starts;
+# see the config block in the setup section):
+#   sync           - historical behavior: every write returns its real reply.
+#   fireforget     - reply-agnostic writes return 'OK FireForget'; reply-dependent
+#                    writes (Del, Incr, IncrBy, Expire, SetAdd, SetRemove,
+#                    HashDel, ListPopRight/Left) keep their real replies.
+#   fireforget-all - every write is fire-and-forget: reply-agnostic writes keep
+#                    'OK FireForget', reply-dependent ones return
+#                    'OK-FireForgetAll'.
+# AsyncWrites changes only when the reply arrives (the cell shows Excel's
+# pending marker first); every expectation below waits for the settled text.
+$script:IsFireForget = ($SyncWrite -ne 'sync')
+$script:IsFireForgetAll = ($SyncWrite -eq 'fireforget-all')
+# Reply-agnostic write ack (Set, SetJSON, HashSet, SetEx, Rename, ...).
+$script:WriteAck = if ($script:IsFireForget) { 'OK FireForget' } else { 'OK' }
+# Reply-dependent writes: a numeric reply, or the marker when everything is FF.
+$script:IntReplyPattern = if ($script:IsFireForgetAll) { '^OK-FireForgetAll$' } else { '^\d+$' }
+$script:ZeroReplyExpected = if ($script:IsFireForgetAll) { 'OK-FireForgetAll' } else { '0' }
+# ListPushRight/Left are reply-agnostic (an integer reply only in sync mode).
+$script:ListPushReplyPattern = if ($script:IsFireForget) { '^OK FireForget$' } else { '^\d+$' }
+# ChannelPublish reports the readers count only in sync mode.
+$script:ChannelPublishExpected = if ($script:IsFireForget) { 'OK FireForget' } else { '1 readers(s)' }
+# ListPopRight/Left on a missing list return "" only when the reply is awaited.
+$script:ListPopEmptyExpected = if ($script:IsFireForgetAll) { 'not empty' } else { 'empty' }
+# Rename of a missing key reports the error only when the reply is awaited.
+$script:RenameMissingPattern = if ($script:IsFireForget) { '^OK FireForget$' } else { '^Error' }
 
 function Check([bool]$Condition, [string]$Label) {
     if ($Condition) { Write-Host ("PASS " + $Label) -ForegroundColor Green }
@@ -187,7 +232,13 @@ function Set-Cell($Sheet, [int]$Row, [int]$Col, $Value) {
 
 function Set-Formula($Sheet, [string]$Address, [string]$Formula) {
     for ($attempt = 0; ; $attempt++) {
-        try { $Sheet.Range($Address).Formula = $Formula; return }
+        try {
+            $Sheet.Range($Address).Formula = $Formula
+            if ($attempt -gt 0) {
+                Write-Host ("      Set-Formula[{0}] succeeded after {1} retries (transient COM failure)" -f $Address, $attempt) -ForegroundColor DarkYellow
+            }
+            return
+        }
         catch {
             if ($attempt -ge 40 -or -not (Test-RetryableError $_)) {
                 Write-Host ("Set-Formula[{0}] failed after {1} attempts: {2}" -f $Address, $attempt, $_.Exception.Message) -ForegroundColor Red
@@ -333,15 +384,31 @@ if ((Invoke-RedisCli @('PING') | Out-String).Trim() -ne 'PONG') {
 $isLocalHost = $RedisHost -match '^(localhost|127\.0\.0\.1)(:\d+)?$'
 $allowClientKill = (-not $SkipClientKill) -and $isLocalHost -and [string]::IsNullOrWhiteSpace($RedisCli)
 
-$script:Excel = New-Object -ComObject Excel.Application
-$script:Excel.Visible = $false
-$script:Excel.DisplayAlerts = $false
-$script:Excel.ScreenUpdating = $false
+# The add-in reads SyncWrite/AsyncWrites from RedisExcel.json once per Excel
+# process; the copy in the user profile wins over the Excel folder and
+# C:\Windows. Write a minimal config BEFORE Excel starts and restore the user's
+# own file (or remove ours) in the finally block - never lose the config.
+$configPath = Join-Path $env:USERPROFILE 'RedisExcel.json'
+$configBackup = $null
+if (Test-Path -LiteralPath $configPath) {
+    $configBackup = Join-Path $env:TEMP ("RedisExcel.json.bak-" + [Guid]::NewGuid().ToString('N'))
+    Copy-Item -LiteralPath $configPath -Destination $configBackup -Force
+}
+$asyncJson = if ($AsyncWrites.IsPresent) { 'true' } else { 'false' }
+$configJson = '{"SyncWrite":"' + $SyncWrite + '","AsyncWrites":' + $asyncJson + '}'
+[System.IO.File]::WriteAllText($configPath, $configJson)
+Write-Host ("Sync write: {0} (AsyncWrites: {1})" -f $SyncWrite, $AsyncWrites.IsPresent)
+Write-Host ("Config    : {0} -> {1}" -f $configPath, $configJson) -ForegroundColor DarkGray
 
 $udf = $null
 $rtd = $null
 
 try {
+    $script:Excel = New-Object -ComObject Excel.Application
+    $script:Excel.Visible = $false
+    $script:Excel.DisplayAlerts = $false
+    $script:Excel.ScreenUpdating = $false
+
     $is32Bit = $script:Excel.Path -match '\(x86\)'
     $xllName = if ($is32Bit) { 'RedisExcel-packed.xll' } else { 'RedisExcel64-packed.xll' }
     $xll = Join-Path $RepoRoot "bin\Release\net48\publish\$xllName"
@@ -496,21 +563,21 @@ try {
     Start-Sleep -Milliseconds 300
     Invoke-ExcelAction { $script:Excel.CalculateFull() } | Out-Null
 
-    Check (Wait-CellText $udf 'B4' 'OK')                     'UDF Set returns OK'
+    Check (Wait-CellText $udf 'B4' $script:WriteAck)                     'UDF Set returns the write ack'
     Check (Wait-CellText $udf 'B5' 'hello_from_udf')         'UDF Get returns the value'
     Check (Wait-CellText $udf 'B6' '1')                      'UDF Exists returns 1'
     Check (Wait-CellText $udf 'B7' '-1')                     'UDF TTL returns -1 (no expiry)'
-    Check (Wait-CellText $udf 'B8' 'OK')                     'UDF SetJSON returns OK'
+    Check (Wait-CellText $udf 'B8' $script:WriteAck)                     'UDF SetJSON returns the write ack'
     Check (Wait-CellText $udf 'B9' '2')                      'UDF JSONToMatrix index [2,1] is 2'
-    Check (Wait-CellText $udf 'B10' 'OK')                    'UDF HashSet returns OK'
+    Check (Wait-CellText $udf 'B10' $script:WriteAck)                    'UDF HashSet returns the write ack'
     Check (Wait-CellText $udf 'B11' 'valor1')                'UDF HashGet returns the value'
-    Check (Wait-CellText $udf 'B12' '1 readers(s)')          'UDF ChannelPublish reports readers'
+    Check (Wait-CellText $udf 'B12' $script:ChannelPublishExpected)          'UDF ChannelPublish reports readers / the FF ack'
     Check (Wait-CellText $udf 'B13' 'ola_mundo')             'UDF ChannelLatest received the published message'
     Check (Wait-CellNumberMin $udf 'B14' 1)                  'UDF ConnectionCount >= 1'
     Check (Wait-CellText $udf 'B15' '1')                     'UDF ExistsMultiples (pipelined) first key exists'
     Check (Wait-CellText $udf 'B16' '-1')                    'UDF TTLMultiples (pipelined) returns -1'
     Check (Wait-CellText $udf 'B17' 'valor1')                'UDF HashGetFieldMultipleKeys (pipelined) returns the value'
-    Check (Wait-CellText $udf 'B18' 'OK')                    'UDF SetEx returns OK'
+    Check (Wait-CellText $udf 'B18' $script:WriteAck)                    'UDF SetEx returns the write ack'
     $ttlOk = $false
     $ttlLast = ''
     $ttlDeadline = (Get-Date).AddSeconds(20)
@@ -522,24 +589,24 @@ try {
     }
     if (-not $ttlOk) { Write-Host ("      B19 = '{0}'" -f $ttlLast) -ForegroundColor DarkGray }
     Check $ttlOk 'UDF TTL sees the SetEx expiry'
-    Check (Wait-CellText $udf 'B20' '0')                     'UDF Del reports 0 for a missing key'
-    Check (Wait-CellRegex $udf 'B21' '^\d+$')                'UDF Incr returns an integer'
-    Check (Wait-CellRegex $udf 'B22' '^\d+$')                'UDF ListPushRight returns an integer'
+    Check (Wait-CellText $udf 'B20' $script:ZeroReplyExpected)                     'UDF Del reports 0 / the FF-all ack for a missing key'
+    Check (Wait-CellRegex $udf 'B21' $script:IntReplyPattern)                'UDF Incr returns an integer / the FF-all ack'
+    Check (Wait-CellRegex $udf 'B22' $script:ListPushReplyPattern)                'UDF ListPushRight returns an integer / the FF ack'
     Check (Wait-CellText $udf 'B23' 'a')                     'UDF ListRange returns the first element'
-    Check (Wait-CellRegex $udf 'B24' '^\d+$')                'UDF SetAdd returns an integer'
+    Check (Wait-CellRegex $udf 'B24' $script:IntReplyPattern)                'UDF SetAdd returns an integer / the FF-all ack'
     Check (Wait-CellText $udf 'B25' 'x')                     'UDF SetMembers returns the member'
-    Check (Wait-CellText $udf 'B26' 'OK')                        'UDF Set stores numeric cells invariantly'
+    Check (Wait-CellText $udf 'B26' $script:WriteAck)                        'UDF Set stores numeric cells invariantly'
     Check (Wait-CellText $udf 'B27' '67000.5')                   'UDF Get returns the invariant number'
-    Check (Wait-CellText $udf 'B28' 'OK')                     'UDF Set stores numeric keys invariantly'
+    Check (Wait-CellText $udf 'B28' $script:WriteAck)                     'UDF Set stores numeric keys invariantly'
     Check (Wait-CellText $udf 'B29' 'dec-key')                'UDF Get reads numeric keys invariantly'
-    Check (Wait-CellText $udf 'B30' '0')                      'UDF HashDel reports 0 for a missing field'
-    Check (Wait-CellText $udf 'B31' '0')                      'UDF SetRemove reports 0 for a missing member'
+    Check (Wait-CellText $udf 'B30' $script:ZeroReplyExpected)                      'UDF HashDel reports 0 / the FF-all ack for a missing field'
+    Check (Wait-CellText $udf 'B31' $script:ZeroReplyExpected)                      'UDF SetRemove reports 0 / the FF-all ack for a missing member'
     Check (Wait-CellText $udf 'B32' 'none')                   'UDF Type returns none for a missing key'
     Check (Wait-CellText $udf 'B33' 'string')                 'UDF Type returns string'
     Check (Wait-CellText $udf 'B34' 'list')                   'UDF Type returns list'
-    Check (Wait-CellText $udf 'B35' 'empty')                  'UDF ListPopRight returns empty for a missing list'
-    Check (Wait-CellText $udf 'B36' 'empty')                  'UDF ListPopLeft returns empty for a missing list'
-    Check (Wait-CellRegex $udf 'B37' '^Error')                'UDF Rename errors for a missing key'
+    Check (Wait-CellText $udf 'B35' $script:ListPopEmptyExpected)                  'UDF ListPopRight reports an empty pop / the FF-all ack'
+    Check (Wait-CellText $udf 'B36' $script:ListPopEmptyExpected)                  'UDF ListPopLeft reports an empty pop / the FF-all ack'
+    Check (Wait-CellRegex $udf 'B37' $script:RenameMissingPattern)                'UDF Rename reports the mode-appropriate result for a missing key'
     Check (Wait-CellText $udf 'B38' 'error')                  'UDF scalar argument rejects a multi-cell range'
     Check (Wait-CellRegex $udf 'B39' '^Error')                'UDF GetMultiple returns Error when no valid key remains'
     Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
@@ -548,6 +615,44 @@ try {
     Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'
     Check (Wait-CellRegex $udf 'B45' '^Error')                'UDF ChannelUnsubscribe rejects a blank channel'
     Check (Wait-CellText $udf 'B47' 'linha1')                 'UDF HashSetMultiple pairs a 2x2 range row-by-row'
+
+    # ------------------------------- v1.3.0 NonVolatile twins (rows 48/49) ----
+    # A ...NonVolatile write must run on entry only: a plain recalculation
+    # (F9/edit) must not re-send it (Ctrl+Alt+F9 does, so no full calculation
+    # below). The rows are entered AFTER the initial full calculations so the
+    # counter starts at 1; the plain recalculations below must not touch it.
+    Set-Cell $udf 48 1 'SetNonVolatile'
+    Set-Cell $udf 49 1 'IncrNonVolatile'
+    # Start from a clean counter so "1" below means "evaluated exactly once"
+    # even when the test runs repeatedly against the same Redis.
+    Invoke-RedisCli @('DEL', "$KeyPrefix.nvkey", "$KeyPrefix.nvcounter") | Out-Null
+    Set-Formula $udf 'B48' ('=RedisUDFSetNonVolatile("{1}.nvkey","v1","{0}")' -f $h, $kp)
+    Set-Formula $udf 'B49' ('=RedisUDFIncrNonVolatile("{1}.nvcounter","{0}")' -f $h, $kp)
+    # Entry evaluation. Wait for both cells to settle (with AsyncWrites they
+    # show Excel's pending marker until the queued write completed) before
+    # touching Redis, so the CLI cannot race the entry writes.
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    $nvSetOk = Wait-CellNotEmpty $udf 'B48' 20
+    $nvIncrOk = Wait-CellNotEmpty $udf 'B49' 20
+    Check ($nvSetOk -and $nvIncrOk) 'UDF NonVolatile twins evaluated on entry'
+    Write-Host ("      DIAG nv-entry: B48='" + (Get-CellText $udf 'B48') + "' B49='" + (Get-CellText $udf 'B49') + "' nvkey='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()) + "' nvcounter='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()) + "'") -ForegroundColor DarkGray
+
+    # (a) A recalculation must not re-run SetNonVolatile: nvkey stays v2 and
+    # the B48 cell keeps the value it computed on entry (no Error).
+    Invoke-RedisCli @('SET', "$KeyPrefix.nvkey", 'v2') | Out-Null
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    $nvKey = (Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()
+    Check ($nvKey -eq 'v2') 'UDF SetNonVolatile does not re-run on a worksheet recalculation'
+    $nvCellText = Get-CellText $udf 'B48'
+    Check (-not [string]::IsNullOrWhiteSpace($nvCellText) -and -not $nvCellText.StartsWith('#') -and -not $nvCellText.StartsWith('Error')) 'UDF SetNonVolatile cell was computed (not an error)'
+
+    # (b) Two more plain recalculations must not increment the counter again
+    # (a volatile Incr would have reached 4 by now: entry + three recalcs).
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    Invoke-ExcelAction { $udf.Calculate() } | Out-Null
+    $nvCounter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()
+    $nvKeyAfter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()
+    Check ($nvCounter -eq '1') ("UDF IncrNonVolatile evaluated once only (recalcs do not increment; nvcounter='" + $nvCounter + "', nvkey='" + $nvKeyAfter + "')")
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'
@@ -633,7 +738,22 @@ try {
     $copyPath = Join-Path $env:TEMP 'RedisExcel.Test.Copy.xlsx'
     Remove-Item $copyPath -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveCopyAs($copyPath) } | Out-Null
-    $copy = Invoke-ExcelAction { $script:Excel.Workbooks.Open($copyPath) }
+    # Workbooks.Open can return null transiently right after SaveCopyAs (the
+    # file may still be scanned/locked); retry before giving up and report the
+    # file state when it never opens.
+    $copy = $null
+    $copyDeadline = (Get-Date).AddSeconds(30)
+    while (-not $copy -and (Get-Date) -lt $copyDeadline) {
+        $copy = Invoke-ExcelAction { $script:Excel.Workbooks.Open($copyPath) }
+        if (-not $copy) {
+            Write-Host '      DIAG copy open returned null; retrying...' -ForegroundColor DarkGray
+            Start-Sleep -Milliseconds 500
+        }
+    }
+    if (-not $copy) {
+        $copyInfo = Get-Item $copyPath -ErrorAction SilentlyContinue
+        throw ("copy workbook did not open: exists=" + (Test-Path $copyPath) + " size=" + $(if ($copyInfo) { $copyInfo.Length } else { 'n/a' }))
+    }
     $copyRtd = $copy.Worksheets.Item('RTD')
 
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-1' $rtd 'B7' 'copy-1')        'original received copy-1'
@@ -687,6 +807,21 @@ finally {
             [GC]::Collect(); [GC]::WaitForPendingFinalizers()
         }
     }
+    # Restore the user's own RedisExcel.json (or remove the one written for this
+    # run). The running Excel already read the config once at XLL load.
+    try {
+        if ($configBackup) {
+            Copy-Item -LiteralPath $configBackup -Destination $configPath -Force
+            Remove-Item -LiteralPath $configBackup -Force -ErrorAction SilentlyContinue
+        }
+        else {
+            Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch {
+        Write-Host ("WARNING: could not restore {0}: {1}" -f $configPath, $_.Exception.Message) -ForegroundColor Red
+    }
+
     # Clean up the temporary workbooks (copy + save-as staging) only when Excel
     # is gone; with -KeepExcelOpen the open workbooks still lock those files.
     # The committed sample in test\ is never removed here.

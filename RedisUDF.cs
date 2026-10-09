@@ -306,6 +306,52 @@ namespace RedisExcel
             return AppConfig.ResolveUdfHost(host);
         }
 
+        /// <summary>
+        /// Host resolution for the async dispatcher: resolves like
+        /// <see cref="ResolveHost"/> but never throws, returning null when the
+        /// host argument is invalid so the async helper can dispatch and let
+        /// the Core body surface the error.
+        /// </summary>
+        internal static string ResolveHostForDispatch(object optionalHost)
+        {
+            try
+            {
+                return ResolveHost(optionalHost);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Whether a write function should use CommandFlags.FireAndForget,
+        /// according to the configured SyncWrite mode: "sync" never fires and
+        /// forgets, "fireforget-all" always does, and the default "fireforget"
+        /// does it only for reply-agnostic writes.
+        /// </summary>
+        internal static bool ShouldFireAndForget(bool replyDependent)
+        {
+            switch (AppConfig.SyncWrite)
+            {
+                case "sync":
+                    return false;
+                case "fireforget-all":
+                    return true;
+                default: // "fireforget": reply-agnostic writes only
+                    return !replyDependent;
+            }
+        }
+
+        /// <summary>
+        /// Result text shown in the cell when a write was sent with
+        /// CommandFlags.FireAndForget: there is no reply to report, so a marker
+        /// takes its place ("OK-FireForgetAll" when a reply-dependent write was
+        /// forced to fire and forget by "fireforget-all").
+        /// </summary>
+        internal static string FireAndForgetMarker(bool replyDependent) =>
+            replyDependent ? "OK-FireForgetAll" : "OK FireForget";
+
         private static IDatabase GetDb(string host) => RedisRuntime.Connections.GetDatabase(host, RedisPool.UdfData);
 
         private static string Fail(string function, Exception ex, string context)
@@ -485,10 +531,28 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Unsubscribes from a Redis channel", IsVolatile = true)]
-        public static string RedisUDFChannelUnsubscribe(
+        public static object RedisUDFChannelUnsubscribe(
             [ExcelArgument(Description = "Redis channel to unsubscribe from")] object channel,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost = null
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFChannelUnsubscribe", optionalHost,
+                new object[] { channel, optionalHost },
+                () => RedisUDFChannelUnsubscribeCore(channel, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Unsubscribes from a Redis channel; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFChannelUnsubscribeNonVolatile(
+            [ExcelArgument(Description = "Redis channel to unsubscribe from")] object channel,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost = null
+        )
+        {
+            return RedisUDFChannelUnsubscribe(channel, optionalHost);
+        }
+
+        // Local listener bookkeeping only - never fire and forget: the caller
+        // needs the outcome and the listeners must be removed deterministically.
+        private static string RedisUDFChannelUnsubscribeCore(object channel, object optionalHost)
         {
             string host = null;
             try
@@ -596,21 +660,54 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
+            return RedisUdfAsync.Run("RedisUDFChannelPublishIfChangedJSON", optionalHost,
+                new object[] { channel, range, optionalHost },
+                () => RedisUDFChannelPublishIfChangedJSONCore(channel, range, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Publish an Excel matrix to a Redis channel as JSON; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFChannelPublishIfChangedJSONNonVolatile(
+            [ExcelArgument(Description = "Redis channel")] object channel,
+            [ExcelArgument(Description = "Excel range to publish")] object[,] range,
+            [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
+        {
+            return RedisUDFChannelPublishIfChangedJSON(channel, range, optionalHost);
+        }
+
+        private static object RedisUDFChannelPublishIfChangedJSONCore(object channel, object[,] range, object optionalHost)
+        {
             if (range == null)
                 return "Error: a range is required";
             string json = ExcelJson.RedisUDFMatrixToJSON(range);
             // Do not publish conversion errors; return them to Excel instead.
             if (json.StartsWith("Error:", StringComparison.Ordinal))
                 return json;
-            return RedisUDFChannelPublishIfChanged(channel, json, optionalHost);
+            return RedisUDFChannelPublishIfChangedCore(channel, json, optionalHost);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present", IsVolatile = true)]
-        public static string RedisUDFChannelPublishIfChanged(
+        public static object RedisUDFChannelPublishIfChanged(
             [ExcelArgument(Description = "Redis channel to publish to")] object channel,
             [ExcelArgument(Description = "Message content to publish")] object message,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFChannelPublishIfChanged", optionalHost,
+                new object[] { channel, message, optionalHost },
+                () => RedisUDFChannelPublishIfChangedCore(channel, message, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFChannelPublishIfChangedNonVolatile(
+            [ExcelArgument(Description = "Redis channel to publish to")] object channel,
+            [ExcelArgument(Description = "Message content to publish")] object message,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFChannelPublishIfChanged(channel, message, optionalHost);
+        }
+
+        private static string RedisUDFChannelPublishIfChangedCore(object channel, object message, object optionalHost)
         {
             string host = null;
             try
@@ -635,6 +732,19 @@ namespace RedisExcel
                         return "No change";
                     }
                     var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
+                    if (ShouldFireAndForget(replyDependent: false))
+                    {
+                        subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr,
+                            CommandFlags.FireAndForget);
+                        // Fire and forget yields no reader count; remember the
+                        // payload as published anyway so repeated recalculations
+                        // keep deduplicating. A listener that joins later clears
+                        // the marker (ListenerJoined handling).
+                        _lastPublishedMessages.Set(key, messageStr);
+                        if (logger.IsTraceEnabled)
+                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, host={host}, fireAndForget=true");
+                        return FireAndForgetMarker(replyDependent: false);
+                    }
                     long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
                     // Remember the payload only when it was actually delivered;
                     // with zero readers the marker is dropped, so the volatile
@@ -661,21 +771,54 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
+            return RedisUdfAsync.Run("RedisUDFChannelPublishJSON", optionalHost,
+                new object[] { channel, range, optionalHost },
+                () => RedisUDFChannelPublishJSONCore(channel, range, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Publish an Excel matrix to a Redis channel as JSON; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFChannelPublishJSONNonVolatile(
+            [ExcelArgument(Description = "Redis channel")] object channel,
+            [ExcelArgument(Description = "Excel range to publish")] object[,] range,
+            [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
+        {
+            return RedisUDFChannelPublishJSON(channel, range, optionalHost);
+        }
+
+        private static object RedisUDFChannelPublishJSONCore(object channel, object[,] range, object optionalHost)
+        {
             if (range == null)
                 return "Error: a range is required";
             string json = ExcelJson.RedisUDFMatrixToJSON(range);
             // Do not publish conversion errors; return them to Excel instead.
             if (json.StartsWith("Error:", StringComparison.Ordinal))
                 return json;
-            return RedisUDFChannelPublish(channel, json, optionalHost);
+            return RedisUDFChannelPublishCore(channel, json, optionalHost);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel", IsVolatile = true)]
-        public static string RedisUDFChannelPublish(
+        public static object RedisUDFChannelPublish(
             [ExcelArgument(Description = "Redis channel to publish to")] object channel,
             [ExcelArgument(Description = "Message content to publish")] object message,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFChannelPublish", optionalHost,
+                new object[] { channel, message, optionalHost },
+                () => RedisUDFChannelPublishCore(channel, message, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Publishes a message to a Redis channel; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFChannelPublishNonVolatile(
+            [ExcelArgument(Description = "Redis channel to publish to")] object channel,
+            [ExcelArgument(Description = "Message content to publish")] object message,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFChannelPublish(channel, message, optionalHost);
+        }
+
+        private static string RedisUDFChannelPublishCore(object channel, object message, object optionalHost)
         {
             string host = null;
             try
@@ -686,10 +829,12 @@ namespace RedisExcel
                     throw new ArgumentException("a channel is required");
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 string messageStr = ToRedisString(message) ?? "";
-                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, readers={readers}, host={host}");
-                return $"{readers} readers(s)";
+                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, readers={readers}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : $"{readers} readers(s)";
             }
             catch (Exception ex)
             {
@@ -805,11 +950,26 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Renames a Redis key", IsVolatile = true)]
-        public static string RedisUDFRename(
+        public static object RedisUDFRename(
             [ExcelArgument(Description = "Redis key to rename")] object key,
             [ExcelArgument(Description = "New name for the Redis key")] object newKey,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFRename", optionalHost, new object[] { key, newKey, optionalHost }, () => RedisUDFRenameCore(key, newKey, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Renames a Redis key; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFRenameNonVolatile(
+            [ExcelArgument(Description = "Redis key to rename")] object key,
+            [ExcelArgument(Description = "New name for the Redis key")] object newKey,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFRename(key, newKey, optionalHost);
+        }
+
+        private static string RedisUDFRenameCore(object key, object newKey, object optionalHost)
         {
             string host = null;
             try
@@ -817,10 +977,12 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
                 string newKeyStr = RequireText(newKey, "new key");
-                GetDb(host).KeyRename(keyStr, newKeyStr);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                GetDb(host).KeyRename(keyStr, newKeyStr, When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -829,11 +991,26 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key with a Matrix using JSON", IsVolatile = true)]
-        public static string RedisUDFSetJSON(
+        public static object RedisUDFSetJSON(
             [ExcelArgument(Description = "Redis key to set the value for")] object key,
             [ExcelArgument(Description = "Value to set for the given key")] object[,] values,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFSetJSON", optionalHost, new object[] { key, values, optionalHost }, () => RedisUDFSetJSONCore(key, values, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets the value of a Redis key with a Matrix using JSON; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetJSONNonVolatile(
+            [ExcelArgument(Description = "Redis key to set the value for")] object key,
+            [ExcelArgument(Description = "Value to set for the given key")] object[,] values,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetJSON(key, values, optionalHost);
+        }
+
+        private static string RedisUDFSetJSONCore(object key, object[,] values, object optionalHost)
         {
             string host = null;
             string json = null;
@@ -847,10 +1024,12 @@ namespace RedisExcel
                 if (json.StartsWith("Error:", StringComparison.Ordinal))
                     return json;
                 string keyStr = RequireText(key, "key");
-                GetDb(host).StringSet(keyStr, json);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                GetDb(host).StringSet(keyStr, json, null, When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -859,11 +1038,26 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key", IsVolatile = true)]
-        public static string RedisUDFSet(
+        public static object RedisUDFSet(
             [ExcelArgument(Description = "Redis key to set the value for")] object key,
             [ExcelArgument(Description = "Value to set for the given key")] object value,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFSet", optionalHost, new object[] { key, value, optionalHost }, () => RedisUDFSetCore(key, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets the value of a Redis key; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetNonVolatile(
+            [ExcelArgument(Description = "Redis key to set the value for")] object key,
+            [ExcelArgument(Description = "Value to set for the given key")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSet(key, value, optionalHost);
+        }
+
+        private static string RedisUDFSetCore(object key, object value, object optionalHost)
         {
             string host = null;
             try
@@ -871,11 +1065,13 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 // A null RedisValue would issue DEL instead of storing an empty string.
-                GetDb(host).StringSet(keyStr, valueStr ?? "");
+                GetDb(host).StringSet(keyStr, valueStr ?? "", null, When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -884,11 +1080,26 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Sets Redis key-value pairs", IsVolatile = true)]
-        public static string RedisUDFSetKV(
+        public static object RedisUDFSetKV(
             [ExcelArgument(Description = "Range with Redis keys")] object[,] keys,
             [ExcelArgument(Description = "Range with Redis values")] object[,] values,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFSetKV", optionalHost, new object[] { keys, values, optionalHost }, () => RedisUDFSetKVCore(keys, values, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets Redis key-value pairs; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetKVNonVolatile(
+            [ExcelArgument(Description = "Range with Redis keys")] object[,] keys,
+            [ExcelArgument(Description = "Range with Redis values")] object[,] values,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetKV(keys, values, optionalHost);
+        }
+
+        private static string RedisUDFSetKVCore(object[,] keys, object[,] values, object optionalHost)
         {
             string host = null;
             try
@@ -906,10 +1117,12 @@ namespace RedisExcel
                 var entries = CollectStringSetEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
-                GetDb(host).StringSet(entries.ToArray());
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                GetDb(host).StringSet(entries.ToArray(), When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetKV: {entries.Count} pairs sent, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFSetKV: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -918,10 +1131,24 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Sets Redis key-value pairs", IsVolatile = true)]
-        public static string RedisUDFSetKVPair(
+        public static object RedisUDFSetKVPair(
             [ExcelArgument(Description = "2D range with Redis key-value pairs (2 columns: key, value)")] object[,] keyValuePairs,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFSetKVPair", optionalHost, new object[] { keyValuePairs, optionalHost }, () => RedisUDFSetKVPairCore(keyValuePairs, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets Redis key-value pairs; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetKVPairNonVolatile(
+            [ExcelArgument(Description = "2D range with Redis key-value pairs (2 columns: key, value)")] object[,] keyValuePairs,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetKVPair(keyValuePairs, optionalHost);
+        }
+
+        private static string RedisUDFSetKVPairCore(object[,] keyValuePairs, object optionalHost)
         {
             string host = null;
             try
@@ -933,10 +1160,12 @@ namespace RedisExcel
                 var entries = CollectStringSetEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
-                GetDb(host).StringSet(entries.ToArray());
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                GetDb(host).StringSet(entries.ToArray(), When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetKVPair: {entries.Count} pairs sent, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFSetKVPair: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -1194,11 +1423,33 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFDel", optionalHost, new object[] { key, optionalHost }, () => RedisUDFDelCore(key, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Deletes a Redis key; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFDelNonVolatile(
+            [ExcelArgument(Description = "Redis key to delete")] object key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFDel(key, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFDelCore(object key, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).KeyDelete(keyStr, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFDel: key={keyStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long deleted = GetDb(host).KeyDelete(keyStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFDel: key={keyStr}, deleted={deleted}, host={host}");
@@ -1211,12 +1462,28 @@ namespace RedisExcel
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key with an expiry in seconds", IsVolatile = true)]
-        public static string RedisUDFSetEx(
+        public static object RedisUDFSetEx(
             [ExcelArgument(Description = "Redis key to set the value for")] object key,
             [ExcelArgument(Description = "Value to set for the given key")] object value,
             [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
+        {
+            return RedisUdfAsync.Run("RedisUDFSetEx", optionalHost, new object[] { key, value, ttlSeconds, optionalHost }, () => RedisUDFSetExCore(key, value, ttlSeconds, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets the value of a Redis key with an expiry in seconds; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetExNonVolatile(
+            [ExcelArgument(Description = "Redis key to set the value for")] object key,
+            [ExcelArgument(Description = "Value to set for the given key")] object value,
+            [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetEx(key, value, ttlSeconds, optionalHost);
+        }
+
+        private static string RedisUDFSetExCore(object key, object value, object ttlSeconds, object optionalHost)
         {
             string host = null;
             try
@@ -1227,11 +1494,13 @@ namespace RedisExcel
                     throw new ArgumentException("ttl must be a positive number of seconds");
                 string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 // A null RedisValue would issue DEL instead of storing an empty string.
-                GetDb(host).StringSet(keyStr, valueStr ?? "", TimeSpan.FromSeconds(ttl));
+                GetDb(host).StringSet(keyStr, valueStr ?? "", TimeSpan.FromSeconds(ttl), When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -1246,6 +1515,22 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFExpire", optionalHost, new object[] { key, ttlSeconds, optionalHost }, () => RedisUDFExpireCore(key, ttlSeconds, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets a timeout on a Redis key in seconds; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFExpireNonVolatile(
+            [ExcelArgument(Description = "Redis key to set the expiry for")] object key,
+            [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFExpire(key, ttlSeconds, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFExpireCore(object key, object ttlSeconds, object optionalHost)
+        {
             string host = null;
             try
             {
@@ -1254,6 +1539,13 @@ namespace RedisExcel
                 if (ttl <= 0)
                     return "Error: ttl must be a positive number of seconds";
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl), CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 bool expired = GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={host}");
@@ -1271,11 +1563,33 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFIncr", optionalHost, new object[] { key, optionalHost }, () => RedisUDFIncrCore(key, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Increments the integer value of a Redis key by one; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFIncrNonVolatile(
+            [ExcelArgument(Description = "Redis key to increment")] object key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFIncr(key, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFIncrCore(object key, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).StringIncrement(keyStr, 1, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFIncr: key={keyStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long value = GetDb(host).StringIncrement(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncr: key={keyStr}, value={value}, host={host}");
@@ -1294,12 +1608,35 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFIncrBy", optionalHost, new object[] { key, increment, optionalHost }, () => RedisUDFIncrByCore(key, increment, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Increments the integer value of a Redis key by a given amount; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFIncrByNonVolatile(
+            [ExcelArgument(Description = "Redis key to increment")] object key,
+            [ExcelArgument(Description = "Amount to increment by")] object increment,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFIncrBy(key, increment, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFIncrByCore(object key, object increment, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 long incr = ToInt64Invariant(increment);
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).StringIncrement(keyStr, incr, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long value = GetDb(host).StringIncrement(keyStr, incr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, value={value}, host={host}");
@@ -1372,6 +1709,22 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFHashSet", optionalHost, new object[] { hashKey, field, value, optionalHost }, () => RedisUDFHashSetCore(hashKey, field, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets a field in a Redis hash; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFHashSetNonVolatile(
+            [ExcelArgument(Description = "Redis hash key")] object hashKey,
+            [ExcelArgument(Description = "Field name to set within the hash")] object field,
+            [ExcelArgument(Description = "Value to set for the given field")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFHashSet(hashKey, field, value, optionalHost);
+        }
+
+        private static string RedisUDFHashSetCore(object hashKey, object field, object value, object optionalHost)
+        {
             string host = null;
             try
             {
@@ -1379,11 +1732,13 @@ namespace RedisExcel
                 string hashKeyStr = RequireText(hashKey, "hash key");
                 string fieldStr = RequireText(field, "field");
                 string valueStr = ToRedisString(value);
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 // A null RedisValue would issue HDEL instead of storing an empty string.
-                GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "");
+                GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "", When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -1398,6 +1753,23 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFHashSetMultiple", optionalHost,
+                new object[] { hashKey, fieldValuePairs, optionalHost },
+                () => RedisUDFHashSetMultipleCore(hashKey, fieldValuePairs, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Sets multiple fields in a Redis hash; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFHashSetMultipleNonVolatile(
+            [ExcelArgument(Description = "Redis hash key")] object hashKey,
+            [ExcelArgument(Description = "2D range with field-value pairs (2 columns: field, value)")] object[,] fieldValuePairs,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFHashSetMultiple(hashKey, fieldValuePairs, optionalHost);
+        }
+
+        private static string RedisUDFHashSetMultipleCore(object hashKey, object[,] fieldValuePairs, object optionalHost)
+        {
             string host = null;
             try
             {
@@ -1409,10 +1781,12 @@ namespace RedisExcel
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
                 string hashKeyStr = RequireText(hashKey, "hash key");
-                GetDb(host).HashSet(hashKeyStr, entries.ToArray());
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                GetDb(host).HashSet(hashKeyStr, entries.ToArray(),
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={host}");
-                return "OK";
+                    logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={host}, fireAndForget={fireAndForget}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             }
             catch (Exception ex)
             {
@@ -1531,12 +1905,35 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFHashDel", optionalHost, new object[] { hashKey, field, optionalHost }, () => RedisUDFHashDelCore(hashKey, field, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Deletes a field from a Redis hash; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFHashDelNonVolatile(
+            [ExcelArgument(Description = "Redis hash key")] object hashKey,
+            [ExcelArgument(Description = "Field name to delete from the hash")] object field,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFHashDel(hashKey, field, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFHashDelCore(object hashKey, object field, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
                 string fieldStr = RequireText(field, "field");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).HashDelete(hashKeyStr, fieldStr, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}], host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long deleted = GetDb(host).HashDelete(hashKeyStr, fieldStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}] deleted={deleted}, host={host}");
@@ -1555,14 +1952,34 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFListPushRight", optionalHost, new object[] { key, value, optionalHost }, () => RedisUDFListPushRightCore(key, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Pushes a value onto the right end of a Redis list; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFListPushRightNonVolatile(
+            [ExcelArgument(Description = "Redis list key")] object key,
+            [ExcelArgument(Description = "Value to push onto the list")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFListPushRight(key, value, optionalHost);
+        }
+
+        private static object RedisUDFListPushRightCore(object key, object value, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
-                long length = GetDb(host).ListRightPush(keyStr, ToRedisString(value) ?? "");
+                string valueStr = ToRedisString(value) ?? "";
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                long length = GetDb(host).ListRightPush(keyStr, valueStr, When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={host}");
+                    logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={host}, fireAndForget={fireAndForget}");
+                if (fireAndForget)
+                    return FireAndForgetMarker(replyDependent: false);
                 return length;
             }
             catch (Exception ex)
@@ -1578,14 +1995,34 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFListPushLeft", optionalHost, new object[] { key, value, optionalHost }, () => RedisUDFListPushLeftCore(key, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Pushes a value onto the left end of a Redis list; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFListPushLeftNonVolatile(
+            [ExcelArgument(Description = "Redis list key")] object key,
+            [ExcelArgument(Description = "Value to push onto the list")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFListPushLeft(key, value, optionalHost);
+        }
+
+        private static object RedisUDFListPushLeftCore(object key, object value, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
-                long length = GetDb(host).ListLeftPush(keyStr, ToRedisString(value) ?? "");
+                string valueStr = ToRedisString(value) ?? "";
+                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+                long length = GetDb(host).ListLeftPush(keyStr, valueStr, When.Always,
+                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={host}");
+                    logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={host}, fireAndForget={fireAndForget}");
+                if (fireAndForget)
+                    return FireAndForgetMarker(replyDependent: false);
                 return length;
             }
             catch (Exception ex)
@@ -1633,11 +2070,33 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFListPopRight", optionalHost, new object[] { key, optionalHost }, () => RedisUDFListPopRightCore(key, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Removes and returns the last element of a Redis list; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFListPopRightNonVolatile(
+            [ExcelArgument(Description = "Redis list key")] object key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFListPopRight(key, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFListPopRightCore(object key, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).ListRightPop(keyStr, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFListPopRight: key={keyStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 var value = GetDb(host).ListRightPop(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopRight: key={keyStr}, value={value}, host={host}");
@@ -1655,11 +2114,33 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFListPopLeft", optionalHost, new object[] { key, optionalHost }, () => RedisUDFListPopLeftCore(key, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Removes and returns the first element of a Redis list; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFListPopLeftNonVolatile(
+            [ExcelArgument(Description = "Redis list key")] object key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFListPopLeft(key, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFListPopLeftCore(object key, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).ListLeftPop(keyStr, CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFListPopLeft: key={keyStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 var value = GetDb(host).ListLeftPop(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopLeft: key={keyStr}, value={value}, host={host}");
@@ -1678,12 +2159,35 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFSetAdd", optionalHost, new object[] { key, value, optionalHost }, () => RedisUDFSetAddCore(key, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Adds a member to a Redis set; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetAddNonVolatile(
+            [ExcelArgument(Description = "Redis set key")] object key,
+            [ExcelArgument(Description = "Member to add to the set")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetAdd(key, value, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFSetAddCore(object key, object value, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).SetAdd(keyStr, valueStr ?? "", CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long added = GetDb(host).SetAdd(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, added={added}, host={host}");
@@ -1702,12 +2206,35 @@ namespace RedisExcel
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
+            return RedisUdfAsync.Run("RedisUDFSetRemove", optionalHost, new object[] { key, value, optionalHost }, () => RedisUDFSetRemoveCore(key, value, optionalHost));
+        }
+
+        [ExcelFunction(Description = "Removes a member from a Redis set; runs once per entry/argument change (non-volatile)")]
+        public static object RedisUDFSetRemoveNonVolatile(
+            [ExcelArgument(Description = "Redis set key")] object key,
+            [ExcelArgument(Description = "Member to remove from the set")] object value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            return RedisUDFSetRemove(key, value, optionalHost);
+        }
+
+        // Reply-dependent: fire and forget only in "fireforget-all".
+        private static object RedisUDFSetRemoveCore(object key, object value, object optionalHost)
+        {
             string host = null;
             try
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
+                if (ShouldFireAndForget(replyDependent: true))
+                {
+                    GetDb(host).SetRemove(keyStr, valueStr ?? "", CommandFlags.FireAndForget);
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, host={host}, fireAndForget=true");
+                    return FireAndForgetMarker(replyDependent: true);
+                }
                 long removed = GetDb(host).SetRemove(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, removed={removed}, host={host}");

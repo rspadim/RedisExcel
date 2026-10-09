@@ -46,6 +46,12 @@ namespace RedisExcel
         /// <summary>Maximum number of host/channel entries remembered by the
         /// PublishIfChanged deduplication cache (LRU). Default 10000.</summary>
         public int PublishDedupCacheSize { get; set; } = 10000;
+        /// <summary>Write mode: "sync", "fireforget" or "fireforget-all".
+        /// Sanitized to the lowercase form; unknown or blank values fall back
+        /// to "fireforget".</summary>
+        public string SyncWrite { get; set; } = "fireforget";
+        /// <summary>Whether writes are dispatched asynchronously. Default off.</summary>
+        public bool AsyncWrites { get; set; } = false;
     }
 
     /// <summary>
@@ -139,7 +145,21 @@ namespace RedisExcel
             if (config.RTD.RedisUpdateRateMs <= 0) config.RTD.RedisUpdateRateMs = 1000;
             if (config.RTD.ExcelUpdateRateMs <= 0) config.RTD.ExcelUpdateRateMs = 100;
             if (config.PublishDedupCacheSize <= 0) config.PublishDedupCacheSize = 10000;
+            config.SyncWrite = NormalizeSyncWrite(config.SyncWrite);
             return config;
+        }
+
+        /// <summary>Normalizes a SyncWrite mode to its lowercase form; unknown
+        /// or blank values fall back to "fireforget". Kept internal for tests.</summary>
+        internal static string NormalizeSyncWrite(string mode)
+        {
+            switch (mode?.Trim().ToLowerInvariant())
+            {
+                case "sync": return "sync";
+                case "fireforget": return "fireforget";
+                case "fireforget-all": return "fireforget-all";
+                default: return "fireforget";
+            }
         }
 
         /// <summary>Pure alias/default resolution (kept internal for unit tests).</summary>
@@ -160,5 +180,13 @@ namespace RedisExcel
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);
 
         public static string ResolveUdfHost(string host) => ResolveHost(host, Current.UDF.host);
+
+        /// <summary>Configured write mode ("sync", "fireforget" or "fireforget-all");
+        /// convenience accessor for the process-wide configuration.</summary>
+        public static string SyncWrite => Current.SyncWrite;
+
+        /// <summary>Whether writes are dispatched asynchronously; convenience
+        /// accessor for the process-wide configuration.</summary>
+        public static bool AsyncWrites => Current.AsyncWrites;
     }
 }
