@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.4 (unreleased)
+## v1.2.0 (unreleased)
 
 ### Changed
 
