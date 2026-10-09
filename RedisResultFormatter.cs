@@ -15,7 +15,12 @@ namespace RedisExcel
             return "{" + string.Join(",", entries.Select(e =>
                 $"{JsonConvert.ToString(e.Name.ToString())}:{JsonConvert.ToString(e.Value.ToString())}")) + "}";
         }
-        /// <summary>TRUE when two HGETALL results have the same fields and values.</summary>
+        /// <summary>
+        /// TRUE when two HGETALL results have the same fields and values.
+        /// The comparison assumes unique field names, as guaranteed by a Redis hash:
+        /// the scan is order-insensitive, so duplicated field names would not be
+        /// detected (multiplicity is ignored).
+        /// </summary>
         internal static bool HashEquals(HashEntry[] a, HashEntry[] b)
         {
             if (ReferenceEquals(a, b))

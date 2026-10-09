@@ -29,6 +29,47 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MatrixToJSON_ExactlyTwoToThe63StaysDouble()
+        {
+            // 2^63 (9223372036854775808) does not fit in a long; the cast guard
+            // must serialize it as a double instead of wrapping to long.MinValue.
+            var json = ExcelJson.RedisUDFMatrixToJSON(new object[,] { { 9.2233720368547758E18 } });
+            var parsed = JArray.Parse(json);
+            Assert.Equal(JTokenType.Float, parsed[0][0].Type);
+            Assert.Equal(9.2233720368547758E18, parsed[0][0].Value<double>());
+        }
+
+        [Fact]
+        public void JSONToMatrix_BigIntegerBecomesInvariantText()
+        {
+            // Integers beyond Int64 are parsed as BigInteger and cannot be
+            // marshalled into a cell; they must become invariant decimal text.
+            var result = ExcelJson.RedisUDFJSONToMatrix("[123456789012345678901234567890]", "");
+            Assert.Equal("123456789012345678901234567890", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_IsoDateStringsStayText()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[\"2026-10-09T12:00:00Z\"]", "");
+            Assert.Equal("2026-10-09T12:00:00Z", result[0, 0]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_EmptyInnerArraysReturnFill()
+        {
+            var single = ExcelJson.RedisUDFJSONToMatrix("[[]]", "vazio");
+            Assert.Equal(1, single.GetLength(0));
+            Assert.Equal(1, single.GetLength(1));
+            Assert.Equal("vazio", single[0, 0]);
+
+            var repeated = ExcelJson.RedisUDFJSONToMatrix("[[],[]]", "vazio");
+            Assert.Equal(1, repeated.GetLength(0));
+            Assert.Equal(1, repeated.GetLength(1));
+            Assert.Equal("vazio", repeated[0, 0]);
+        }
+
+        [Fact]
         public void JSONToMatrix_ArrayOfArrays()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("[[1,\"a\"],[2,\"b\"]]", "");

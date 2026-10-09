@@ -1,5 +1,41 @@
 # Changelog
 
+## v1.2.2 (unreleased)
+
+### Fixed
+
+- `RedisUDFSetRemove` removes the empty member for null/empty member cells (a
+  null member made the client throw `A null value is not valid in this
+  context`); this matches `RedisUDFSetAdd`.
+- `RedisUDFMatrixToJSON`: cells of exactly 2^63 no longer overflow to a
+  negative long (the boundary check is strict now).
+- `RedisUDFJSONToMatrix`: JSON integers beyond Int64 are returned as invariant
+  text instead of `#VALUE!`; ISO date strings are kept as text
+  (DateParseHandling.None) instead of becoming Excel serial numbers; empty
+  inner arrays (`[[]]`) return the fill value instead of a zero-width matrix.
+- RTD `ConnectData` validates the required arguments per command (`GET`/
+  `HGETALL` need the key, `HGET` needs key and field, `SUB`/`PSUB` need the
+  channel) and returns `#ERROR: ConnectData: ...` instead of registering a
+  topic that would later abort the host's polling; `PollHost` also skips
+  malformed topics defensively.
+- Multi-key read functions (`ExistsMultiples`, `TTLMultiples`,
+  `HashGetFieldMultipleKeys`) treat blank cells as empty keys and keep row
+  positions instead of failing the whole call.
+- Zero-row results (`Keys` with no matches, `HashGetAll` on a missing hash,
+  empty multi-key inputs) return a blank cell instead of a zero-width matrix
+  that Excel renders as `#VALUE!`.
+- The JSON publish wrappers no longer publish an `Error: ...` string when the
+  matrix-to-JSON conversion fails, and `RedisUDFMatrixToJSON` uses the
+  exception message only.
+- Dirty topics are flushed on every Excel tick in every mode, so a queued value
+  can no longer be stranded when the `Automatic` style re-enables real-time
+  updates.
+
+### Changed
+
+- `HashEquals` documents its unique-field-name precondition; `TickGate.Exit`
+  doc clarifies it is only safe after a successful `TryEnter`.
+
 ## v1.2.1
 
 ### Fixed
@@ -72,10 +108,8 @@
   one; `TickGate`, a tested helper, implements the guard.
 - RTD polling isolates GET-multi failures per host, so `HGET`/`HGETALL` topics
   still run in that tick.
-- Failed Redis connects are no longer cached: the failed attempt is replaced
-  with a fresh entry atomically (compare-and-swap) so the next call retries
-  instead of the host staying poisoned until Excel restarts; a concurrently
-  created entry is never removed.
+- Failed Redis connects are no longer cached: the failed entry is dropped and
+  retried on the next call; a concurrently created entry is restored.
 - RTD polling commits the dedup state only after the value is accepted for
   delivery (queued or pushed without error); a failed Excel push restores the
   dirty flag so the value is retried on the next tick. `ServerTerminate` marks
@@ -112,9 +146,8 @@
   Identifiers (keys, hash keys, fields, channels, patterns) and values are
   converted with the invariant culture. Null/`ExcelMissing`/`ExcelEmpty`/
   `ExcelError` cell values become null and are never sent as a Redis key;
-  empty/null values are stored as `""` (they no longer reach Redis as a null
-  `RedisValue` that would delete the key), now also covering key-value/matrix
-  setters, list pushes and channel publishes.
+  empty/null values are stored as `""` for key and hash setters (they no longer
+  reach Redis as a null `RedisValue` that would delete the key).
 - `RedisUDFExpire` rejects non-positive TTLs; `RedisUDFType` reports `unknown`
   for unrecognized key types; `RedisUDFJSONToMatrix` accepts numeric cells
   invariantly.

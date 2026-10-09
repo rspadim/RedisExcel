@@ -45,7 +45,16 @@ namespace RedisExcel.Tests
         [Fact]
         public void ToRedisString_FormatsBooleansInvariantly()
         {
-            Assert.Equal("True", RedisUDF.ToRedisString(true));
+            var original = CultureInfo.CurrentCulture;
+            try
+            {
+                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+                Assert.Equal("True", RedisUDF.ToRedisString(true));
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = original;
+            }
         }
 
         [Fact]

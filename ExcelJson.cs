@@ -34,8 +34,10 @@ namespace RedisExcel
                         else if (value is double d)
                         {
                             // Excel numbers are doubles; serialize whole numbers as longs,
-                            // but only when the cast cannot overflow.
-                            if (d % 1 == 0 && d >= long.MinValue && d <= long.MaxValue)
+                            // but only when the cast cannot overflow. long.MaxValue is not
+                            // representable as a double (it rounds up to 2^63), so compare
+                            // strictly: any double >= 2^63 would wrap to long.MinValue.
+                            if (d % 1 == 0 && d >= long.MinValue && d < long.MaxValue)
                                 row[j] = (long)d;
                             else
                                 row[j] = d;
@@ -56,7 +58,7 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 logger.Error(ex, "RedisUDFMatrixToJSON");
-                return $"Error: {ex}";
+                return $"Error: {ex.Message}";
             }
         }
 
@@ -73,7 +75,12 @@ namespace RedisExcel
                 return new object[,] { { fill } };
             try
             {
-                var token = JsonConvert.DeserializeObject<JToken>(jsonText);
+                var token = JsonConvert.DeserializeObject<JToken>(jsonText, new JsonSerializerSettings
+                {
+                    // Keep date-like strings as text so cells receive the original
+                    // JSON literal instead of a DateTime.
+                    DateParseHandling = DateParseHandling.None
+                });
                 if (token is JArray array)
                     return JArrayToMatrix(array, fill);
                 if (token is JObject obj)
@@ -96,7 +103,13 @@ namespace RedisExcel
             if (token == null || token.Type == JTokenType.Null)
                 return fill;
             if (token is JValue value)
+            {
+                // JSON integers beyond Int64 arrive as BigInteger and cannot be
+                // marshalled into a cell; send the invariant decimal text.
+                if (value.Value is System.Numerics.BigInteger big)
+                    return big.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 return value.Value ?? fill;
+            }
             return token.ToString(Formatting.None);
         }
 
@@ -107,6 +120,10 @@ namespace RedisExcel
             {
                 var rows = array.Cast<JArray>().ToList();
                 int cols = rows.Max(r => r.Count);
+                // Empty inner arrays ([[]]) would build a 0-column matrix, which
+                // Excel cannot size; return a single fill cell instead.
+                if (cols == 0)
+                    return new object[,] { { fill } };
                 var result = new object[rows.Count, cols];
                 for (int i = 0; i < rows.Count; i++)
                 {

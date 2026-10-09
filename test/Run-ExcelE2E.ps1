@@ -214,7 +214,7 @@ function Wait-CellText($Sheet, [string]$Address, [string]$Expected, [int]$Timeou
     while ((Get-Date) -lt $deadline) {
         $text = Get-CellText $Sheet $Address
         if ($text -eq $Expected) { return $true }
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 120
     }
     Write-Host ("      {0} = '{1}' (expected '{2}')" -f $Address, $text, $Expected) -ForegroundColor DarkGray
     return $false
@@ -230,7 +230,7 @@ function Wait-CellNotEmpty($Sheet, [string]$Address, [int]$TimeoutSeconds = 20) 
             -not $text.StartsWith('#')) {
             return $true
         }
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 120
     }
     Write-Host ("      {0} = '{1}' (empty/placeholder after {2}s)" -f $Address, $text, $TimeoutSeconds) -ForegroundColor DarkGray
     return $false
@@ -242,7 +242,7 @@ function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$Timeou
     while ((Get-Date) -lt $deadline) {
         $text = Get-CellText $Sheet $Address
         if ($text -match $Pattern) { return $true }
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 120
     }
     Write-Host ("      {0} = '{1}' (expected /{2}/)" -f $Address, $text, $Pattern) -ForegroundColor DarkGray
     return $false
@@ -255,7 +255,7 @@ function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$Timeou
         $text = (Get-CellText $Sheet $Address).Replace(',', '.')
         $value = 0.0
         if ([double]::TryParse($text, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -and $value -ge $Min) { return $true }
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 120
     }
     Write-Host ("      {0} = '{1}' (expected >= {2})" -f $Address, $text, $Min) -ForegroundColor DarkGray
     return $false
@@ -269,7 +269,7 @@ function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [strin
     while ((Get-Date) -lt $deadline) {
         $publishResult = (Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-String).Trim()
         if (Wait-CellText $Sheet $Address $Expected 3) { return $true }
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 250
     }
     Write-Host ("      PUBLISH {0} '{1}' last reply: '{2}' (cell {3} never showed '{4}')" -f $Channel, $Message, $publishResult, $Address, $Expected) -ForegroundColor DarkGray
     return $false
@@ -425,7 +425,7 @@ try {
 
     # ------------------------------------------------------- first asserts ----
     Invoke-ExcelAction { $script:Excel.CalculateFull() } | Out-Null
-    Start-Sleep -Milliseconds 700
+    Start-Sleep -Milliseconds 300
     Invoke-ExcelAction { $script:Excel.CalculateFull() } | Out-Null
 
     Check (Wait-CellText $udf 'B4' 'OK')                     'UDF Set returns OK'
@@ -449,7 +449,7 @@ try {
         $ttlValue = 0.0
         $ttlLast = (Get-CellText $udf 'B19').Replace(',', '.')
         if ([double]::TryParse($ttlLast, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$ttlValue) -and $ttlValue -gt 0 -and $ttlValue -le 100) { $ttlOk = $true; break }
-        Start-Sleep -Milliseconds 300
+        Start-Sleep -Milliseconds 250
     }
     if (-not $ttlOk) { Write-Host ("      B19 = '{0}'" -f $ttlLast) -ForegroundColor DarkGray }
     Check $ttlOk 'UDF TTL sees the SetEx expiry'
@@ -546,13 +546,13 @@ try {
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $dup 'B7' 'copy-2')        'duplicated sheet receives'
 
     Invoke-ExcelAction { $copy.Close($false) } | Out-Null
-    Start-Sleep -Seconds 1
+    Start-Sleep -Milliseconds 500
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-3' $rtd 'B7' 'copy-3')        'original keeps receiving after the copy workbook is closed'
 
     # ---------------------------------------- regression: connection blip ----
     if ($allowClientKill) {
         Invoke-RedisCli @('CLIENT', 'KILL', 'TYPE', 'pubsub') | Out-Null
-        Start-Sleep -Seconds 2
+        Start-Sleep -Seconds 1
         Check (Publish-Until-Cell "$KeyPrefix.rtd" 'reconnect-1' $rtd 'B7' 'reconnect-1' 30)  'subscriptions recover after the Pub/Sub connection is killed'
     }
     else {
@@ -586,6 +586,7 @@ finally {
     else {
         Remove-Item $tempSavePath -Force -ErrorAction SilentlyContinue
         Remove-Item $tempCopyPath -Force -ErrorAction SilentlyContinue
+        Remove-Item (Join-Path (Join-Path $RepoRoot 'test') 'RedisExcel.Test.xlsx.tmp') -Force -ErrorAction SilentlyContinue
     }
 }
 

@@ -138,7 +138,11 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
-            return RedisUDFChannelPublishIfChanged(channel, ExcelJson.RedisUDFMatrixToJSON(range), optionalHost);
+            string json = ExcelJson.RedisUDFMatrixToJSON(range);
+            // Do not publish conversion errors; return them to Excel instead.
+            if (json.StartsWith("Error:", StringComparison.Ordinal))
+                return json;
+            return RedisUDFChannelPublishIfChanged(channel, json, optionalHost);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present", IsVolatile = true)]
@@ -172,7 +176,11 @@ namespace RedisExcel
             [ExcelArgument(Description = "Excel range to publish")] object[,] range,
             [ExcelArgument(Description = "Optional Redis host")] object optionalHost)
         {
-            return RedisUDFChannelPublish(channel, ExcelJson.RedisUDFMatrixToJSON(range), optionalHost);
+            string json = ExcelJson.RedisUDFMatrixToJSON(range);
+            // Do not publish conversion errors; return them to Excel instead.
+            if (json.StartsWith("Error:", StringComparison.Ordinal))
+                return json;
+            return RedisUDFChannelPublish(channel, json, optionalHost);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel", IsVolatile = true)]
@@ -344,6 +352,9 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 json = ExcelJson.RedisUDFMatrixToJSON(values);
+                // Surface conversion errors to Excel instead of storing them as the value.
+                if (json.StartsWith("Error:", StringComparison.Ordinal))
+                    return json;
                 string keyStr = ToRedisString(key);
                 GetDb(host).StringSet(keyStr, json);
                 if (logger.IsTraceEnabled)
@@ -502,11 +513,13 @@ namespace RedisExcel
                 else
                     keys = server.Keys(pattern: patternStr).Select(k => k.ToString()).ToList();
 
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFKeys: pattern={patternStr}, found={keys.Count}, host={host}");
+                if (keys.Count == 0)
+                    return new object[,] { { "" } };
                 var result = new object[keys.Count, 1];
                 for (int i = 0; i < keys.Count; i++)
                     result[i, 0] = keys[i];
-                if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFKeys: pattern={patternStr}, found={keys.Count}, host={host}");
                 return result;
             }
             catch (Exception ex)
@@ -570,12 +583,13 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 if (keys.Length == 0)
-                    return new object[0, 2];
+                    return new object[,] { { "" } };
                 var result = new object[keys.Length, 2];
                 var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
-                    var key = ToRedisString(keys[i]);
+                    // Blank cells map to an empty Redis key so row positions are preserved.
+                    var key = ToRedisString(keys[i]) ?? "";
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -749,12 +763,13 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 if (keys.Length == 0)
-                    return new object[0, 2];
+                    return new object[,] { { "" } };
                 var result = new object[keys.Length, 2];
                 var keysList = new List<RedisKey>(keys.Length);
                 for (int i = 0; i < keys.Length; i++)
                 {
-                    var key = ToRedisString(keys[i]);
+                    // Blank cells map to an empty Redis key so row positions are preserved.
+                    var key = ToRedisString(keys[i]) ?? "";
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -871,14 +886,16 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = ToRedisString(hashKey);
                 var all = GetDb(host).HashGetAll(hashKeyStr);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={host}");
+                if (all.Length == 0)
+                    return new object[,] { { "" } };
                 var result = new object[all.Length, 2];
                 for (int i = 0; i < all.Length; i++)
                 {
                     result[i, 0] = all[i].Name.ToString();
                     result[i, 1] = all[i].Value.ToString();
                 }
-                if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={host}");
                 return result;
             }
             catch (Exception ex)
@@ -904,7 +921,8 @@ namespace RedisExcel
                 var keysList = new List<RedisKey>(hashKeys.Length);
                 for (int i = 0; i < hashKeys.Length; i++)
                 {
-                    string key = ToRedisString(hashKeys[i]);
+                    // Blank cells map to an empty Redis key so row positions are preserved.
+                    string key = ToRedisString(hashKeys[i]) ?? "";
                     result[i, 0] = key;
                     keysList.Add(key);
                 }
@@ -1109,7 +1127,7 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 string keyStr = ToRedisString(key);
                 string valueStr = ToRedisString(value);
-                long removed = GetDb(host).SetRemove(keyStr, valueStr) ? 1L : 0L;
+                long removed = GetDb(host).SetRemove(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, removed={removed}, host={host}");
                 return removed;

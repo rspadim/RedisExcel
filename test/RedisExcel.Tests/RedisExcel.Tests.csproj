@@ -10,10 +10,32 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- Dependencies of the linked production sources below. -->
+    <PackageReference Include="ExcelDna.Integration" Version="1.9.0-beta2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NLog" Version="6.0.0-rc3" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\RedisExcel.csproj" />
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <!--
+    Link the production sources instead of a ProjectReference to RedisExcel.csproj:
+    referencing the add-in project would run the full ExcelDna packing step on every
+    test run. The add-in itself is still built by CI and the release build.
+  -->
+  <ItemGroup>
+    <Compile Include="..\..\Config.cs" Link="Production\Config.cs" />
+    <Compile Include="..\..\ExcelJson.cs" Link="Production\ExcelJson.cs" />
+    <Compile Include="..\..\RedisConnectionManager.cs" Link="Production\RedisConnectionManager.cs" />
+    <Compile Include="..\..\RedisResultFormatter.cs" Link="Production\RedisResultFormatter.cs" />
+    <Compile Include="..\..\RedisSubscriptionManager.cs" Link="Production\RedisSubscriptionManager.cs" />
+    <Compile Include="..\..\RedisRuntime.cs" Link="Production\RedisRuntime.cs" />
+    <Compile Include="..\..\TickGate.cs" Link="Production\TickGate.cs" />
+    <Compile Include="..\..\UpdateCheck.cs" Link="Production\UpdateCheck.cs" />
+    <Compile Include="..\..\RedisUDF.cs" Link="Production\RedisUDF.cs" />
   </ItemGroup>
 
 </Project>

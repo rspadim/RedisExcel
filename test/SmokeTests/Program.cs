@@ -116,13 +116,13 @@ internal static class Program
         if (skipRepeated)
         {
             Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000), "changed payload delivered");
-            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 2000), "identical repeated payload skipped");
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 1000), "identical repeated payload skipped");
         }
         else
         {
             Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000),
                 "changed payload delivered (dedup disabled by config)");
-            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 3; }, 2000),
+            Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 3; }, 1000),
                 "identical repeated payloads delivered (dedup disabled by config)");
         }
         tokenD.Dispose();

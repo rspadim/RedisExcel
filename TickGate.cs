@@ -17,7 +17,11 @@ namespace RedisExcel
             return Interlocked.CompareExchange(ref _busy, 1, 0) == 0;
         }
 
-        /// <summary>Releases the gate. Safe to call even if not held.</summary>
+        /// <summary>
+        /// Releases the gate. Only call it after a successful TryEnter by the
+        /// current holder: calling Exit while another owner holds the gate would
+        /// reopen the section early.
+        /// </summary>
         public void Exit()
         {
             Interlocked.Exchange(ref _busy, 0);

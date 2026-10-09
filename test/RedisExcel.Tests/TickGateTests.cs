@@ -19,10 +19,13 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void Exit_WithoutEnter_KeepsGateFree()
+        public void Exit_WhenIdle_KeepsGateFree()
         {
             var gate = new TickGate();
 
+            // Documents the idle (never-entered) behavior only: Exit on a free gate
+            // leaves it free. This is not a general guarantee - Exit while another
+            // owner holds the gate would reopen the section early.
             gate.Exit();
             gate.Exit();
 

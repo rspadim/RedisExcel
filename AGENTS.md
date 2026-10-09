@@ -61,6 +61,10 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Subscription listeners carry an origin tag ("RTD"/"UDF"): the RTD status
   counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) report RTD
   listeners only, so UDF subscriptions no longer inflate them.
+- RTD status functions that report the default host, update rates, the
+  real-time flag and the message counter reflect the LAST started RTD server;
+  the counts (connections/topics/subscriptions/channels) aggregate across
+  instances.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
@@ -76,10 +80,13 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written
   to Redis always use the invariant culture (decimal point), regardless of the
   Excel locale.
-- Identical consecutive payloads are skipped before decoding
-  (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET
-  polling; unchanged HGETALL hashes are compared field-by-field and skipped
-  too. PSUB patterns are never deduplicated because channels interleave.
+- Identical consecutive payloads are skipped before decoding for literal
+  subscriptions and GET/HGET polling (`SkipRepeatedMessages`, default on):
+  payloads are compared without a decode step, using `RedisValue` equality;
+  PSUB patterns are never deduplicated because channels interleave. Unchanged
+  HGETALL hashes are compared field-by-field and skipped too. `RedisValue`
+  equality normalizes numeric formatting (e.g. `"1.00"` equals `"1"`), so
+  formatting-only changes are treated as duplicates.
 - Config file is searched in: user profile, Excel folder, `C:\Windows`
   (first found wins).
 
@@ -158,10 +165,11 @@ dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 
 `manager` exercises the subscription broadcast path; `raw` is the plain
 StackExchange.Redis baseline. Parameters: host, seconds, publishers (0 =
 listen-only with an external generator like `redis-benchmark -t publish`),
-listeners and pattern. Reports throughput, allocated bytes per received
-message and GC counts. Read-only stress runs against real servers are allowed,
-but pass the host only as a command-line argument (never commit it) and keep
-the runs short.
+listeners, pattern and an optional channel (default random `load:<guid>`;
+with `pattern` and listen-only mode the default is `*`). Reports throughput,
+allocated bytes per received message and GC counts. Read-only stress runs
+against real servers are allowed, but pass the host only as a command-line
+argument (never commit it) and keep the runs short.
 
 ## Excel automation lessons (hard-won)
 
@@ -204,4 +212,4 @@ These cost real debugging time — read before writing automation.
 
 Push a `v*` tag; the CI workflow builds and publishes the packed XLLs plus
 `NLog.config` and `RedisExcel.json` as release assets. Current release:
-`v1.2.0`; next planned version: TBD.
+`v1.2.1`; next planned version: TBD.

@@ -387,15 +387,23 @@ namespace RedisExcel
                 {
                     case "GET":
                     case "HGETALL":
+                        if (string.IsNullOrWhiteSpace(param2))
+                            throw new Exception($"{command} requires a key as the second argument");
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "HGET":
+                        if (string.IsNullOrWhiteSpace(param2))
+                            throw new Exception("HGET requires a key as the second argument");
+                        if (string.IsNullOrWhiteSpace(param3))
+                            throw new Exception("HGET requires a field as the third argument");
                         td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "SUB":
                     case "PSUB":
+                        if (string.IsNullOrWhiteSpace(param2))
+                            throw new Exception($"{command} requires a channel as the second argument");
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
                         // Register the subscription first: if it throws, the catch below
                         // returns the error and no topic is stored.
@@ -497,12 +505,14 @@ namespace RedisExcel
             try
             {
                 UpdateRealtimeMode(allowReenable: false);
-                if (_realTimeUpdates && !_coalesceRealtimeUpdates)
-                    return;
                 if (_polledTopics.IsEmpty && _subscribedTopics.IsEmpty)
                     return;
                 if (logger.IsDebugEnabled)
                     logger.Debug($"OnExcelTick: flushing dirty topics, polled={_polledTopics.Count}, subscribed={_subscribedTopics.Count}");
+                // Dirty values are normally empty in non-coalesced real-time mode
+                // because updates are sent immediately; flushing every tick is
+                // cheap and guarantees delivery when Automatic style re-enables
+                // real-time after a burst.
                 foreach (var td in _polledTopics.Values)
                     td.SendToExcelIfDirty();
                 foreach (var td in _subscribedTopics.Values)
@@ -572,13 +582,27 @@ namespace RedisExcel
         {
             var db = RedisRuntime.Connections.GetDatabase(host, RedisPool.RtdData);
 
+            // Defense-in-depth: a topic registered with a blank key/field (which
+            // ConnectData now rejects) must never reach the batch, because it
+            // would make StackExchange.Redis throw for the whole host tick.
+            bool IsMalformed(TopicData td)
+            {
+                if (string.IsNullOrWhiteSpace(td.KeyOrChannel) ||
+                    (td.Type == "HGET" && string.IsNullOrWhiteSpace(td.Field)))
+                {
+                    logger.Warn($"PollHost: skipping malformed topic, TopicId={td.Topic.TopicId}, Type={td.Type}, host={host}");
+                    return true;
+                }
+                return false;
+            }
+
             // GET in batch (MGET): one round-trip for all GETs of the host.
             // Isolated so an MGET failure cannot abort HGET/HGETALL polling for the host.
             if (_useGetMultiple)
             {
                 try
                 {
-                    var gets = topics.Where(t => t.Type == "GET").ToList();
+                    var gets = topics.Where(t => t.Type == "GET" && !IsMalformed(t)).ToList();
                     if (gets.Count > 0)
                     {
                         var keys = gets.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
@@ -623,6 +647,8 @@ namespace RedisExcel
             var hashTasks = new List<KeyValuePair<TopicData, Task<HashEntry[]>>>();
             foreach (var td in topics)
             {
+                if (IsMalformed(td))
+                    continue;
                 if (td.Type == "HGET")
                     singleTasks.Add(new KeyValuePair<TopicData, Task<RedisValue>>(td, batch.HashGetAsync(td.KeyOrChannel, td.Field)));
                 else if (td.Type == "HGETALL")
