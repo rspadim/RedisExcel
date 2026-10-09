@@ -286,11 +286,15 @@ function Remove-WorkbookMetadata([string]$Path) {
     try {
         $rules = @{
             'xl/workbook.xml' = @(
-                @{ Pattern = '<\w+:\w*absPath[^>]*/>'; Replacement = '' }
+                @{ Pattern = '(?s)<\w+:\w*absPath[^>]*/>'; Replacement = '' }
             )
             'docProps/core.xml' = @(
-                @{ Pattern = '<dc:creator>.*?</dc:creator>'; Replacement = '<dc:creator>RedisExcel</dc:creator>' }
-                @{ Pattern = '<cp:lastModifiedBy>.*?</cp:lastModifiedBy>'; Replacement = '<cp:lastModifiedBy>RedisExcel</cp:lastModifiedBy>' }
+                @{ Pattern = '(?s)<dc:creator>.*?</dc:creator>'; Replacement = '<dc:creator>RedisExcel</dc:creator>' }
+                @{ Pattern = '(?s)<cp:lastModifiedBy>.*?</cp:lastModifiedBy>'; Replacement = '<cp:lastModifiedBy>RedisExcel</cp:lastModifiedBy>' }
+            )
+            'docProps/app.xml' = @(
+                @{ Pattern = '(?s)<Company>.*?</Company>'; Replacement = '<Company></Company>' }
+                @{ Pattern = '(?s)<Manager>.*?</Manager>'; Replacement = '<Manager></Manager>' }
             )
         }
         foreach ($entryName in $rules.Keys) {
@@ -445,7 +449,12 @@ try {
         @{ Row = 13; Func = 'DefaultHost';         Fx = '=RedisRTDDefaultHost()';                                      Expected = $null },
         @{ Row = 14; Func = 'ExcelUpdateInterval'; Fx = '=RedisRTDExcelUpdateInterval()';                              Expected = $null },
         @{ Row = 15; Func = 'RedisUpdateInterval'; Fx = '=RedisRTDRedisUpdateInterval()';                              Expected = $null },
-        @{ Row = 16; Func = 'RealTimeUpdates';     Fx = '=RedisRTDRealTimeUpdates()';                                  Expected = $null }
+        @{ Row = 16; Func = 'RealTimeUpdates';     Fx = '=RedisRTDRealTimeUpdates()';                                  Expected = $null },
+        # Regression (v1.2.3): a topic with a missing key must come back as
+        # #ERROR without aborting the polling of the other topics of the host;
+        # empty/whitespace keys are valid Redis names and must keep working.
+        @{ Row = 20; Func = 'GET missing key';     Fx = '=RTD("RedisRtd",,"GET")';                                     Expected = $null },
+        @{ Row = 21; Func = 'GET whitespace key';  Fx = '=RTD("RedisRtd",,"GET"," ","{0}")' -f $h;                     Expected = 'ws_key_value' }
     )
     foreach ($item in $rtdItems) {
         Set-Cell $rtd $item.Row 1 $item.Func
@@ -516,6 +525,7 @@ try {
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'
     Check (Wait-CellText $rtd 'B6' '{"campo1":"valor1"}')    'RTD HGETALL returns valid JSON'
 
+    Invoke-RedisCli @('SET', ' ', 'ws_key_value') | Out-Null
     Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'ALTA') | Out-Null
     Check (Wait-CellText $rtd 'B7' 'ALTA')                   'RTD SUB received the published message'
     Check (Wait-CellText $rtd 'B8' 'ALTA')                   'RTD PSUB received the published message'
@@ -523,6 +533,9 @@ try {
     Check (Wait-CellNumberMin $rtd 'B10' 5)                  'RTD TopicCount >= 5'
     Check (Wait-CellNumberMin $rtd 'B11' 2)                  'RTD SubscriptionCount >= 2'
     Check (Wait-CellNumberMin $rtd 'B12' 1)                  'RTD ChannelCount >= 1'
+    Check (Wait-CellText $rtd 'B21' 'ws_key_value')          'RTD GET accepts a whitespace-only key'
+    Check (Wait-CellRegex $rtd 'B20' '^#ERROR')              'RTD GET without a key returns #ERROR without freezing the host'
+    Invoke-RedisCli @('DEL', ' ') | Out-Null
 
     if ($RealChannel) {
         Check (Wait-CellNotEmpty $rtd 'B17' 30)              'RTD SUB received live data from the real channel'
@@ -551,11 +564,13 @@ try {
         # sample is never left half-written if this process dies mid-copy.
         $stagedPath = "$outPath.tmp"
         Copy-Item -Path $tempOut -Destination $stagedPath -Force
+        # Strip the local save path and personal metadata from the staged copy
+        # BEFORE it replaces the committed sample, so a failed sanitize leaves
+        # the previous sample untouched. Remote runs keep the workbook in
+        # %TEMP% (still open in Excel and deleted in the cleanup), so there is
+        # nothing to sanitize there.
+        Remove-WorkbookMetadata -Path $stagedPath
         Move-Item -Path $stagedPath -Destination $outPath -Force
-        # Strip the local save path and personal metadata before the sample can
-        # be committed. Remote runs keep the workbook in %TEMP% (still open in
-        # Excel and deleted in the cleanup), so there is nothing to sanitize.
-        Remove-WorkbookMetadata -Path $outPath
     }
     Check (Test-Path $outPath) ("test workbook saved to " + $outPath)
 

@@ -130,6 +130,10 @@ namespace RedisExcel
                 return;
             lock (_sync)
             {
+                // Defense in depth: the topic may have been disconnected while
+                // this call waited for the lock.
+                if (Disconnected)
+                    return;
                 // The state update and the Excel push are serialized per topic,
                 // so an immediate push and a tick flush can never interleave and
                 // overwrite a newer value with an older one. A failed push stays
@@ -163,9 +167,14 @@ namespace RedisExcel
         {
             if (Disconnected)
                 return;
+            Exception updateError = null;
             lock (_sync)
             {
                 if (!_dirty)
+                    return;
+                // Defense in depth: the topic may have been disconnected while
+                // this tick waited for the lock.
+                if (Disconnected)
                     return;
                 try
                 {
@@ -177,10 +186,13 @@ namespace RedisExcel
                 }
                 catch (Exception ex)
                 {
-                    _dirty = true;
-                    logger.Error(ex, "SendToExcelIfDirty: update failed");
+                    // _dirty stays true; log outside the lock so a slow log
+                    // write cannot delay other producers of this topic.
+                    updateError = ex;
                 }
             }
+            if (updateError != null)
+                logger.Error(updateError, "SendToExcelIfDirty: update failed");
         }
 
         public override string ToString()
@@ -389,8 +401,10 @@ namespace RedisExcel
                 string param4 = topicInfo.Count > 3 ? topicInfo[3] : null;
                 logger.Info($"ConnectData: command={command}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
 
-                // Redis names may be empty or whitespace; only a missing (null)
-                // argument is invalid, which is exactly what StackExchange.Redis rejects.
+                // Redis names (keys/fields) may be empty or whitespace; only a
+                // missing (null) argument is invalid here (StackExchange.Redis
+                // rejects null for keys/fields). Empty or whitespace SUB/PSUB
+                // channels are still rejected later by the subscription manager.
                 TopicData td;
                 switch (command)
                 {

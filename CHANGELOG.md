@@ -17,6 +17,9 @@
 
 - The E2E script sanitizes the saved sample workbook (removes the local
   `absPath` and personal document metadata) before it can be committed.
+- E2E gained regression checks for the RTD argument validation (a topic with a
+  missing key returns `#ERROR` without disturbing the host's other topics) and
+  for a whitespace-only key.
 - Removed the dead `InternalsVisibleTo`; docs note the linked-sources test
   model.
 
