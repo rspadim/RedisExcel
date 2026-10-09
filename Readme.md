@@ -211,6 +211,10 @@ Functions to use directly in Excel cells:
 | RedisUDFKeys                     | List keys by pattern (SCAN)      | pattern, optionalHost, pageSize           |
 | RedisUDFConnectionCount          | Number of active UDF connections | None                                      |
 
+> **Cell values:** date/time cells are stored as their Excel serial number (use
+> `TEXT()` for a date string) and boolean cells as `true`/`false` (the JSON
+> path does the same).
+
 ---
 
 ## 📝 Configuration Files

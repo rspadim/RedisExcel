@@ -67,14 +67,24 @@ namespace RedisExcel
             [ExcelArgument(Description = "JSON string to convert to Excel matrix")] object json,
             [ExcelArgument(Description = "Value to insert for nulls (default is empty string)")] object nullValue = null)
         {
-            object fill = nullValue == null || nullValue is ExcelMissing || nullValue is ExcelEmpty ? "" : nullValue;
-            string jsonText = RedisUDF.ToRedisString(json);
-            // Empty/missing/ExcelError cells convert to null; deserializing null would
-            // throw ArgumentNullException and surface as an Error cell instead of fill.
-            if (jsonText == null)
-                return new object[,] { { fill } };
             try
             {
+                object fill;
+                if (nullValue == null || nullValue is ExcelMissing || nullValue is ExcelEmpty)
+                    fill = "";
+                else if (nullValue is ExcelError)
+                    throw new ArgumentException("Excel error cells are not valid arguments");
+                else if (nullValue is Array)
+                    throw new ArgumentException("A multi-cell range is not a valid scalar argument");
+                else
+                    fill = nullValue;
+                string jsonText = RedisUDF.ToRedisString(json);
+                // Empty/missing cells convert to null and return the fill value.
+                // ExcelError cells and multi-cell ranges throw inside ToRedisString;
+                // that exception is caught below and reported as a standard
+                // "Error: ..." cell instead of reaching Excel raw.
+                if (jsonText == null)
+                    return new object[,] { { fill } };
                 var token = JsonConvert.DeserializeObject<JToken>(jsonText, new JsonSerializerSettings
                 {
                     // Keep date-like strings as text so cells receive the original
@@ -102,12 +112,26 @@ namespace RedisExcel
         {
             if (token == null || token.Type == JTokenType.Null)
                 return fill;
+            // Containers are returned as JSON text; reject a non-finite number
+            // hidden anywhere inside before it gets stringified (e.g.
+            // {"a":{"b":NaN}} would otherwise become the text {"b":"NaN"}).
+            if (token is JContainer container &&
+                container.Descendants().OfType<JValue>().Any(
+                    v => v.Value is double nested && (double.IsNaN(nested) || double.IsInfinity(nested))))
+                throw new ArgumentException("JSON contains a non-finite number");
             if (token is JValue value)
             {
                 // JSON integers beyond Int64 arrive as BigInteger and cannot be
                 // marshalled into a cell; send the invariant decimal text.
                 if (value.Value is System.Numerics.BigInteger big)
                     return big.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                // JSON does not allow NaN/Infinity, but Newtonsoft accepts the
+                // non-standard literals; Excel would render them as #NUM!, so
+                // reject them as an error instead of returning the raw double.
+                // Every raw-double path (top-level scalar, array element, object
+                // value) funnels through here.
+                if (value.Value is double d && (double.IsNaN(d) || double.IsInfinity(d)))
+                    throw new ArgumentException("JSON contains a non-finite number");
                 return value.Value ?? fill;
             }
             return token.ToString(Formatting.None);

@@ -184,5 +184,51 @@ namespace RedisExcel.Tests
             var result = ExcelJson.RedisUDFJSONToMatrix("{oops", "");
             Assert.StartsWith("Error:", result[0, 0].ToString());
         }
+
+        [Fact]
+        public void JSONToMatrix_NaNReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[NaN]", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_InfinityReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[Infinity]", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_NegativeInfinityReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[-Infinity]", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_NestedNaNReturnsError()
+        {
+            // Nested values also go through JTokenToValue, which must reject the
+            // non-finite literal instead of handing a raw double to Excel.
+            var result = ExcelJson.RedisUDFJSONToMatrix("{\"a\":NaN}", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_NestedInfinityInContainerReturnsError()
+        {
+            // A container that would be stringified as JSON text must still be
+            // rejected when a non-finite number is hidden inside it.
+            var result = ExcelJson.RedisUDFJSONToMatrix("{\"a\":{\"b\":-Infinity}}", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void JSONToMatrix_DeeplyNestedNaNReturnsError()
+        {
+            var result = ExcelJson.RedisUDFJSONToMatrix("[[[NaN]]]", "");
+            Assert.StartsWith("Error: JSON contains a non-finite number", result[0, 0].ToString());
+        }
     }
 }

@@ -31,7 +31,15 @@ namespace RedisExcel
 
         private static string ChannelKey(string host, string channel) => $"{host}\u0001{channel}";
 
-        private static string ResolveHost(object optionalHost) => AppConfig.ResolveUdfHost(optionalHost as string);
+        private static string ResolveHost(object optionalHost)
+        {
+            // null / empty cell / omitted argument all mean "use the default host".
+            if (optionalHost == null || optionalHost is ExcelMissing || optionalHost is ExcelEmpty)
+                return AppConfig.ResolveUdfHost(null);
+            if (!(optionalHost is string host))
+                throw new ArgumentException("host must be a text value");
+            return AppConfig.ResolveUdfHost(host);
+        }
 
         private static IDatabase GetDb(string host) => RedisRuntime.Connections.GetDatabase(host, RedisPool.UdfData);
 
@@ -52,16 +60,48 @@ namespace RedisExcel
         /// 67000,5 on comma-decimal locales. Strings pass through unchanged.</summary>
         internal static string ToRedisString(object value)
         {
-            if (value == null || value is ExcelMissing || value is ExcelEmpty || value is ExcelError)
+            if (value is Array)
+                throw new ArgumentException("A multi-cell range is not a valid scalar argument");
+            if (value is ExcelError)
+                throw new ArgumentException("Excel error cells are not valid arguments");
+            if (value == null || value is ExcelMissing || value is ExcelEmpty)
                 return null;
             if (value is string s)
                 return s;
+            if (value is bool b)
+                return b ? "true" : "false";
+            if (value is double d)
+            {
+                // G15 keeps common values compact ("0.1" stays "0.1"); fall back to
+                // G17 only when G15 does not round-trip (e.g. double.MaxValue).
+                string formatted = d.ToString("G15", CultureInfo.InvariantCulture);
+                if (!(double.TryParse(formatted, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back == d))
+                    formatted = d.ToString("G17", CultureInfo.InvariantCulture);
+                return formatted;
+            }
             return Convert.ToString(value, CultureInfo.InvariantCulture);
         }
 
         internal static long ToInt64Invariant(object value)
         {
-            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+            if (value is Array)
+                throw new ArgumentException("A multi-cell range is not a valid numeric argument");
+            if (value is ExcelError)
+                throw new ArgumentException("Excel error cells are not valid numeric arguments");
+            if (value is ExcelMissing || value is ExcelEmpty)
+                throw new ArgumentException("numeric argument is not valid");
+            try
+            {
+                return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+            }
+            catch (OverflowException)
+            {
+                throw new ArgumentException("numeric argument is out of range");
+            }
+            catch (FormatException)
+            {
+                throw new ArgumentException("numeric argument is not valid");
+            }
         }
 
         [ExcelFunction(Description = "Unsubscribes from a Redis channel", IsVolatile = true)]
@@ -454,7 +494,7 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Gets the values of multiple Redis keys", IsVolatile = true)]
         public static object[,] RedisUDFGetMultiple(
-            [ExcelArgument(Description = "Array of Redis keys to retrieve")] object[] keys,
+            [ExcelArgument(Description = "Array of Redis keys to retrieve")] object[,] keys,
             [ExcelArgument(Description = "If TRUE, returns two columns (key, value); if FALSE, only values")] object multipleColumnsOpt,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
@@ -463,19 +503,33 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                if (multipleColumnsOpt is ExcelError)
+                    throw new ArgumentException("Excel error cells are not valid arguments");
+                if (multipleColumnsOpt is Array)
+                    throw new ArgumentException("A multi-cell range is not a valid scalar argument");
                 bool multipleColumns = multipleColumnsOpt is bool b && b;
 
-                var validKeys = keys
-                    .Select(k => ToRedisString(k) ?? "")
-                    .Where(k => !string.IsNullOrWhiteSpace(k))
-                    .ToArray();
-                if (validKeys.Length == 0)
-                    return new object[,] { { "Error: No valid key", "(null)" } };
+                int rows = keys.GetLength(0);
+                int cols = keys.GetLength(1);
+                var validKeys = new List<string>(rows * cols);
+                // Excel passes ranges row-major; flatten them in that order so the
+                // output rows follow the input order.
+                for (int r = 0; r < rows; r++)
+                {
+                    for (int c = 0; c < cols; c++)
+                    {
+                        var key = ToRedisString(keys[r, c]) ?? "";
+                        if (!string.IsNullOrWhiteSpace(key))
+                            validKeys.Add(key);
+                    }
+                }
+                if (validKeys.Count == 0)
+                    return FailMatrix("RedisUDFGetMultiple", new ArgumentException("No valid key"), "keys range contains no non-blank cells");
 
                 var redisKeys = validKeys.Select(k => (RedisKey)k).ToArray();
                 var values = GetDb(host).StringGet(redisKeys);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFGetMultiple: keys={validKeys.Length}, multipleColumns={multipleColumns}, host={host}");
+                    logger.Trace($"RedisUDFGetMultiple: keys={validKeys.Count}, multipleColumns={multipleColumns}, host={host}");
 
                 int columns = multipleColumns ? 2 : 1;
                 var result = new object[values.Length, columns];
@@ -507,8 +561,28 @@ namespace RedisExcel
                 var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
                 var server = conn.GetServer(conn.GetEndPoints().First());
                 string patternStr = ToRedisString(pattern);
+                if (patternStr == null)
+                    throw new ArgumentException("a key pattern is required; use \"*\" to match all keys");
                 List<string> keys;
-                if (pageSize != null && int.TryParse(Convert.ToString(pageSize, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out var pageSizeInt) && pageSizeInt > 0)
+                bool hasPageSize = false;
+                int pageSizeInt = 0;
+                if (pageSize != null && !(pageSize is ExcelMissing) && !(pageSize is ExcelEmpty))
+                {
+                    // Excel error cells and multi-cell ranges surface as an
+                    // Error cell through the shared validator.
+                    if (pageSize is ExcelError || pageSize is Array)
+                        ToInt64Invariant(pageSize);
+
+                    // Historical behavior: only integral values in int range
+                    // select a page size; fractional, boolean, non-numeric and
+                    // out-of-range values fall back to the default.
+                    if (int.TryParse(Convert.ToString(pageSize, CultureInfo.InvariantCulture), NumberStyles.Integer, CultureInfo.InvariantCulture, out pageSizeInt)
+                        && pageSizeInt > 0)
+                    {
+                        hasPageSize = true;
+                    }
+                }
+                if (hasPageSize)
                     keys = server.Keys(pattern: patternStr, pageSize: pageSizeInt).Select(k => k.ToString()).ToList();
                 else
                     keys = server.Keys(pattern: patternStr).Select(k => k.ToString()).ToList();
@@ -574,7 +648,7 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Checks if one or more Redis keys exist", IsVolatile = true)]
         public static object[,] RedisUDFExistsMultiples(
-            [ExcelArgument(Description = "Array of Redis keys to check for existence")] object[] keys,
+            [ExcelArgument(Description = "Array of Redis keys to check for existence")] object[,] keys,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -582,16 +656,25 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                if (keys.Length == 0)
+                int rows = keys.GetLength(0);
+                int cols = keys.GetLength(1);
+                int count = rows * cols;
+                if (count == 0)
                     return new object[,] { { "" } };
-                var result = new object[keys.Length, 2];
-                var keysList = new List<RedisKey>(keys.Length);
-                for (int i = 0; i < keys.Length; i++)
+                var result = new object[count, 2];
+                var keysList = new List<RedisKey>(count);
+                // Excel passes ranges row-major; flatten them in that order so the
+                // output rows follow the input order.
+                for (int r = 0; r < rows; r++)
                 {
-                    // Blank cells map to an empty Redis key so row positions are preserved.
-                    var key = ToRedisString(keys[i]) ?? "";
-                    result[i, 0] = key;
-                    keysList.Add(key);
+                    for (int c = 0; c < cols; c++)
+                    {
+                        // Blank cells map to an empty Redis key so row positions are preserved.
+                        var key = ToRedisString(keys[r, c]) ?? "";
+                        int i = r * cols + c;
+                        result[i, 0] = key;
+                        keysList.Add(key);
+                    }
                 }
                 // One round trip for all keys instead of one command per key.
                 var batch = GetDb(host).CreateBatch();
@@ -600,7 +683,7 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                     result[i, 1] = tasks[i].GetAwaiter().GetResult() ? "1" : "0";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFExistsMultiples: {keys.Length} keys, host={host}");
+                    logger.Trace($"RedisUDFExistsMultiples: {count} keys, host={host}");
                 return result;
             }
             catch (Exception ex)
@@ -665,7 +748,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
+                long ttl = ToInt64Invariant(ttlSeconds);
                 string keyStr = ToRedisString(key);
                 string valueStr = ToRedisString(value);
                 // A null RedisValue would issue DEL instead of storing an empty string.
@@ -691,7 +774,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                int ttl = Convert.ToInt32(ttlSeconds, CultureInfo.InvariantCulture);
+                long ttl = ToInt64Invariant(ttlSeconds);
                 if (ttl <= 0)
                     return "Error: ttl must be a positive number of seconds";
                 string keyStr = ToRedisString(key);
@@ -754,7 +837,7 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Returns the TTL of multiple Redis keys in seconds", IsVolatile = true)]
         public static object[,] RedisUDFTTLMultiples(
-            [ExcelArgument(Description = "Array of Redis keys to check TTL for")] object[] keys,
+            [ExcelArgument(Description = "Array of Redis keys to check TTL for")] object[,] keys,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
         {
@@ -762,16 +845,25 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                if (keys.Length == 0)
+                int rows = keys.GetLength(0);
+                int cols = keys.GetLength(1);
+                int count = rows * cols;
+                if (count == 0)
                     return new object[,] { { "" } };
-                var result = new object[keys.Length, 2];
-                var keysList = new List<RedisKey>(keys.Length);
-                for (int i = 0; i < keys.Length; i++)
+                var result = new object[count, 2];
+                var keysList = new List<RedisKey>(count);
+                // Excel passes ranges row-major; flatten them in that order so the
+                // output rows follow the input order.
+                for (int r = 0; r < rows; r++)
                 {
-                    // Blank cells map to an empty Redis key so row positions are preserved.
-                    var key = ToRedisString(keys[i]) ?? "";
-                    result[i, 0] = key;
-                    keysList.Add(key);
+                    for (int c = 0; c < cols; c++)
+                    {
+                        // Blank cells map to an empty Redis key so row positions are preserved.
+                        var key = ToRedisString(keys[r, c]) ?? "";
+                        int i = r * cols + c;
+                        result[i, 0] = key;
+                        keysList.Add(key);
+                    }
                 }
                 // One round trip for all keys instead of one command per key.
                 var batch = GetDb(host).CreateBatch();
@@ -783,7 +875,7 @@ namespace RedisExcel
                     result[i, 1] = ttl.HasValue ? ttl.Value.TotalSeconds.ToString("F0", CultureInfo.InvariantCulture) : "-1";
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFTTLMultiples: {keys.Length} keys, host={host}");
+                    logger.Trace($"RedisUDFTTLMultiples: {count} keys, host={host}");
                 return result;
             }
             catch (Exception ex)
@@ -906,7 +998,7 @@ namespace RedisExcel
 
         [ExcelFunction(Description = "Gets the same field from multiple Redis hashes", IsVolatile = true)]
         public static object[,] RedisUDFHashGetFieldMultipleKeys(
-            [ExcelArgument(Description = "Array of Redis hash keys")] object[] hashKeys,
+            [ExcelArgument(Description = "Array of Redis hash keys")] object[,] hashKeys,
             [ExcelArgument(Description = "Field name to retrieve from each hash")] object field,
             [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
         )
@@ -915,16 +1007,25 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                if (hashKeys.Length == 0)
+                int rows = hashKeys.GetLength(0);
+                int cols = hashKeys.GetLength(1);
+                int count = rows * cols;
+                if (count == 0)
                     return new object[,] { { "" } };
-                var result = new object[hashKeys.Length, 2];
-                var keysList = new List<RedisKey>(hashKeys.Length);
-                for (int i = 0; i < hashKeys.Length; i++)
+                var result = new object[count, 2];
+                var keysList = new List<RedisKey>(count);
+                // Excel passes ranges row-major; flatten them in that order so the
+                // output rows follow the input order.
+                for (int r = 0; r < rows; r++)
                 {
-                    // Blank cells map to an empty Redis key so row positions are preserved.
-                    string key = ToRedisString(hashKeys[i]) ?? "";
-                    result[i, 0] = key;
-                    keysList.Add(key);
+                    for (int c = 0; c < cols; c++)
+                    {
+                        // Blank cells map to an empty Redis key so row positions are preserved.
+                        string key = ToRedisString(hashKeys[r, c]) ?? "";
+                        int i = r * cols + c;
+                        result[i, 0] = key;
+                        keysList.Add(key);
+                    }
                 }
                 // One round trip for all hashes instead of one command per key.
                 var batch = GetDb(host).CreateBatch();
@@ -934,7 +1035,7 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                     result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={hashKeys.Length}, host={host}");
+                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={count}, host={host}");
                 return result;
             }
             catch (Exception ex)

@@ -420,7 +420,11 @@ try {
         @{ Row = 34; Func = 'Type list'; Fx = '=RedisUDFType("{1}.list","{0}")' -f $h, $kp;                                                                Expected = 'list' },
         @{ Row = 35; Func = 'ListPopRight empty'; Fx = '=IF(RedisUDFListPopRight("{1}.emptylist","{0}")="","empty","not empty")' -f $h, $kp;              Expected = 'empty' },
         @{ Row = 36; Func = 'ListPopLeft empty';  Fx = '=IF(RedisUDFListPopLeft("{1}.emptylist","{0}")="","empty","not empty")' -f $h, $kp;               Expected = 'empty' },
-        @{ Row = 37; Func = 'Rename missing';     Fx = '=RedisUDFRename("{1}.missingrename","{1}.renamed","{0}")' -f $h, $kp;                               Expected = $null }
+        @{ Row = 37; Func = 'Rename missing';     Fx = '=RedisUDFRename("{1}.missingrename","{1}.renamed","{0}")' -f $h, $kp;                               Expected = $null },
+        @{ Row = 38; Func = 'Get range arg';  Fx = '=IF(ISNUMBER(SEARCH("Error",RedisUDFGet($F$2:$G$2))),"error","no error")';                               Expected = 'error' },
+        @{ Row = 39; Func = 'GetMultiple no keys'; Fx = '=RedisUDFGetMultiple("",FALSE)';                                                                   Expected = $null },
+        @{ Row = 40; Func = 'ExistsMultiples 2x2'; Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing1";"{1}.missing2","{1}.missing3"}},"{0}"),2,1)' -f $h, $kp; Expected = $null },
+        @{ Row = 41; Func = 'Keys blank pattern'; Fx = '=RedisUDFKeys($J$3)';                                                                                 Expected = $null }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -520,6 +524,10 @@ try {
     Check (Wait-CellText $udf 'B35' 'empty')                  'UDF ListPopRight returns empty for a missing list'
     Check (Wait-CellText $udf 'B36' 'empty')                  'UDF ListPopLeft returns empty for a missing list'
     Check (Wait-CellRegex $udf 'B37' '^Error')                'UDF Rename errors for a missing key'
+    Check (Wait-CellText $udf 'B38' 'error')                  'UDF scalar argument rejects a multi-cell range'
+    Check (Wait-CellRegex $udf 'B39' '^Error')                'UDF GetMultiple returns Error when no valid key remains'
+    Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
+    Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

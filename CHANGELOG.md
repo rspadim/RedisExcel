@@ -1,5 +1,48 @@
 # Changelog
 
+## v1.2.4 (unreleased)
+
+### Fixed
+
+- Scalar UDF arguments reject multi-cell ranges and array constants (they
+  previously became the literal text `System.Object[,]`, silently creating keys,
+  values or channels).
+- Excel error cells are rejected in every UDF argument position: they previously
+  became `null`/`""` for values and the raw error code (`#N/A` = 42,
+  `#DIV/0!` = 7, ...) for TTL, increment and index arguments.
+- Optional host arguments accept only text: blank/missing keeps the default
+  host, any other type surfaces an error instead of silently using the default.
+- Multi-key UDFs (`GetMultiple`, `ExistsMultiples`, `TTLMultiples`,
+  `HashGetFieldMultipleKeys`) flatten any range shape row-major; a range with
+  more than one row and column used to silently query only its first row.
+- `RedisUDFKeys` rejects a missing (blank cell) pattern instead of scanning
+  every key; pass `"*"` to match all keys.
+- `RedisUDFJSONToMatrix` rejects non-finite JSON numbers (`NaN`, `Infinity`,
+  `-Infinity`) with an `Error:` cell (Excel rendered them as `#NUM!`).
+- Numbers written to Redis round-trip exactly: values whose compact form would
+  parse back to a different double (e.g. `double.MaxValue`) now use full
+  precision.
+- Boolean cells serialize as `true`/`false`, matching the JSON path (was
+  `True`/`False`); this applies to identifiers too - a boolean cell used as a
+  key name changes from `True` to `true`.
+- `RedisUDFGetMultiple` returns a single `Error:` cell when no valid key
+  remains; a rejected RTD topic no longer logs a fake ERROR at disconnect.
+
+### Changed
+
+- Documented behaviors: date/time cells are stored as their Excel serial number
+  (use `TEXT()` for a date string); missing-value sentinels differ per surface
+  (`Get` returns an empty string, `GetMultiple` `(null)`, RTD `(no value)`);
+  `GetMultiple` skips blank keys while the other multi-key functions keep one
+  row per input.
+
+### Tests
+
+- Unit tests pin the new conversion contracts (multi-cell range and error-cell
+  rejection, boolean casing, double round-trip, non-finite JSON).
+- E2E regression checks for the multi-cell-range rejection, the no-valid-key
+  error, 2x2 row-major flattening and the blank keys pattern.
+
 ## v1.2.3
 
 ### Fixed

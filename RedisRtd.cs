@@ -469,7 +469,10 @@ namespace RedisExcel
                 }
                 else
                 {
-                    logger.Error($"DisconnectData: unknown TopicId={topic.TopicId}");
+                    // Excel calls DisconnectData even for topics whose ConnectData
+                    // was rejected (Excel-DNA registers them anyway), so this is
+                    // expected for malformed topics and not an error.
+                    logger.Debug($"DisconnectData: unknown TopicId={topic.TopicId} (expected for topics rejected at ConnectData)");
                 }
             }
             catch (Exception ex)
