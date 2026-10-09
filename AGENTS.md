@@ -127,7 +127,12 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   the same identity instead of re-running the write. The async identity is the
   calling cell + resolved host + the UDF's own arguments (the cell reference is
   structurally equal across the completed re-call), so different cells never
-  share one call and an argument change dispatches a new write. Same-host
+  share one call and an argument change dispatches a new write. Repeated
+  evaluations with unchanged arguments return the cached value while the
+  internal topic stays connected (a volatile write is not re-sent by
+  AsyncWrites); inserting/moving rows or columns changes the cell reference
+  and re-issues the write; a call without a worksheet caller is refused with
+  an Error cell (the identity would be shared or unstable). Same-host
   writes are serialized by a per-host FIFO queue; the order is the dispatch
   order (strict formula order is not guaranteed). `AsyncWrites` decides where a
   write blocks (Excel thread vs worker) and `SyncWrite` decides whether the

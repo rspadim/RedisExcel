@@ -391,7 +391,9 @@ fire-and-forget marker). Each formula writes exactly once - the recalculation
 that delivers the result returns the cached value (the call identity is the
 cell plus the resolved host plus the formula's arguments) instead of
 re-running the write. A write whose host cannot be resolved falls back to the
-synchronous path (no pending marker). Same-host writes are
+synchronous path (no pending marker); a write with no worksheet caller (e.g.
+invoked from a macro) is refused with an `Error:` cell, and repeated
+evaluations with unchanged arguments keep the cached value. Same-host writes are
 serialized by a per-host FIFO queue (other hosts are not blocked); the order is
 the dispatch order. `SyncWrite` still decides whether that write waits for the
 reply - so `"sync"` + `AsyncWrites: true` returns real results and errors

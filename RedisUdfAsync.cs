@@ -18,11 +18,21 @@ namespace RedisExcel
     /// usual "Error: ..." text) when the queued item finishes.
     ///
     /// Ordering: every work item submitted for a host is appended to that
-    /// host's FIFO queue, so writes to one host execute in submission order
-    /// (submission happens on the Excel calculation thread, i.e. in formula
-    /// evaluation order). Different hosts use different queues and can run
+    /// host's FIFO queue, so writes to one host execute in submission order.
+    /// Submission happens inside Excel-DNA's delegate (a thread-pool thread),
+    /// so that order is the dispatch order, not strictly the formula
+    /// evaluation order. Different hosts use different queues and can run
     /// concurrently. Idle queues are removed from the registry as soon as their
     /// last item completes.
+    ///
+    /// Identity caveats: the calling cell reference is part of the identity, so
+    /// inserting/moving rows or columns (coordinates change) makes the next
+    /// evaluation a new call and re-issues the write. While the internal RTD
+    /// topic stays connected, repeated evaluations with unchanged arguments
+    /// return the cached completed value, so the write is not re-issued (this
+    /// includes F9 on volatile write cells under AsyncWrites). Calls without a
+    /// worksheet caller are refused with an Error cell because the identity
+    /// would be shared or unstable.
     /// </summary>
     internal static class RedisUdfAsync
     {
@@ -32,9 +42,6 @@ namespace RedisExcel
         // pair. The prefix keeps these keys apart from other add-ins/wrappers
         // that happen to use the same UDF function names.
         private const string AsyncNamePrefix = "RedisUdfAsync:";
-
-        // Identity element used when xlfCaller returns no cell reference.
-        private const string CallerIdentityMissing = "RedisUdfAsync:no-caller";
 
         private sealed class HostQueue
         {
@@ -95,12 +102,19 @@ namespace RedisExcel
                 // argument is never served by an unrelated pending call.
                 // Excel-DNA matches (name, parameters) by value and returns the
                 // cached result on the re-call instead of registering again.
-                object parameters = new object[]
+                object caller = CallerIdentityForDedup();
+                if (caller == null)
                 {
-                    CallerIdentityForDedup(),
-                    host,
-                    identityArgs ?? new object[0]
-                };
+                    // Without a worksheet cell reference the identity is shared
+                    // across callers (or unstable between the call and the
+                    // delivery re-call), which could skip or duplicate the
+                    // write - fail loudly instead. Rare: a call outside
+                    // worksheet evaluation (e.g. Application.Run) or a
+                    // transient xlfCaller failure.
+                    logger.Error($"RedisUdfAsync.Run: no worksheet caller for {functionName}; async write refused");
+                    return "Error: async write needs a worksheet caller (AsyncWrites)";
+                }
+                object parameters = new object[] { caller, host, identityArgs ?? new object[0] };
                 string asyncName = AsyncNamePrefix + (functionName ?? string.Empty);
 
                 // Classic ExcelFunc overload: the delegate runs on a
@@ -109,8 +123,20 @@ namespace RedisExcel
                 // result, so the body must stay side-effect free or the write
                 // would run twice. The ExcelAsyncHandle overload (deferred
                 // SetResult) crashed Excel (0xc0000409) under COM automation,
-                // so the battle-tested overload is used instead.
-                return ExcelAsyncUtil.Run(asyncName, parameters, () => RunQueued(host, work));
+                // so the battle-tested overload is used instead. One pool
+                // thread waits per pending write, so a large same-host burst
+                // (slow host + "sync") holds one thread per queued item until
+                // its turn.
+                object asyncResult = ExcelAsyncUtil.Run(asyncName, parameters, () => RunQueued(host, work));
+                if (asyncResult == null)
+                {
+                    // Excel-DNA returns null when its internal RTD registration
+                    // failed; the delegate was not subscribed, so failing here
+                    // cannot duplicate the write.
+                    logger.Error($"RedisUdfAsync.Run: async RTD registration failed for {functionName}");
+                    return "Error: async dispatch failed (RTD registration)";
+                }
+                return asyncResult;
             }
             catch (Exception ex)
             {
@@ -126,8 +152,9 @@ namespace RedisExcel
         /// Calling cell reference used as part of the async call identity: the
         /// same cell produces a structurally equal ExcelReference on the
         /// completed re-call, while different cells never share an identity.
-        /// Falls back to a constant sentinel outside a worksheet call (rare; a
-        /// null element would merge unrelated no-caller cells).
+        /// Returns null outside a worksheet call (or on a transient xlfCaller
+        /// failure); Run refuses the async dispatch in that case because the
+        /// identity could be shared or unstable.
         /// </summary>
         private static object CallerIdentityForDedup()
         {
@@ -141,7 +168,7 @@ namespace RedisExcel
             {
                 // xlfCaller is a live C API call and can transiently fail.
             }
-            return CallerIdentityMissing;
+            return null;
         }
 
         /// <summary>
