@@ -41,8 +41,14 @@
   `OK-FireForgetAll`, the result-agnostic set keeps `OK FireForget`).
   `ChannelUnsubscribe` always removes its listeners deterministically (never
   fire-and-forget). `sync` restores the old blocking behavior with real
-  replies. In the fire-and-forget modes errors are only logged (the cell shows
-  the marker) and a publish returns the marker instead of `N readers(s)`.
+  replies. In the fire-and-forget modes an error detected after the command is
+  dispatched (or a delivery failure) is only logged - the cell keeps the
+  marker - while validation/config failures before the dispatch still surface
+  as `Error:`; a publish returns the marker instead of `N readers(s)`.
+  `RedisUDFChannelPublishIfChanged` in a fire-and-forget mode also records its
+  dedup marker without a confirmed delivery, so an external subscriber that
+  joins after an unread publish may miss the unchanged payload until it
+  changes (local listeners joining still clear the marker).
 - New `AsyncWrites` config key (default `false`). When `true`, writes are
   dispatched through Excel-DNA's async support (`ExcelAsyncUtil.Run`,
   RTD-based): the cell shows the pending marker (`#N/A`) and then the real
@@ -57,9 +63,12 @@
   returns real replies without blocking Excel. The defaults (`fireforget`,
   `AsyncWrites: false`) keep writes on the Excel thread, with status-only
   writes no longer waiting for a reply.
-- Existing volatile functions (names, arguments and behavior) are unchanged;
-  the twins are additive. Write sheets can use the `...NonVolatile` twins
-  instead of manual calculation to avoid re-sending on every recalculation.
+- Existing volatile functions keep their names and arguments; the twins are
+  additive. With the new `fireforget` default the result-agnostic writes
+  return the marker instead of the reply (see above) - set
+  `"SyncWrite": "sync"` for the previous cell values and blocking behavior.
+  Write sheets can use the `...NonVolatile` twins instead of manual
+  calculation to avoid re-sending on every recalculation.
 
 ### Tests
 

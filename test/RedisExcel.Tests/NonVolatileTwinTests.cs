@@ -69,6 +69,11 @@ namespace RedisExcel.Tests
             Assert.True(twinAttribute != null, $"twin UDF '{twinName}' is not an Excel function");
             Assert.False(twinAttribute.IsVolatile, $"twin UDF '{twinName}' must not be volatile");
 
+            // The twin help must be the base description plus the fixed suffix.
+            Assert.Equal(
+                baseAttribute.Description + "; runs once per entry/argument change (non-volatile)",
+                twinAttribute.Description);
+
             // Delegation makes the twin return the same type as its base.
             Assert.Equal(baseMethod.ReturnType, twinMethod.ReturnType);
 
@@ -80,6 +85,18 @@ namespace RedisExcel.Tests
                 Assert.Equal(baseParameters[i].ParameterType, twinParameters[i].ParameterType);
                 Assert.Equal(baseParameters[i].HasDefaultValue, twinParameters[i].HasDefaultValue);
                 Assert.Equal(baseParameters[i].DefaultValue, twinParameters[i].DefaultValue);
+                // Names and Excel argument metadata must match so the twin
+                // shows the same help as the base.
+                Assert.Equal(baseParameters[i].Name, twinParameters[i].Name);
+                ExcelArgumentAttribute baseArgument = baseParameters[i].GetCustomAttribute<ExcelArgumentAttribute>();
+                ExcelArgumentAttribute twinArgument = twinParameters[i].GetCustomAttribute<ExcelArgumentAttribute>();
+                Assert.Equal(baseArgument != null, twinArgument != null);
+                if (baseArgument != null)
+                {
+                    Assert.Equal(baseArgument.Name, twinArgument.Name);
+                    Assert.Equal(baseArgument.Description, twinArgument.Description);
+                    Assert.Equal(baseArgument.AllowReference, twinArgument.AllowReference);
+                }
             }
         }
 

@@ -324,6 +324,12 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>Test-only override of <see cref="AppConfig.SyncWrite"/>
+        /// (null = use the process configuration, pinned by unit tests).</summary>
+#pragma warning disable 0649 // assigned only by the linked unit test sources
+        internal static string SyncWriteOverrideForTests;
+#pragma warning restore 0649
+
         /// <summary>
         /// Whether a write function should use CommandFlags.FireAndForget,
         /// according to the configured SyncWrite mode: "sync" never fires and
@@ -332,7 +338,7 @@ namespace RedisExcel
         /// </summary>
         internal static bool ShouldFireAndForget(bool replyDependent)
         {
-            switch (AppConfig.SyncWrite)
+            switch (SyncWriteOverrideForTests ?? AppConfig.SyncWrite)
             {
                 case "sync":
                     return false;

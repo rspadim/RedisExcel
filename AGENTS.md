@@ -86,11 +86,14 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   (`CoalesceRealtimeUpdates`).
 - `HGETALL` output is valid JSON: `{"field":"value",...}`; a missing hash
   returns `{}` (not a sentinel string).
-- `RedisUDFChannelPublishIfChanged` dedup: the last payload is remembered per
-  host/channel only after it was actually delivered, and the marker is cleared
-  when any listener joins or leaves - RTD `SUB`/`PSUB` as well as UDF
-  `ChannelLatest`; a pattern subscription clears the matching channels of that
-  host - so a late subscriber is never starved by a publish it did not see.
+- `RedisUDFChannelPublishIfChanged` dedup: in `sync` the last payload is
+  remembered per host/channel only after it was actually delivered, and the
+  marker is cleared when any listener joins or leaves - RTD `SUB`/`PSUB` as
+  well as UDF `ChannelLatest`; a pattern subscription clears the matching
+  channels of that host - so a late subscriber is never starved by a publish
+  it did not see. In the fire-and-forget modes the marker is recorded without
+  a confirmed delivery (an external subscriber joining later can miss an
+  unchanged payload until it changes); local listener joins still clear it.
   The cache is safe under concurrent recalculation and LRU-capped by
   `PublishDedupCacheSize` (default 10000).
 - Reads and status functions are volatile by design: they re-execute on every
@@ -110,9 +113,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   `SetRemove`, `HashDel`, list pops) stay blocking; `fireforget-all` sends
   every write FireAndForget (reply-dependent writes return
   `OK-FireForgetAll`). `ChannelUnsubscribe` always removes the local listeners
-  deterministically (never fire-and-forget). In fire-and-forget modes errors
-  are only logged (the cell shows the marker) and publishes return the marker
-  instead of the readers count.
+  deterministically (never fire-and-forget). In fire-and-forget modes an
+  error detected after the dispatch (or a delivery failure) is only logged
+  (the cell keeps the marker) while validation/config failures before the
+  dispatch still surface as `Error:`, and publishes return the marker instead
+  of the readers count.
 - `AsyncWrites` (default false) dispatches writes through Excel-DNA's async
   support (`ExcelAsyncUtil.Run`, RTD-based) so the Excel thread never blocks:
   the cell shows the pending marker (`#N/A`) and then the real value/error (or

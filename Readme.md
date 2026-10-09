@@ -374,18 +374,24 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
   bookkeeping): result-agnostic writes return `OK FireForget`, reply-dependent
   writes return `OK-FireForgetAll`.
 
-In the fire-and-forget modes a Redis or delivery error is only logged - the
-cell keeps the marker - and a publish returns the marker instead of
-`N readers(s)` (`RedisUDFChannelPublishIfChanged` reports `No change` when the
-payload was suppressed). The markers mean the write was sent, not confirmed by
-Redis.
+In the fire-and-forget modes an error detected after the command is dispatched
+(or a delivery failure) is only logged - the cell keeps the marker - while
+validation and host/config failures before the dispatch still surface as
+`Error:`. A publish returns the marker instead of `N readers(s)`
+(`RedisUDFChannelPublishIfChanged` reports `No change` when the payload was
+suppressed; in the fire-and-forget modes its dedup marker is recorded without
+a confirmed delivery, so an external subscriber joining later may miss an
+unchanged payload until it changes). The markers mean the write was sent, not
+confirmed by Redis.
 
 `AsyncWrites: true` dispatches writes through Excel-DNA's async support
 instead of the Excel calculation thread: the cell first shows Excel's pending
 marker (`#N/A`) and then updates to the real value/error (or the
 fire-and-forget marker). Each formula writes exactly once - the recalculation
 that delivers the result returns the cached value (the call identity is the
-cell plus its arguments) instead of re-running the write. Same-host writes are
+cell plus the resolved host plus the formula's arguments) instead of
+re-running the write. A write whose host cannot be resolved falls back to the
+synchronous path (no pending marker). Same-host writes are
 serialized by a per-host FIFO queue (other hosts are not blocked); the order is
 the dispatch order. `SyncWrite` still decides whether that write waits for the
 reply - so `"sync"` + `AsyncWrites: true` returns real results and errors
