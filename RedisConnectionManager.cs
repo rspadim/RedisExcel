@@ -42,6 +42,8 @@ namespace RedisExcel
         {
             // Cache the lightweight wrappers: volatile worksheet functions call this
             // constantly, and ConnectionMultiplexer.GetDatabase() allocates per call.
+            // If the factory throws (connect failure), GetOrAdd does not insert the
+            // entry, so the next call retries instead of caching the failure.
             string key = PoolKey(host, pool);
             return _databases.GetOrAdd(key, _ => GetConnection(host, pool).GetDatabase());
         }
@@ -50,6 +52,8 @@ namespace RedisExcel
 
         public ISubscriber GetSubscriber(string host, RedisPool pool)
         {
+            // Same GetOrAdd semantics as GetDatabase: a throwing factory leaves the
+            // cache empty, so transient connect failures are not cached.
             string key = PoolKey(host, pool);
             return _subscribers.GetOrAdd(key, _ => GetConnection(host, pool).GetSubscriber());
         }
@@ -65,7 +69,18 @@ namespace RedisExcel
             // Lazy avoids creating duplicate connections when GetOrAdd is called concurrently.
             var lazy = dictionary.GetOrAdd(host, h => new Lazy<ConnectionMultiplexer>(
                 () => Connect(h, pool), LazyThreadSafetyMode.ExecutionAndPublication));
-            return lazy.Value;
+            try
+            {
+                return lazy.Value;
+            }
+            catch
+            {
+                // Do not cache a failed connect: drop the entry so the next call retries.
+                // Only remove our own entry in case another thread already replaced it.
+                if (dictionary.TryGetValue(host, out var current) && ReferenceEquals(current, lazy))
+                    dictionary.TryRemove(host, out _);
+                throw;
+            }
         }
 
         private ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> DictionaryFor(RedisPool pool)

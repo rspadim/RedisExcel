@@ -400,7 +400,8 @@ namespace RedisExcel
         [ExcelFunction(Description = "Lists Redis keys matching a pattern", IsVolatile = true)]
         public static object[,] RedisUDFKeys(
             [ExcelArgument(Description = "Pattern to match Redis keys (e.g., user:*)")] string pattern,
-            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost,
+            [ExcelArgument(Description = "Optional page size for SCAN (default 250)")] object pageSize = null
         )
         {
             string host = null;
@@ -409,7 +410,11 @@ namespace RedisExcel
                 host = ResolveHost(optionalHost);
                 var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
                 var server = conn.GetServer(conn.GetEndPoints().First());
-                var keys = server.Keys(pattern: pattern).Select(k => k.ToString()).ToList();
+                List<string> keys;
+                if (pageSize != null && int.TryParse(pageSize.ToString(), out var pageSizeInt) && pageSizeInt > 0)
+                    keys = server.Keys(pattern: pattern, pageSize: pageSizeInt).Select(k => k.ToString()).ToList();
+                else
+                    keys = server.Keys(pattern: pattern).Select(k => k.ToString()).ToList();
 
                 var result = new object[keys.Count, 1];
                 for (int i = 0; i < keys.Count; i++)
@@ -521,6 +526,118 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 return Fail("RedisUDFExists", ex, $"key={key}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Deletes a Redis key", IsVolatile = true)]
+        public static object RedisUDFDel(
+            [ExcelArgument(Description = "Redis key to delete")] string key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long deleted = GetDb(host).KeyDelete(key) ? 1L : 0L;
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFDel: key={key}, deleted={deleted}, host={host}");
+                return deleted;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFDel", ex, $"key={key}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Sets the value of a Redis key with an expiry in seconds", IsVolatile = true)]
+        public static string RedisUDFSetEx(
+            [ExcelArgument(Description = "Redis key to set the value for")] string key,
+            [ExcelArgument(Description = "Value to set for the given key")] string value,
+            [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                int ttl = Convert.ToInt32(ttlSeconds);
+                GetDb(host).StringSet(key, value, TimeSpan.FromSeconds(ttl));
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFSetEx: key={key}, value={value}, ttl={ttl}s, host={host}");
+                return "OK";
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFSetEx", ex, $"key={key}, value={value}, ttl={ttlSeconds}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Sets a timeout on a Redis key in seconds", IsVolatile = true)]
+        public static object RedisUDFExpire(
+            [ExcelArgument(Description = "Redis key to set the expiry for")] string key,
+            [ExcelArgument(Description = "Time to live in seconds")] object ttlSeconds,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                int ttl = Convert.ToInt32(ttlSeconds);
+                bool expired = GetDb(host).KeyExpire(key, TimeSpan.FromSeconds(ttl));
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFExpire: key={key}, ttl={ttl}s, expired={expired}, host={host}");
+                return expired ? "1" : "0";
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFExpire", ex, $"key={key}, ttl={ttlSeconds}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Increments the integer value of a Redis key by one", IsVolatile = true)]
+        public static object RedisUDFIncr(
+            [ExcelArgument(Description = "Redis key to increment")] string key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long value = GetDb(host).StringIncrement(key);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFIncr: key={key}, value={value}, host={host}");
+                return value;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFIncr", ex, $"key={key}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Increments the integer value of a Redis key by a given amount", IsVolatile = true)]
+        public static object RedisUDFIncrBy(
+            [ExcelArgument(Description = "Redis key to increment")] string key,
+            [ExcelArgument(Description = "Amount to increment by")] object increment,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long incr = Convert.ToInt64(increment);
+                long value = GetDb(host).StringIncrement(key, incr);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFIncrBy: key={key}, increment={incr}, value={value}, host={host}");
+                return value;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFIncrBy", ex, $"key={key}, increment={increment}, host={host}");
             }
         }
 
@@ -699,6 +816,134 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 return FailMatrix("RedisUDFHashGetFieldMultipleKeys", ex, $"field={field}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Pushes a value onto the right end of a Redis list", IsVolatile = true)]
+        public static object RedisUDFListPushRight(
+            [ExcelArgument(Description = "Redis list key")] string key,
+            [ExcelArgument(Description = "Value to push onto the list")] string value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long length = GetDb(host).ListRightPush(key, value);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFListPushRight: key={key}, value={value}, length={length}, host={host}");
+                return length;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFListPushRight", ex, $"key={key}, value={value}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Pushes a value onto the left end of a Redis list", IsVolatile = true)]
+        public static object RedisUDFListPushLeft(
+            [ExcelArgument(Description = "Redis list key")] string key,
+            [ExcelArgument(Description = "Value to push onto the list")] string value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long length = GetDb(host).ListLeftPush(key, value);
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFListPushLeft: key={key}, value={value}, length={length}, host={host}");
+                return length;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFListPushLeft", ex, $"key={key}, value={value}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Returns a range of values from a Redis list", IsVolatile = true)]
+        public static object[,] RedisUDFListRange(
+            [ExcelArgument(Description = "Redis list key")] string key,
+            [ExcelArgument(Description = "Start index (0-based, negative counts from the end)")] object start,
+            [ExcelArgument(Description = "Stop index (inclusive, negative counts from the end)")] object stop,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                var values = GetDb(host).ListRange(key, Convert.ToInt64(start), Convert.ToInt64(stop));
+                if (values.Length == 0)
+                {
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFListRange: key={key}, empty, host={host}");
+                    return new object[,] { { "" } };
+                }
+                var result = new object[values.Length, 1];
+                for (int i = 0; i < values.Length; i++)
+                    result[i, 0] = values[i].ToString();
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFListRange: key={key}, values={values.Length}, host={host}");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                return FailMatrix("RedisUDFListRange", ex, $"key={key}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Adds a member to a Redis set", IsVolatile = true)]
+        public static object RedisUDFSetAdd(
+            [ExcelArgument(Description = "Redis set key")] string key,
+            [ExcelArgument(Description = "Member to add to the set")] string value,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                long added = GetDb(host).SetAdd(key, value) ? 1L : 0L;
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFSetAdd: key={key}, value={value}, added={added}, host={host}");
+                return added;
+            }
+            catch (Exception ex)
+            {
+                return Fail("RedisUDFSetAdd", ex, $"key={key}, value={value}, host={host}");
+            }
+        }
+
+        [ExcelFunction(Description = "Returns all members of a Redis set", IsVolatile = true)]
+        public static object[,] RedisUDFSetMembers(
+            [ExcelArgument(Description = "Redis set key")] string key,
+            [ExcelArgument(Description = "Optional Redis host (e.g., host:port)")] object optionalHost
+        )
+        {
+            string host = null;
+            try
+            {
+                host = ResolveHost(optionalHost);
+                var members = GetDb(host).SetMembers(key);
+                if (members.Length == 0)
+                {
+                    if (logger.IsTraceEnabled)
+                        logger.Trace($"RedisUDFSetMembers: key={key}, empty, host={host}");
+                    return new object[,] { { "" } };
+                }
+                var result = new object[members.Length, 1];
+                for (int i = 0; i < members.Length; i++)
+                    result[i, 0] = members[i].ToString();
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFSetMembers: key={key}, members={members.Length}, host={host}");
+                return result;
+            }
+            catch (Exception ex)
+            {
+                return FailMatrix("RedisUDFSetMembers", ex, $"key={key}, host={host}");
             }
         }
 

@@ -22,9 +22,23 @@ namespace RedisExcel
                 return true;
             if (a == null || b == null || a.Length != b.Length)
                 return false;
+            // Order-insensitive: Redis may return the same hash with fields in a
+            // different order after a rehash, which is not a value change. Hash
+            // field names are unique, so for each entry in "a" we require the same
+            // Name/Value pair to exist anywhere in "b". The O(n^2) scan avoids
+            // allocating a set/dictionary on this hot polling path (hashes are small).
             for (int i = 0; i < a.Length; i++)
             {
-                if (a[i].Name != b[i].Name || a[i].Value != b[i].Value)
+                bool found = false;
+                for (int j = 0; j < b.Length; j++)
+                {
+                    if (a[i].Name == b[j].Name && a[i].Value == b[j].Value)
+                    {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found)
                     return false;
             }
             return true;

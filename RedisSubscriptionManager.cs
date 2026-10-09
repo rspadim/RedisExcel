@@ -2,6 +2,7 @@ using NLog;
 using StackExchange.Redis;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace RedisExcel
@@ -13,6 +14,13 @@ namespace RedisExcel
     /// every registered listener. Disconnecting a topic removes only its own listener;
     /// the channel is unsubscribed when the last listener leaves. On connection restore,
     /// all channels of the host are automatically re-subscribed.
+    ///
+    /// Hardened lifecycle: network calls (Subscribe/Unsubscribe) are serialized per
+    /// channel through a dedicated lock but always run outside the listener lock, so
+    /// message fan-out never blocks behind socket I/O. Subscribe racing with Dispose()
+    /// either throws ObjectDisposedException or fully rolls back its listener, and
+    /// channel entries are removed with a value-checked atomic remove so a stale
+    /// removal can never evict a state concurrently re-created for the same key.
     ///
     /// Duplicate suppression: feeds republish unchanged values constantly; identical
     /// consecutive payloads are compared as raw bytes (no string decoding) and skipped
@@ -32,6 +40,7 @@ namespace RedisExcel
             new ConcurrentDictionary<string, ChannelState>();
         private readonly bool _skipRepeated;
         private long _nextListenerId;
+        private volatile bool _disposed;
 
         public RedisSubscriptionManager(RedisConnectionManager connections)
         {
@@ -54,6 +63,8 @@ namespace RedisExcel
 
         public IDisposable Subscribe(string host, string channel, bool pattern, Action<string> onMessage)
         {
+            if (_disposed)
+                throw new ObjectDisposedException(nameof(RedisSubscriptionManager));
             if (string.IsNullOrWhiteSpace(host)) throw new ArgumentException("host is required", nameof(host));
             if (string.IsNullOrWhiteSpace(channel)) throw new ArgumentException("channel is required", nameof(channel));
             if (onMessage == null) throw new ArgumentNullException(nameof(onMessage));
@@ -64,6 +75,7 @@ namespace RedisExcel
             while (true)
             {
                 state = _channels.GetOrAdd(key, _ => new ChannelState(host, channel, pattern, _skipRepeated));
+                bool needSubscribe;
                 lock (state.Sync)
                 {
                     if (state.Disposed)
@@ -73,25 +85,48 @@ namespace RedisExcel
                     }
                     id = Interlocked.Increment(ref _nextListenerId);
                     state.Listeners[id] = onMessage;
-                    if (state.Listeners.Count == 1)
-                    {
-                        try
-                        {
-                            state.Subscribe(_connections);
-                        }
-                        catch
-                        {
-                            // StackExchange.Redis may have registered the handler before
-                            // throwing; undo everything so no zombie subscription is left.
-                            state.Listeners.TryRemove(id, out _);
-                            state.Unsubscribe();
-                            _channels.TryRemove(key, out _);
-                            throw;
-                        }
-                    }
+                    needSubscribe = state.Listeners.Count == 1;
                     state.RebuildSnapshot();
-                    break;
+                    // Network I/O is deliberately kept outside this lock (below).
                 }
+
+                if (needSubscribe)
+                {
+                    bool subscribed;
+                    try
+                    {
+                        subscribed = state.TryEnsureSubscribed(_connections);
+                    }
+                    catch
+                    {
+                        // StackExchange.Redis may have registered the handler before
+                        // throwing; undo everything so no zombie subscription is left.
+                        lock (state.Sync)
+                        {
+                            state.Listeners.TryRemove(id, out _);
+                            state.RebuildSnapshot();
+                        }
+                        ((ICollection<KeyValuePair<string, ChannelState>>)_channels)
+                            .Remove(new KeyValuePair<string, ChannelState>(key, state));
+                        state.ReleaseSubscription();
+                        throw;
+                    }
+
+                    if (!subscribed)
+                    {
+                        // The state was disposed while this lock was released (manager
+                        // shutdown): drop the listener and retry. The leading _disposed
+                        // check throws on the next iteration.
+                        lock (state.Sync)
+                        {
+                            state.Listeners.TryRemove(id, out _);
+                            state.RebuildSnapshot();
+                        }
+                        continue;
+                    }
+                }
+
+                break;
             }
             logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, listeners={state.Listeners.Count}");
             return new Registration(this, state, id);
@@ -99,18 +134,12 @@ namespace RedisExcel
 
         public void Dispose()
         {
+            _disposed = true;
             foreach (var state in _channels.Values)
             {
                 lock (state.Sync)
                     state.Disposed = true;
-                try
-                {
-                    state.Unsubscribe();
-                }
-                catch (Exception ex)
-                {
-                    logger.Debug(ex, "Dispose: unsubscribe error");
-                }
+                state.ReleaseSubscription();
             }
             _channels.Clear();
         }
@@ -130,14 +159,23 @@ namespace RedisExcel
             if (!lastListener)
                 return;
 
-            _channels.TryRemove(MakeKey(state.Host, state.Name, state.Pattern), out _);
-            state.Unsubscribe();
+            // Value-checked atomic remove: a state concurrently re-created under the
+            // same registry key must never be evicted by this stale removal.
+            ((ICollection<KeyValuePair<string, ChannelState>>)_channels)
+                .Remove(new KeyValuePair<string, ChannelState>(
+                    MakeKey(state.Host, state.Name, state.Pattern), state));
+            state.ReleaseSubscription();
             logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
 
+        /// <summary>
+        /// Registry key for a channel state. The host length is length-prefixed so
+        /// hosts and channels that themselves contain the \u0001 separator cannot
+        /// collide. Format: {L|P}\u0001{host.Length}:{host}{channel}.
+        /// </summary>
         internal static string MakeKey(string host, string channel, bool pattern)
         {
-            return $"{host}\u0001{(pattern ? 'P' : 'L')}\u0001{channel}";
+            return $"{(pattern ? 'P' : 'L')}\u0001{host.Length}:{host}{channel}";
         }
 
         private sealed class ChannelState
@@ -154,6 +192,7 @@ namespace RedisExcel
             public bool Disposed;
 
             private readonly bool _skipRepeated;
+            private readonly object _serSync = new object();
             private volatile Action<string>[] _listenersSnapshot = EmptyListeners;
             private ISubscriber _subscriber;
             private RedisValue _lastMessage;
@@ -185,23 +224,54 @@ namespace RedisExcel
                 _listenersSnapshot = snapshot;
             }
 
-            public void Subscribe(RedisConnectionManager connections)
+            /// <summary>
+            /// Ensures exactly one StackExchange.Redis handler is registered for this
+            /// channel. Serialized by _serSync; the listener lock is only touched to
+            /// observe disposal. Returns false when the state was disposed before the
+            /// handler could be installed.
+            /// </summary>
+            public bool TryEnsureSubscribed(RedisConnectionManager connections)
             {
-                _subscriber = connections.GetSubscriber(Host);
-                _subscriber.Subscribe(Channel, HandleMessage);
+                lock (_serSync)
+                {
+                    lock (Sync)
+                    {
+                        if (Disposed)
+                            return false;
+                    }
+                    if (_subscriber != null)
+                        return true;
+                    var subscriber = connections.GetSubscriber(Host);
+                    // Assign first: if Subscribe throws after registering the handler,
+                    // the rollback path can still unsubscribe it.
+                    _subscriber = subscriber;
+                    subscriber.Subscribe(Channel, HandleMessage);
+                    return true;
+                }
             }
 
-            public void Unsubscribe()
+            /// <summary>
+            /// Clears the stored subscriber under _serSync and unsubscribes the handler
+            /// outside every lock. Nulling first makes concurrent ReleaseSubscription
+            /// calls no-ops instead of double-unsubscribing the same handler.
+            /// </summary>
+            public void ReleaseSubscription()
             {
-                if (_subscriber == null)
+                ISubscriber subscriber;
+                lock (_serSync)
+                {
+                    subscriber = _subscriber;
+                    _subscriber = null;
+                }
+                if (subscriber == null)
                     return;
                 try
                 {
-                    _subscriber.Unsubscribe(Channel, HandleMessage);
+                    subscriber.Unsubscribe(Channel, HandleMessage);
                 }
                 catch (Exception ex)
                 {
-                    logger.Debug(ex, $"Unsubscribe: host={Host}, channel={Name}");
+                    logger.Debug(ex, $"ReleaseSubscription: host={Host}, channel={Name}");
                 }
             }
 

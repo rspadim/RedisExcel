@@ -114,6 +114,105 @@ internal static class Program
         Check(WaitUntil(() => { lock (Sync) return receivedD.Count == 2; }, 2000), "identical repeated payload skipped");
         tokenD.Dispose();
 
+        // Pattern subscriptions are never deduplicated, and pattern/literal
+        // refcounts are independent (separate channel states).
+        var receivedPat = new List<string>();
+        var receivedLit = new List<string>();
+        var patToken = subscriptions.Subscribe(host, "pat:*", pattern: true,
+            onMessage: m => { lock (Sync) receivedPat.Add(m); });
+        var litToken = subscriptions.Subscribe(host, "pat:other", pattern: false,
+            onMessage: m => { lock (Sync) receivedLit.Add(m); });
+
+        Func<string, long> numsubOf = ch =>
+        {
+            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", ch);
+            return arr.Length >= 2 ? (long)arr[1] : 0;
+        };
+
+        // Patterns do not show up in PUBSUB NUMSUB; NUMPAT covers them.
+        Check(WaitUntil(() => (long)server.Execute("PUBSUB", "NUMPAT") >= 1, 5000),
+            "pattern subscription active on the server");
+        Check(WaitUntil(() => numsubOf("pat:other") == 1, 5000),
+            "literal channel active on the server");
+        Check(subscriptions.ChannelCount == 2 && subscriptions.ListenerCount == 2,
+            "pattern and literal subscriptions tracked independently");
+
+        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel("pat:other", RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel("pat:one", RedisChannel.PatternMode.Literal), "dup2");
+
+        // "pat:*" also matches "pat:other", so the pattern listener must see all
+        // four messages (2x "dup" @ pat:one + 1x "dup" @ pat:other + "dup2").
+        // If identical consecutive payloads were suppressed for patterns it
+        // would stop at two ("dup" + "dup2").
+        Check(WaitUntil(() => { lock (Sync) return receivedPat.Count == 4; }, 5000),
+            "pattern listener received every matching message (3x \"dup\" + \"dup2\", no deduplication)");
+        bool patternDuplicatesDelivered;
+        lock (Sync)
+        {
+            patternDuplicatesDelivered =
+                receivedPat.Count(m => m == "dup") == 3 && receivedPat.Count(m => m == "dup2") == 1;
+        }
+        Check(patternDuplicatesDelivered, "identical repeated payloads are not deduplicated for patterns");
+        Check(WaitUntil(() => { lock (Sync) return receivedLit.Count == 1 && receivedLit[0] == "dup"; }, 5000),
+            "literal listener received only the message published to its own channel");
+
+        // Dropping the pattern registration must not touch the literal channel.
+        patToken.Dispose();
+        Check(WaitUntil(() => subscriptions.ListenerCount == 1, 5000),
+            "pattern listener removed, literal listener kept");
+        Check(subscriptions.ChannelCount == 1, "only the literal channel state remains");
+        publisher.Publish(new RedisChannel("pat:other", RedisChannel.PatternMode.Literal), "after-pat");
+        Check(WaitUntil(() => { lock (Sync) return receivedLit.Count == 2 && receivedLit[1] == "after-pat"; }, 5000),
+            "literal channel still receives after the pattern left");
+        Check(numsubOf("pat:other") == 1, "literal channel still subscribed on the server");
+        litToken.Dispose();
+        Check(WaitUntil(() => numsubOf("pat:other") == 0, 5000),
+            "literal channel unsubscribed after its last listener left");
+
+        // Disposing the same token twice is a safe no-op.
+        string doubleDisposeChannel = "smoke:double:" + Guid.NewGuid().ToString("N");
+        int channelsBefore = subscriptions.ChannelCount;
+        int listenersBefore = subscriptions.ListenerCount;
+        var doubleDisposeToken = subscriptions.Subscribe(host, doubleDisposeChannel, pattern: false, onMessage: m => { });
+        Check(WaitUntil(() => subscriptions.ListenerCount == listenersBefore + 1, 5000),
+            "temporary listener registered for the double-dispose test");
+        doubleDisposeToken.Dispose();
+        Check(subscriptions.ChannelCount == channelsBefore && subscriptions.ListenerCount == listenersBefore,
+            "counters back to baseline after the first Dispose");
+        try
+        {
+            doubleDisposeToken.Dispose();
+            Check(true, "second Dispose does not throw");
+        }
+        catch (Exception ex)
+        {
+            Check(false, "second Dispose does not throw (" + ex.GetType().Name + ")");
+        }
+        Check(subscriptions.ChannelCount == channelsBefore && subscriptions.ListenerCount == listenersBefore,
+            "counters unchanged by the second Dispose");
+
+        // Invalid arguments are rejected before any Redis call.
+        try
+        {
+            subscriptions.Subscribe("", "c", false, m => { });
+            Check(false, "blank host accepted");
+        }
+        catch (ArgumentException)
+        {
+            Check(true, "blank host rejected");
+        }
+        try
+        {
+            subscriptions.Subscribe(host, "", false, m => { });
+            Check(false, "blank channel accepted");
+        }
+        catch (ArgumentException)
+        {
+            Check(true, "blank channel rejected");
+        }
+
         Console.WriteLine(_failures == 0 ? "ALL PASS" : _failures + " FAILURE(S)");
         return _failures == 0 ? 0 : 1;
     }

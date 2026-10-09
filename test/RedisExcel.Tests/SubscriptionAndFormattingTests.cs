@@ -29,6 +29,14 @@ namespace RedisExcel.Tests
                 RedisSubscriptionManager.MakeKey("a", "b|c", false),
                 RedisSubscriptionManager.MakeKey("a|b", "c", false));
         }
+
+        [Fact]
+        public void MakeKey_EscapesControlCharacterBoundaries()
+        {
+            Assert.NotEqual(
+                RedisSubscriptionManager.MakeKey("a\u0001b", "c", false),
+                RedisSubscriptionManager.MakeKey("a", "b\u0001c", false));
+        }
     }
 
     public class RedisResultFormatterTests
@@ -62,9 +70,11 @@ namespace RedisExcel.Tests
             var a = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "v2") };
             var b = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "v2") };
             var changed = new[] { new HashEntry("f1", "v1"), new HashEntry("f2", "other") };
+            var reordered = new[] { new HashEntry("f2", "v2"), new HashEntry("f1", "v1") };
 
             Assert.True(RedisResultFormatter.HashEquals(a, b));
             Assert.True(RedisResultFormatter.HashEquals(a, a));
+            Assert.True(RedisResultFormatter.HashEquals(a, reordered));
             Assert.False(RedisResultFormatter.HashEquals(a, changed));
             Assert.False(RedisResultFormatter.HashEquals(a, new[] { new HashEntry("f1", "v1") }));
             Assert.False(RedisResultFormatter.HashEquals(null, a));

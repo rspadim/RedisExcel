@@ -18,6 +18,48 @@
   instead of one Excel update per incoming message. Set it to false to
   restore per-message delivery.
 
+### Added
+
+- New worksheet functions:
+  - `RedisUDFDel(key, optionalHost)` - deletes a key and returns the deleted
+    count.
+  - `RedisUDFSetEx(key, value, ttlSeconds, optionalHost)` - set with TTL.
+  - `RedisUDFExpire(key, ttlSeconds, optionalHost)` - sets the TTL of a key.
+  - `RedisUDFIncr(key, optionalHost)` / `RedisUDFIncrBy(key, increment,
+    optionalHost)` - atomic counters.
+  - `RedisUDFListPushRight(key, value, optionalHost)` /
+    `RedisUDFListPushLeft(key, value, optionalHost)` - list push (returns the
+    list length).
+  - `RedisUDFListRange(key, start, stop, optionalHost)` - list range.
+  - `RedisUDFSetAdd(key, value, optionalHost)` - set add (returns the number
+    of members added).
+  - `RedisUDFSetMembers(key, optionalHost)` - set members.
+  - `RedisUDFKeys(pattern, optionalHost, pageSize)` gained an optional
+    `pageSize` argument (SCAN page size).
+
+### Robustness
+
+- Timer reentrancy gates: a slow poll/update tick no longer overlaps the next
+  one.
+- RTD polling isolates GET-multi failures per host, so `HGET`/`HGETALL` topics
+  still run in that tick.
+- Failed Redis connects are no longer cached: the connection entry is dropped
+  and retried on the next call instead of poisoning the host until Excel
+  restarts.
+- Subscription manager hardened: network I/O moved outside the per-channel
+  lock, a manager dispose flag, value-checked channel removal (no state
+  eviction races) and length-prefixed subscription keys (no collision when
+  hosts/channels contain control characters).
+- `RedisRuntime` publication order fixed (connections/subscriptions no longer
+  observable half-initialized).
+- `HGETALL` comparison is now order-insensitive: a rehash that reorders fields
+  no longer triggers a pointless Excel update.
+
+### Tests / CI
+
+- CI now installs Memurai (Redis for Windows) on the runner and executes the
+  smoke suite before the tagged build.
+
 ## v1.1.3
 
 ### Changed

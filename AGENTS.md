@@ -63,6 +63,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   timer (`ExcelUpdateRateMs`) flushes dirty values. Real-time updates are
   coalesced per topic by default (`CoalesceRealtimeUpdates`, on): the latest
   value wins per window instead of one Excel update per message.
+- Timer callbacks are protected against reentrancy: a tick that fires while the
+  previous one is still running is skipped, not queued, so a slow tick never
+  overlaps the next one. The `Automatic` threshold machinery is kept for
+  status/config compatibility, while delivery is coalesced by default
+  (`CoalesceRealtimeUpdates`).
 - `HGETALL` output is valid JSON: `{"field":"value",...}`.
 - Identical consecutive payloads are skipped before decoding
   (`SkipRepeatedMessages`, default on) for literal subscriptions and GET/HGET

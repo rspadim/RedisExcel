@@ -321,7 +321,15 @@ try {
         @{ Row = 14; Func = 'ConnectionCount';Fx = '=RedisUDFConnectionCount()';                                                                           Expected = $null },
         @{ Row = 15; Func = 'ExistsMultiples';Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing"}},"{0}"),1,2)' -f $h, $kp;                  Expected = '1' },
         @{ Row = 16; Func = 'TTLMultiples';   Fx = '=INDEX(RedisUDFTTLMultiples({{"{1}.key"}},"{0}"),1,2)' -f $h, $kp;                                  Expected = '-1' },
-        @{ Row = 17; Func = 'HashGetFieldMultipleKeys'; Fx = '=INDEX(RedisUDFHashGetFieldMultipleKeys({{"{1}.hash","{1}.hash"}},"campo1","{0}"),2,2)' -f $h, $kp; Expected = 'valor1' }
+        @{ Row = 17; Func = 'HashGetFieldMultipleKeys'; Fx = '=INDEX(RedisUDFHashGetFieldMultipleKeys({{"{1}.hash","{1}.hash"}},"campo1","{0}"),2,2)' -f $h, $kp; Expected = 'valor1' },
+        @{ Row = 18; Func = 'SetEx';          Fx = '=RedisUDFSetEx("{1}.tmp","x","100","{0}")' -f $h, $kp;                                                 Expected = 'OK' },
+        @{ Row = 19; Func = 'TTL';            Fx = '=RedisUDFTTL("{1}.tmp","{0}")' -f $h, $kp;                                                             Expected = '100' },
+        @{ Row = 20; Func = 'Del';            Fx = '=RedisUDFDel("{1}.neverexists","{0}")' -f $h, $kp;                                                     Expected = '0' },
+        @{ Row = 21; Func = 'Incr';           Fx = '=RedisUDFIncr("{1}.counter","{0}")' -f $h, $kp;                                                        Expected = $null },
+        @{ Row = 22; Func = 'ListPushRight';  Fx = '=RedisUDFListPushRight("{1}.list","a","{0}")' -f $h, $kp;                                              Expected = $null },
+        @{ Row = 23; Func = 'ListRange';      Fx = '=INDEX(RedisUDFListRange("{1}.list",0,-1,"{0}"),1,1)' -f $h, $kp;                                      Expected = 'a' },
+        @{ Row = 24; Func = 'SetAdd';         Fx = '=RedisUDFSetAdd("{1}.set","x","{0}")' -f $h, $kp;                                                      Expected = $null },
+        @{ Row = 25; Func = 'SetMembers';     Fx = '=INDEX(RedisUDFSetMembers("{1}.set","{0}"),1,1)' -f $h, $kp;                                           Expected = 'x' }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -386,6 +394,24 @@ try {
     Check (Wait-CellText $udf 'B15' '1')                     'UDF ExistsMultiples (pipelined) first key exists'
     Check (Wait-CellText $udf 'B16' '-1')                    'UDF TTLMultiples (pipelined) returns -1'
     Check (Wait-CellText $udf 'B17' 'valor1')                'UDF HashGetFieldMultipleKeys (pipelined) returns the value'
+    Check (Wait-CellText $udf 'B18' 'OK')                    'UDF SetEx returns OK'
+    $ttlOk = $false
+    $ttlLast = ''
+    $ttlDeadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $ttlDeadline) {
+        $ttlValue = 0.0
+        $ttlLast = (Get-CellText $udf 'B19').Replace(',', '.')
+        if ([double]::TryParse($ttlLast, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$ttlValue) -and $ttlValue -gt 0 -and $ttlValue -le 100) { $ttlOk = $true; break }
+        Start-Sleep -Milliseconds 300
+    }
+    if (-not $ttlOk) { Write-Host ("      B19 = '{0}'" -f $ttlLast) -ForegroundColor DarkGray }
+    Check $ttlOk 'UDF TTL sees the SetEx expiry'
+    Check (Wait-CellText $udf 'B20' '0')                     'UDF Del reports 0 for a missing key'
+    Check ((Get-CellText $udf 'B21') -match '^\d+$')         'UDF Incr returns an integer'
+    Check ((Get-CellText $udf 'B22') -match '^\d+$')         'UDF ListPushRight returns an integer'
+    Check (Wait-CellText $udf 'B23' 'a')                     'UDF ListRange returns the first element'
+    Check ((Get-CellText $udf 'B24') -match '^\d+$')         'UDF SetAdd returns an integer'
+    Check (Wait-CellText $udf 'B25' 'x')                     'UDF SetMembers returns the member'
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

@@ -58,6 +58,9 @@ namespace RedisExcel
         public string Host { get; }
         public IDisposable Subscription { get; set; }
 
+        /// <summary>Set when the RTD server removed this topic; callbacks and flushes must stop publishing.</summary>
+        public volatile bool Disconnected;
+
         public string LastValue { get { lock (_sync) return _lastValue; } }
 
         public bool Dirty { get { lock (_sync) return _dirty; } }
@@ -115,6 +118,8 @@ namespace RedisExcel
 
         public void SendToExcelIfDirty()
         {
+            if (Disconnected)
+                return;
             string value;
             lock (_sync)
             {
@@ -123,6 +128,8 @@ namespace RedisExcel
                 _dirty = false;
                 value = _lastValue;
             }
+            if (Disconnected)
+                return;
             Topic.UpdateValue(value);
         }
 
@@ -138,7 +145,8 @@ namespace RedisExcel
     {
         private static readonly Logger logger = LogManager.GetCurrentClassLogger();
         private static readonly ConcurrentDictionary<RedisRtd, byte> Instances = new ConcurrentDictionary<RedisRtd, byte>();
-        private static RedisRtd Instance;
+        private static readonly object InstancesSync = new object();
+        private static volatile RedisRtd Instance;
 
         private readonly ConcurrentDictionary<int, TopicData> _polledTopics = new ConcurrentDictionary<int, TopicData>();
         private readonly ConcurrentDictionary<int, TopicData> _subscribedTopics = new ConcurrentDictionary<int, TopicData>();
@@ -158,6 +166,11 @@ namespace RedisExcel
         private System.Timers.Timer _redisTimer;
         private System.Timers.Timer _counterTimer;
 
+        // Reentrancy gates: 1 while the matching timer callback is running.
+        private int _redisTickGate;
+        private int _excelTickGate;
+        private int _counterTickGate;
+
         public static long CurrentMessagesCounter()
         {
             var instance = Instance;
@@ -166,6 +179,10 @@ namespace RedisExcel
 
         public static int RedisConnectionsCount() => RedisRuntime.Connections.RtdConnectionCount;
 
+        /// <summary>
+        /// Number of active Redis pub/sub listeners. This is process-wide: it includes
+        /// listeners registered by the UDF layer (shared RedisSubscriptionManager).
+        /// </summary>
         public static int RedisSubscriptionsCount() => RedisRuntime.Subscriptions.ListenerCount;
 
         public static int TopicsCount()
@@ -176,6 +193,10 @@ namespace RedisExcel
             return total;
         }
 
+        /// <summary>
+        /// Number of Redis channels/patterns with at least one listener. This is process-wide:
+        /// it includes channels subscribed by the UDF layer (shared RedisSubscriptionManager).
+        /// </summary>
         public static int ChannelTopicsCount() => RedisRuntime.Subscriptions.ChannelCount;
 
         public static string DefaultHost() => Instance?._defaultHost;
@@ -189,8 +210,11 @@ namespace RedisExcel
         protected override bool ServerStart()
         {
             logger.Info("ServerStart: starting RTD server");
-            Instance = this;
-            Instances[this] = 0;
+            lock (InstancesSync)
+            {
+                Instance = this;
+                Instances[this] = 0;
+            }
 
             var config = AppConfig.Current.RTD;
             _defaultHost = config.host;
@@ -239,9 +263,12 @@ namespace RedisExcel
             _subscribedTopics.Clear();
             _polledTopics.Clear();
 
-            Instances.TryRemove(this, out _);
-            if (ReferenceEquals(Instance, this))
-                Instance = Instances.Keys.FirstOrDefault();
+            lock (InstancesSync)
+            {
+                Instances.TryRemove(this, out _);
+                if (ReferenceEquals(Instance, this))
+                    Instance = Instances.Keys.FirstOrDefault();
+            }
         }
 
         private static System.Timers.Timer CreateTimer(double intervalMs, string name, Action action)
@@ -316,8 +343,10 @@ namespace RedisExcel
                     case "SUB":
                     case "PSUB":
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        // Register the subscription first: if it throws, the catch below
+                        // returns the error and no topic is stored.
+                        td.Subscription = Subscribe(td);
                         _subscribedTopics[topic.TopicId] = td;
-                        Subscribe(td);
                         break;
                     default:
                         throw new Exception($"unknown command '{command}', expected one of [GET, HGET, HGETALL, SUB, PSUB]");
@@ -339,12 +368,18 @@ namespace RedisExcel
             {
                 if (_subscribedTopics.TryRemove(topic.TopicId, out var sub))
                 {
+                    // Mark first so in-flight callbacks stop publishing before the
+                    // shared subscription is torn down.
+                    sub.Disconnected = true;
                     sub.Subscription?.Dispose();
                     sub.Subscription = null;
                     logger.Info($"DisconnectData: removed subscription {sub}");
                 }
                 else if (_polledTopics.TryRemove(topic.TopicId, out var polled))
                 {
+                    // In-flight poll ticks may still hold this topic; stop them from
+                    // pushing values to a disconnected Excel topic.
+                    polled.Disconnected = true;
                     logger.Info($"DisconnectData: removed polled topic {polled}");
                 }
                 else
@@ -358,12 +393,14 @@ namespace RedisExcel
             }
         }
 
-        private void Subscribe(TopicData td)
+        private IDisposable Subscribe(TopicData td)
         {
             bool pattern = td.Type == "PSUB";
             long topicId = td.Topic.TopicId;
-            td.Subscription = RedisRuntime.Subscriptions.Subscribe(td.Host, td.KeyOrChannel, pattern, message =>
+            var subscription = RedisRuntime.Subscriptions.Subscribe(td.Host, td.KeyOrChannel, pattern, message =>
             {
+                if (td.Disconnected)
+                    return;
                 Interlocked.Increment(ref _messageCount);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={message}");
@@ -373,27 +410,54 @@ namespace RedisExcel
                     td.UpdateOnly(message);
             });
             logger.Info($"Subscribe: subscribed {td}");
+            return subscription;
         }
 
         private void OnCounterTick()
         {
-            UpdateRealtimeMode(allowReenable: true);
-            Interlocked.Exchange(ref _messageCount, 0);
+            if (Interlocked.CompareExchange(ref _counterTickGate, 1, 0) != 0)
+            {
+                if (logger.IsDebugEnabled)
+                    logger.Debug("OnCounterTick: previous tick still running, skipping");
+                return;
+            }
+            try
+            {
+                UpdateRealtimeMode(allowReenable: true);
+                Interlocked.Exchange(ref _messageCount, 0);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _counterTickGate, 0);
+            }
         }
 
         private void OnExcelTick()
         {
-            UpdateRealtimeMode(allowReenable: false);
-            if (_realTimeUpdates && !_coalesceRealtimeUpdates)
+            if (Interlocked.CompareExchange(ref _excelTickGate, 1, 0) != 0)
+            {
+                if (logger.IsDebugEnabled)
+                    logger.Debug("OnExcelTick: previous tick still running, skipping");
                 return;
-            if (_polledTopics.IsEmpty && _subscribedTopics.IsEmpty)
-                return;
-            if (logger.IsDebugEnabled)
-                logger.Debug($"OnExcelTick: flushing dirty topics, polled={_polledTopics.Count}, subscribed={_subscribedTopics.Count}");
-            foreach (var td in _polledTopics.Values)
-                td.SendToExcelIfDirty();
-            foreach (var td in _subscribedTopics.Values)
-                td.SendToExcelIfDirty();
+            }
+            try
+            {
+                UpdateRealtimeMode(allowReenable: false);
+                if (_realTimeUpdates && !_coalesceRealtimeUpdates)
+                    return;
+                if (_polledTopics.IsEmpty && _subscribedTopics.IsEmpty)
+                    return;
+                if (logger.IsDebugEnabled)
+                    logger.Debug($"OnExcelTick: flushing dirty topics, polled={_polledTopics.Count}, subscribed={_subscribedTopics.Count}");
+                foreach (var td in _polledTopics.Values)
+                    td.SendToExcelIfDirty();
+                foreach (var td in _subscribedTopics.Values)
+                    td.SendToExcelIfDirty();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _excelTickGate, 0);
+            }
         }
 
         /// <summary>
@@ -420,20 +484,33 @@ namespace RedisExcel
 
         private void OnRedisTick()
         {
-            if (_polledTopics.IsEmpty)
-                return;
-            if (logger.IsDebugEnabled)
-                logger.Debug($"OnRedisTick: polling {_polledTopics.Count} topic(s), rate={_redisUpdateRateMs}ms");
-            foreach (var group in _polledTopics.Values.GroupBy(t => t.Host))
+            if (Interlocked.CompareExchange(ref _redisTickGate, 1, 0) != 0)
             {
-                try
+                if (logger.IsDebugEnabled)
+                    logger.Debug("OnRedisTick: previous tick still running, skipping");
+                return;
+            }
+            try
+            {
+                if (_polledTopics.IsEmpty)
+                    return;
+                if (logger.IsDebugEnabled)
+                    logger.Debug($"OnRedisTick: polling {_polledTopics.Count} topic(s), rate={_redisUpdateRateMs}ms");
+                foreach (var group in _polledTopics.Values.GroupBy(t => t.Host))
                 {
-                    PollHost(group.Key, group.ToList());
+                    try
+                    {
+                        PollHost(group.Key, group.ToList());
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"OnRedisTick: host={group.Key}");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"OnRedisTick: host={group.Key}");
-                }
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _redisTickGate, 0);
             }
         }
 
@@ -441,25 +518,38 @@ namespace RedisExcel
         {
             var db = RedisRuntime.Connections.GetDatabase(host, RedisPool.RtdData);
 
-            // GET in batch (MGET): one round-trip for all GETs of the host
+            // GET in batch (MGET): one round-trip for all GETs of the host.
+            // Isolated so an MGET failure cannot abort HGET/HGETALL polling for the host.
             if (_useGetMultiple)
             {
-                var gets = topics.Where(t => t.Type == "GET").ToList();
-                if (gets.Count > 0)
+                try
                 {
-                    var keys = gets.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
-                    if (logger.IsTraceEnabled)
-                        logger.Trace($"PollHost: GETMULTI host={host}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
-                    var values = db.StringGet(keys);
-                    for (int i = 0; i < gets.Count; i++)
+                    var gets = topics.Where(t => t.Type == "GET").ToList();
+                    if (gets.Count > 0)
                     {
-                        var td = gets[i];
-                        if (_skipRepeatedMessages && !td.ShouldUpdatePolledValue(values[i]))
-                            continue;
-                        Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                        var keys = gets.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
+                        if (logger.IsTraceEnabled)
+                            logger.Trace($"PollHost: GETMULTI host={host}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
+                        var values = db.StringGet(keys);
+                        for (int i = 0; i < gets.Count; i++)
+                        {
+                            var td = gets[i];
+                            if (_skipRepeatedMessages && !td.ShouldUpdatePolledValue(values[i]))
+                                continue;
+                            Publish(td, values[i].HasValue ? values[i].ToString() : "(no value)");
+                        }
                     }
                 }
-                topics = topics.Where(t => t.Type != "GET").ToList();
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"PollHost: GETMULTI host={host}");
+                }
+                finally
+                {
+                    // GET values are handled by the MGET block only; keep them out of the
+                    // pipeline even when MGET failed (they are retried on the next tick).
+                    topics = topics.Where(t => t.Type != "GET").ToList();
+                }
             }
             if (topics.Count == 0)
                 return;
@@ -510,6 +600,8 @@ namespace RedisExcel
 
         private void Publish(TopicData td, string value)
         {
+            if (td.Disconnected)
+                return;
             Interlocked.Increment(ref _messageCount);
             if (logger.IsTraceEnabled)
                 logger.Trace($"Publish: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={value}");

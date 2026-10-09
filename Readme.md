@@ -187,14 +187,22 @@ Functions to use directly in Excel cells:
 | RedisUDFGetMultiple              | Get multiple keys                | keys\[], multipleColumnsOpt, optionalHost |
 | RedisUDFExists / ExistsMultiples | Check key existence              | key / keys\[], optionalHost               |
 | RedisUDFTTL / TTLMultiples       | Time-to-live (TTL) for keys      | key / keys\[], optionalHost               |
+| RedisUDFSetEx                    | Set a key with a TTL             | key, value, ttlSeconds, optionalHost      |
+| RedisUDFExpire                   | Set a TTL on a key               | key, ttlSeconds, optionalHost             |
+| RedisUDFDel                      | Delete a key (returns deleted count) | key, optionalHost                     |
+| RedisUDFIncr / RedisUDFIncrBy    | Atomic counters                  | key, optionalHost / key, increment, optionalHost |
 | RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
+| RedisUDFListPushRight / Left     | Push to a list (returns length)  | key, value, optionalHost                  |
+| RedisUDFListRange                | Get a range of list elements     | key, start, stop, optionalHost            |
+| RedisUDFSetAdd                   | Add a member to a set (returns added count) | key, value, optionalHost        |
+| RedisUDFSetMembers               | Get all members of a set         | key, optionalHost                         |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
 | RedisUDFChannelLatest/Unsubscribe | Latest Pub/Sub message / unsubscribe | channel, optionalHost / channel      |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
-| RedisUDFKeys                     | List keys by pattern             | pattern, optionalHost                     |
+| RedisUDFKeys                     | List keys by pattern (SCAN)      | pattern, optionalHost, pageSize           |
 | RedisUDFConnectionCount          | Number of active UDF connections | None                                      |
 
 ---
