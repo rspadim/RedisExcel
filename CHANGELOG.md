@@ -5,25 +5,33 @@
 ### Fixed
 
 - `RedisUDFChannelPublishIfChanged` only remembers a payload that was actually
-  delivered and clears the marker when listeners subscribe or unsubscribe, so a
-  late subscriber is no longer starved by a publish it never saw; the cache is
-  safe under concurrent recalculation and LRU-capped (`PublishDedupCacheSize`).
+  delivered and clears the marker when any listener (RTD `SUB`/`PSUB` or UDF
+  `ChannelLatest`) joins or rejoins, with glob matching for pattern
+  subscriptions, so a late subscriber is no longer starved by a publish it
+  never saw; the cache is safe under concurrent recalculation and LRU-capped
+  (`PublishDedupCacheSize`).
 - Empty/whitespace keys are valid Redis names in the batch writers (`SetKV`,
   `SetKVPair`, `HashSetMultiple`) instead of being silently dropped; a missing
   required key/field returns a friendly `Error:` cell.
 - RTD: an invalid host is surfaced in the cell instead of being hidden; a
-  failed `SUB`/`PSUB` subscribe is retried automatically on the next tick; a
-  missing hash returns `{}` from `HGETALL` (was `(no value)`);
-  `RedisRTDMessagesCounter` reports the last full second; extra topic arguments
-  are rejected; polling runs per host in parallel; `HGETALL` comparison is O(n)
-  and compares field names byte-exact; log messages no longer embed payloads.
+  failed `SUB`/`PSUB` subscribe is retried with a 1s..30s backoff (capped per
+  tick) and the first failure logs once with the exception; blank `SUB`/`PSUB`
+  channels are rejected with a clear `#ERROR`; a missing hash returns `{}` from
+  `HGETALL` (was `(no value)`); `RedisRTDMessagesCounter` reports the last full
+  second; extra topic arguments are rejected; polling runs per host in
+  parallel; `HGETALL` comparison is O(n) and compares field names byte-exact;
+  topic logs truncate payloads to 64 chars (full payloads only at Trace level).
 - `RedisConnectionManager` shutdown no longer blocks on closing connections and
-  the connection counters report live multiplexers only.
-- The update check retries sooner after a failed attempt instead of waiting the
+  the connection counters report live multiplexers per pool (the RTD
+  connection count is `RtdData` + `RtdSub` only); the RTD status helpers
+  return `0`/`false` after shutdown.
+- The update check keeps the last known tag when a GitHub response lacks
+  `tag_name`, and retries sooner after a failed attempt instead of waiting the
   full refresh window.
-- `ExcelJson`: a leading UTF-8 BOM is tolerated, JSON nesting depth is capped
-  at 256, oversized matrices are rejected, and JSON date values are emitted as
-  ISO-8601 text.
+- `ExcelJson`: a UTF-8 BOM is tolerated even with whitespace before it, JSON
+  nesting depth is capped at 256, and oversized matrices are rejected. Date-like
+  JSON strings stay text (as since v1.2.6); only programmatic `DateTime` values
+  now serialize as ISO-8601 text.
 
 ### Changed
 

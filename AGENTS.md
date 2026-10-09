@@ -60,7 +60,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   a channel is unsubscribed only when its last listener leaves.
 - Subscription listeners carry an origin tag ("RTD"/"UDF"): the RTD status
   counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) report RTD
-  listeners only, so UDF subscriptions no longer inflate them.
+  listeners only, so UDF subscriptions no longer inflate them. After the RTD
+  server shuts down the RTD status helpers return `0`/`false`.
 - RTD status functions that report the default host, update rates, the
   real-time flag and the message counter reflect the LAST started RTD server;
   the counts (connections/topics/subscriptions/channels) aggregate across
@@ -68,8 +69,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
   no custom resubscribe code is needed (verified live during the v1.1.0 work).
 - A `SUB`/`PSUB` RTD topic that fails to subscribe at connect time shows
-  `#ERROR` and is retried automatically on the next tick (v1.2.7); polled
-  commands (`GET`/`HGET`/`HGETALL`) retry on every tick.
+  `#ERROR` and is retried with a 1s..30s backoff, capped per tick (v1.2.7);
+  blank `SUB`/`PSUB` channels are rejected at `ConnectData`; polled commands
+  (`GET`/`HGET`/`HGETALL`) retry on every tick.
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
   timer (`ExcelUpdateRateMs`) flushes dirty values. Real-time updates are
   coalesced per topic by default (`CoalesceRealtimeUpdates`, on): the latest
@@ -83,16 +85,21 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   returns `{}` (not a sentinel string).
 - `RedisUDFChannelPublishIfChanged` dedup: the last payload is remembered per
   host/channel only after it was actually delivered, and the marker is cleared
-  when listeners subscribe or unsubscribe, so a late subscriber is never
-  starved by a publish it did not see. The cache is safe under concurrent
-  recalculation and LRU-capped by `PublishDedupCacheSize` (default 10000).
-- Every worksheet function is volatile by design: it re-executes on every
-  recalculation (F9/edit). Write functions (`Set`, `SetEx`, `Expire`, `Incr`,
+  when any listener joins or leaves - RTD `SUB`/`PSUB` as well as UDF
+  `ChannelLatest`; a pattern subscription clears the matching channels of that
+  host - so a late subscriber is never starved by a publish it did not see.
+  The cache is safe under concurrent recalculation and LRU-capped by
+  `PublishDedupCacheSize` (default 10000).
+- Every function that accesses Redis is volatile by design: it re-executes on
+  every recalculation (F9/edit). The pure JSON conversions
+  (`RedisUDFMatrixToJSON`/`RedisUDFJSONToMatrix`) are the exception - no
+  `IsVolatile`. Write functions (`Set`, `SetEx`, `Expire`, `Incr`,
   `IncrBy`, `Rename`, pushes, publishes, ...) really run each time - document
   manual calculation (Formulas > Calculation Options > Manual) for sheets
   where that matters.
-- Connection counters report live multiplexers only (closed/failed entries are
-  not counted), and shutdown no longer blocks on closing connections.
+- Connection counters report live multiplexers per pool only (closed/failed
+  entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
+  only), and shutdown no longer blocks on closing connections.
 - `RedisRuntime.ResetAfterAddInReload` supports a same-process add-in reload
   without reusing the previous managers.
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written

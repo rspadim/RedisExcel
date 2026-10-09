@@ -175,17 +175,17 @@ Each parameter has a specific meaning depending on the RTD command.
 > All commands support specifying either a full connection string or a named host defined in the `RedisExcel.json` file.
 
 > A `SUB`/`PSUB` topic that cannot subscribe at connect time shows `#ERROR`
-> and is retried automatically on the next tick (v1.2.7); polled commands
-> (`GET`/`HGET`/`HGETALL`) retry on every tick. Editing the formula re-registers
-> the topic as well.
+> and is retried with a 1s..30s backoff, capped per tick (v1.2.7); polled
+> commands (`GET`/`HGET`/`HGETALL`) retry on every tick. Editing the formula
+> re-registers the topic as well.
 
 ## 💡 Available UDF Functions
 
 Functions to use directly in Excel cells:
 
-> **⚠️ Volatile by design:** every RedisExcel worksheet function is volatile,
-> so it recalculates on every edit and on `F9`. That is what keeps read
-> functions fresh - and it means write functions re-execute on every
+> **⚠️ Volatile by design:** every RedisExcel function that accesses Redis is
+> volatile, so it recalculates on every edit and on `F9`. That is what keeps
+> read functions fresh - and it means write functions re-execute on every
 > recalculation too: `Set`, `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Expire`,
 > `Incr`, `IncrBy`, `Rename`, `Del`, hash/list/set writers, channel publishes
 > and unsubscribe all run again each time. For example, `=RedisUDFIncr("k")`
@@ -193,7 +193,10 @@ Functions to use directly in Excel cells:
 > manual calculation (Formulas > Calculation Options > Manual) when that
 > matters, or keep write calls on a sheet you update deliberately.
 > `RedisUDFChannelPublishIfChanged` guards itself: it only publishes when the
-> payload changed since the last delivery.
+> payload changed since the last delivery. The two JSON conversion helpers
+> (`RedisUDFMatrixToJSON` and `RedisUDFJSONToMatrix`) are the exception: they
+> are pure conversions with no `IsVolatile` flag and recalculate only when
+> their inputs change.
 
 | Function                         | Description                      | Parameters                                |
 | -------------------------------- | -------------------------------- | ----------------------------------------- |
@@ -240,6 +243,13 @@ Functions to use directly in Excel cells:
 > `RedisUDFHashGetAll`, `RedisUDFKeys`, `RedisUDFSetMembers` and
 > `RedisUDFListRange` return an empty cell when there is nothing to show;
 > `RedisUDFTTL` returns `-1` and `RedisUDFExists` returns `0` for a missing key.
+
+> **Blank keys:** `RedisUDFGetMultiple` skips blank, empty and whitespace-only
+> key cells (the other multi-key functions keep one row per input).
+
+> **ChannelLatest after unsubscribe:** `RedisUDFChannelLatest` is best-effort
+> right after `RedisUDFChannelUnsubscribe` - `UNSUBSCRIBE` is fire-and-forget,
+> so a rapid unsubscribe/re-subscribe can deliver an in-flight message once.
 
 ---
 

@@ -95,9 +95,15 @@ namespace RedisExcel
                 // "Error: ..." cell instead of reaching Excel raw.
                 if (jsonText == null)
                     return new object[,] { { fill } };
-                // Pasted JSON often carries a UTF-8 BOM (U+FEFF); the parser
-                // would fail on the invisible leading character, so strip it.
-                jsonText = jsonText.TrimStart('\uFEFF');
+                // Pasted JSON often carries a UTF-8 BOM (U+FEFF), sometimes
+                // preceded by stray whitespace; both are invisible and
+                // insignificant at the start of a JSON text, so strip any
+                // combination of them.
+                jsonText = jsonText.TrimStart(' ', '\t', '\r', '\n', '\uFEFF');
+                // Whitespace/BOM-only input is equivalent to a blank cell and
+                // returns the fill value instead of a parser error.
+                if (jsonText.Length == 0)
+                    return new object[,] { { fill } };
                 var token = JsonConvert.DeserializeObject<JToken>(jsonText, new JsonSerializerSettings
                 {
                     // Keep date-like strings as text so cells receive the original

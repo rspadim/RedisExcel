@@ -86,6 +86,32 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void JSONToMatrix_WhitespaceBeforeBomIsTolerated()
+        {
+            // Pasted JSON can carry stray whitespace before the BOM (e.g. a
+            // leading space); both are insignificant and must be stripped.
+            var result = ExcelJson.RedisUDFJSONToMatrix(" \uFEFF[1,2]", "");
+            Assert.Equal(1, result.GetLength(0));
+            Assert.Equal(2, result.GetLength(1));
+            Assert.Equal(1L, result[0, 0]);
+            Assert.Equal(2L, result[0, 1]);
+        }
+
+        [Fact]
+        public void JSONToMatrix_WhitespaceOrBomOnlyReturnsFill()
+        {
+            // Input that trims down to nothing is equivalent to a blank cell
+            // and must return the fill value instead of a parser error.
+            var whitespace = ExcelJson.RedisUDFJSONToMatrix(" \t\r\n\uFEFF ", "vazio");
+            Assert.Equal(1, whitespace.GetLength(0));
+            Assert.Equal(1, whitespace.GetLength(1));
+            Assert.Equal("vazio", whitespace[0, 0]);
+
+            var empty = ExcelJson.RedisUDFJSONToMatrix("", "vazio");
+            Assert.Equal("vazio", empty[0, 0]);
+        }
+
+        [Fact]
         public void JSONToMatrix_ModeratelyDeepJsonIsAccepted()
         {
             // The Newtonsoft default MaxDepth is 64; the raised ceiling (256)

@@ -574,9 +574,21 @@ try {
     Check (Wait-CellText $udf 'B44' 'No change')             'UDF PublishIfChanged suppresses an unchanged payload'
     Invoke-RedisCli @('DEL', ' ') | Out-Null
 
-    # A polled GET topic must pick up a value changed after registration.
-    Invoke-RedisCli @('SET', "$KeyPrefix.key", 'hello_v2') | Out-Null
-    Check (Wait-CellText $rtd 'B4' 'hello_v2')               'RTD GET picks up a changed value'
+    # A polled GET topic must pick up a value changed after registration. The
+    # volatile UDF sheet rewrites {prefix}.key on every recalculation (row 4
+    # Set), so a recalculation triggered around the first push can revert the
+    # key ~1s after it was written; re-issue the SET until the RTD cell shows
+    # the new value (same pattern as Publish-Until-Cell).
+    $seen = $false
+    $readBack = ''
+    $b4Deadline = (Get-Date).AddSeconds(30)
+    while (-not $seen -and (Get-Date) -lt $b4Deadline) {
+        Invoke-RedisCli @('SET', "$KeyPrefix.key", 'hello_v2') | Out-Null
+        $readBack = (Invoke-RedisCli @('GET', "$KeyPrefix.key") | Out-String).Trim()
+        $seen = Wait-CellText $rtd 'B4' 'hello_v2' 3
+    }
+    Check $seen ("RTD GET picks up a changed value (last read back '" + $readBack + "')")
+    Invoke-RedisCli @('SET', "$KeyPrefix.key", 'hello_from_udf') | Out-Null
 
     if ($RealChannel) {
         Check (Wait-CellNotEmpty $rtd 'B17' 30)              'RTD SUB received live data from the real channel'
