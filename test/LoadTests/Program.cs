@@ -96,14 +96,24 @@ internal static class Program
             var publisher = pubConnection.GetSubscriber();
             var publishChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
             var publisherTasks = new Task[publishers];
+            // The manager applies the SkipRepeatedMessages dedup (consecutive
+            // identical payloads are skipped for literal channels), so a
+            // constant payload would be delivered only once. Rotate over a
+            // small precomputed set (the global counter makes every publish
+            // differ from the previous one) so the broadcast path is really
+            // exercised; the small set keeps the extra allocation bounded.
+            var payloadSet = new string[64];
+            for (int i = 0; i < payloadSet.Length; i++)
+                payloadSet[i] = "1234567890.12345#" + i;
+            int payloadIndex = -1;
             for (int p = 0; p < publishers; p++)
             {
                 publisherTasks[p] = Task.Run(() =>
                 {
-                    var payload = "1234567890.12345";
                     long local = 0;
                     while (!token.IsCancellationRequested)
                     {
+                        var payload = payloadSet[Interlocked.Increment(ref payloadIndex) & (payloadSet.Length - 1)];
                         // Fire-and-forget: generate pressure without waiting a round trip.
                         publisher.Publish(publishChannel, payload, CommandFlags.FireAndForget);
                         local++;
