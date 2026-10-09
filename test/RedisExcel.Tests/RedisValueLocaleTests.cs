@@ -35,6 +35,23 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ToRedisString_PassesThroughEmptyAndWhitespaceStrings()
+        {
+            // An explicit empty or whitespace-only cell is a valid Redis name,
+            // not a missing argument.
+            Assert.Equal("", RedisUDF.ToRedisString(""));
+            Assert.Equal("   ", RedisUDF.ToRedisString("   "));
+        }
+
+        [Fact]
+        public void ToRedisString_DateTime_UsesIso8601RoundTrip()
+        {
+            // "o" keeps DateTime values parseable for the JSON wrappers.
+            var value = new DateTime(2026, 10, 9, 14, 30, 15, 250, DateTimeKind.Utc);
+            Assert.Equal("2026-10-09T14:30:15.2500000Z", RedisUDF.ToRedisString(value));
+        }
+
+        [Fact]
         public void ToRedisString_ReturnsNullForExcelSentinels()
         {
             Assert.Null(RedisUDF.ToRedisString(ExcelMissing.Value));

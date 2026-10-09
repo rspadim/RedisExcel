@@ -38,10 +38,48 @@ namespace RedisExcel
             new ConcurrentDictionary<string, string>();
         // Last payload published per host/channel key, so PublishIfChanged can
         // skip a message that did not change since the last successful publish.
-        private static readonly ConcurrentDictionary<string, string> _lastPublishedMessages =
-            new ConcurrentDictionary<string, string>();
+        // Bounded LRU: the marker is only remembered after a publish that had
+        // readers, and concurrent check/publish/store must be atomic per key.
+        private static readonly PublishDedupCache _lastPublishedMessages =
+            new PublishDedupCache(AppConfig.Current.PublishDedupCacheSize);
 
-        private static string ChannelKey(string host, string channel) => $"{host}\u0001{channel}";
+        // Striped locks: PublishIfChanged serializes its check -> publish -> store
+        // sequence per host/channel key without a lock per key. The marker clears
+        // in ChannelLatest/ChannelUnsubscribe take the same stripe.
+        private const int PublishLockStripeCount = 64;
+        private static readonly object[] _publishLocks = CreatePublishLocks();
+
+        private static object[] CreatePublishLocks()
+        {
+            var locks = new object[PublishLockStripeCount];
+            for (int i = 0; i < locks.Length; i++)
+                locks[i] = new object();
+            return locks;
+        }
+
+        private static object PublishLock(string key)
+        {
+            int hash = key.GetHashCode() & 0x7FFFFFFF;
+            return _publishLocks[hash % _publishLocks.Length];
+        }
+
+        /// <summary>Registry key for a (host, channel) pair. The host length is
+        /// length-prefixed so hosts and channels that themselves contain the
+        /// separator cannot collide.</summary>
+        private static string ChannelKey(string host, string channel) => $"{host.Length}:{host}:{channel}";
+
+        /// <summary>Validates and returns a required scalar text argument (key,
+        /// hash key, field). Only truly missing cells (null / ExcelEmpty /
+        /// ExcelMissing) are rejected; an explicit empty string is a valid Redis
+        /// name, exactly like in the scalar write functions. Runs before any
+        /// Redis I/O so StackExchange.Redis' "null key" error is never surfaced.</summary>
+        internal static string RequireText(object value, string what)
+        {
+            string text = ToRedisString(value);
+            if (text == null)
+                throw new ArgumentException("a " + what + " is required");
+            return text;
+        }
 
         private static string ResolveHost(object optionalHost)
         {
@@ -106,6 +144,40 @@ namespace RedisExcel
             return pairs;
         }
 
+        /// <summary>Builds the SET batch entries from key/value cell pairs. Only
+        /// truly missing cells (ToRedisString returns null: null, ExcelMissing,
+        /// ExcelEmpty) are skipped; an explicit empty or whitespace-only cell is
+        /// a valid Redis name, exactly like in the scalar write functions.</summary>
+        internal static List<KeyValuePair<RedisKey, RedisValue>> CollectStringSetEntries(
+            IEnumerable<KeyValuePair<object, object>> pairs)
+        {
+            var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
+            foreach (var pair in pairs)
+            {
+                string key = ToRedisString(pair.Key);
+                if (key == null)
+                    continue;
+                entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, ToRedisString(pair.Value) ?? ""));
+            }
+            return entries;
+        }
+
+        /// <summary>Same filtering contract as <see cref="CollectStringSetEntries"/>
+        /// for HSET field/value pair ranges.</summary>
+        internal static List<HashEntry> CollectHashEntries(
+            IEnumerable<KeyValuePair<object, object>> pairs)
+        {
+            var entries = new List<HashEntry>();
+            foreach (var pair in pairs)
+            {
+                string field = ToRedisString(pair.Key);
+                if (field == null)
+                    continue;
+                entries.Add(new HashEntry(field, ToRedisString(pair.Value) ?? ""));
+            }
+            return entries;
+        }
+
         /// <summary>Coerces an Excel-friendly numeric flag: an integral number
         /// maps 0 to false and any other value to true. Returns false for
         /// non-integral or non-numeric values so the caller can reject them.</summary>
@@ -151,6 +223,10 @@ namespace RedisExcel
                 return s;
             if (value is bool b)
                 return b ? "true" : "false";
+            // ISO-8601 round-trip text so JSON wrappers can parse date/time
+            // values (only reachable programmatically, not from a cell).
+            if (value is DateTime dateTime)
+                return dateTime.ToString("o", CultureInfo.InvariantCulture);
             if (value is double d)
             {
                 // G15 keeps common values compact ("0.1" stays "0.1"); fall back to
@@ -222,6 +298,11 @@ namespace RedisExcel
                         listener.Close();
                         listener.Token?.Dispose();
                         _latestMessages.TryRemove(kv.Key, out _);
+                        // Drop the publish dedup marker with the listener so a
+                        // rejoining listener receives the next publish even when
+                        // the payload did not change.
+                        lock (PublishLock(key))
+                            _lastPublishedMessages.Remove(key);
                     }
                 }
                 if (logger.IsTraceEnabled)
@@ -254,7 +335,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
-                if (string.IsNullOrEmpty(channelStr))
+                if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
                 string key = ChannelKey(host, channelStr);
                 if (!_channelListeners.ContainsKey(key))
@@ -267,7 +348,15 @@ namespace RedisExcel
                                 return;
                             _latestMessages[key] = message ?? "";
                         }, origin: "UDF");
-                    if (!_channelListeners.TryAdd(key, listener))
+                    if (_channelListeners.TryAdd(key, listener))
+                    {
+                        // A freshly registered listener never saw the currently
+                        // remembered payload; drop the marker so the next publish
+                        // is delivered even when the payload did not change.
+                        lock (PublishLock(key))
+                            _lastPublishedMessages.Remove(key);
+                    }
+                    else
                     {
                         // Another thread registered first: close before disposing
                         // so this losing listener never writes.
@@ -313,25 +402,37 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
-                if (string.IsNullOrEmpty(channelStr))
+                if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
                 string messageStr = ToRedisString(message) ?? "";
                 string key = ChannelKey(host, channelStr);
                 // Re-publishing an identical payload is a no-op; the last
                 // successfully published payload is tracked per host/channel.
-                if (_lastPublishedMessages.TryGetValue(key, out var previous) &&
-                    string.Equals(previous, messageStr, StringComparison.Ordinal))
+                // Check -> publish -> store is serialized per key so concurrent
+                // recalculations cannot invert each other.
+                lock (PublishLock(key))
                 {
+                    if (_lastPublishedMessages.TryGet(key, out var previous) &&
+                        string.Equals(previous, messageStr, StringComparison.Ordinal))
+                    {
+                        if (logger.IsTraceEnabled)
+                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, host={host}, unchanged");
+                        return "No change";
+                    }
+                    var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
+                    long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
+                    // Remember the payload only when it was actually delivered;
+                    // with zero readers the marker is dropped, so the volatile
+                    // formula recalculates and retries the publish and a late
+                    // consumer is never starved by a publish it did not see.
+                    if (readers > 0)
+                        _lastPublishedMessages.Set(key, messageStr);
+                    else
+                        _lastPublishedMessages.Remove(key);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, host={host}, unchanged");
-                    return "No change";
+                        logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
+                    return readers > 0 ? $"{readers} readers(s)" : "No Readers";
                 }
-                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
-                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
-                _lastPublishedMessages[key] = messageStr;
-                if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
-                return readers > 0 ? $"{readers} readers(s)" : "No Readers";
             }
             catch (Exception ex)
             {
@@ -366,7 +467,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = ToRedisString(channel);
-                if (string.IsNullOrEmpty(channelStr))
+                if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 string messageStr = ToRedisString(message) ?? "";
@@ -443,7 +544,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var value = GetDb(host).StringGet(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFGet: key={keyStr}, value={value}, host={host}");
@@ -465,7 +566,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var type = GetDb(host).KeyType(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFType: key={keyStr}, type={type}, host={host}");
@@ -499,8 +600,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
-                string newKeyStr = ToRedisString(newKey);
+                string keyStr = RequireText(key, "key");
+                string newKeyStr = RequireText(newKey, "new key");
                 GetDb(host).KeyRename(keyStr, newKeyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={host}");
@@ -530,7 +631,7 @@ namespace RedisExcel
                 // Surface conversion errors to Excel instead of storing them as the value.
                 if (json.StartsWith("Error:", StringComparison.Ordinal))
                     return json;
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 GetDb(host).StringSet(keyStr, json);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={host}");
@@ -553,7 +654,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
                 // A null RedisValue would issue DEL instead of storing an empty string.
                 GetDb(host).StringSet(keyStr, valueStr ?? "");
@@ -584,14 +685,10 @@ namespace RedisExcel
                 var valueCells = FlattenRowMajor(values);
                 if (keyCells.Count == 0 || keyCells.Count != valueCells.Count)
                     throw new ArgumentException("keys and values must have the same number of cells");
-                var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
+                var pairs = new List<KeyValuePair<object, object>>(keyCells.Count);
                 for (int i = 0; i < keyCells.Count; i++)
-                {
-                    var key = ToRedisString(keyCells[i]);
-                    var value = ToRedisString(valueCells[i]);
-                    if (!string.IsNullOrWhiteSpace(key))
-                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
-                }
+                    pairs.Add(new KeyValuePair<object, object>(keyCells[i], valueCells[i]));
+                var entries = CollectStringSetEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
                 GetDb(host).StringSet(entries.ToArray());
@@ -618,14 +715,7 @@ namespace RedisExcel
                 if (keyValuePairs == null)
                     throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(keyValuePairs);
-                var entries = new List<KeyValuePair<RedisKey, RedisValue>>();
-                foreach (var pair in pairs)
-                {
-                    var key = ToRedisString(pair.Key);
-                    var value = ToRedisString(pair.Value);
-                    if (!string.IsNullOrWhiteSpace(key))
-                        entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, value ?? ""));
-                }
+                var entries = CollectStringSetEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
                 GetDb(host).StringSet(entries.ToArray());
@@ -779,7 +869,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var ttl = GetDb(host).KeyTimeToLive(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFTTL: key={keyStr}, ttl={ttl}, host={host}");
@@ -871,7 +961,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var exists = GetDb(host).KeyExists(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExists: key={keyStr}, exists={exists}");
@@ -893,7 +983,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 long deleted = GetDb(host).KeyDelete(keyStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFDel: key={keyStr}, deleted={deleted}, host={host}");
@@ -920,7 +1010,7 @@ namespace RedisExcel
                 long ttl = ToInt64Invariant(ttlSeconds);
                 if (ttl <= 0)
                     throw new ArgumentException("ttl must be a positive number of seconds");
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
                 // A null RedisValue would issue DEL instead of storing an empty string.
                 GetDb(host).StringSet(keyStr, valueStr ?? "", TimeSpan.FromSeconds(ttl));
@@ -948,7 +1038,7 @@ namespace RedisExcel
                 long ttl = ToInt64Invariant(ttlSeconds);
                 if (ttl <= 0)
                     return "Error: ttl must be a positive number of seconds";
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 bool expired = GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={host}");
@@ -970,7 +1060,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 long value = GetDb(host).StringIncrement(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncr: key={keyStr}, value={value}, host={host}");
@@ -994,7 +1084,7 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 long incr = ToInt64Invariant(increment);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 long value = GetDb(host).StringIncrement(keyStr, incr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, value={value}, host={host}");
@@ -1071,8 +1161,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string hashKeyStr = ToRedisString(hashKey);
-                string fieldStr = ToRedisString(field);
+                string hashKeyStr = RequireText(hashKey, "hash key");
+                string fieldStr = RequireText(field, "field");
                 string valueStr = ToRedisString(value);
                 // A null RedisValue would issue HDEL instead of storing an empty string.
                 GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "");
@@ -1100,17 +1190,10 @@ namespace RedisExcel
                 if (fieldValuePairs == null)
                     throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(fieldValuePairs);
-                var entries = new List<HashEntry>();
-                foreach (var pair in pairs)
-                {
-                    var field = ToRedisString(pair.Key);
-                    var value = ToRedisString(pair.Value);
-                    if (!string.IsNullOrWhiteSpace(field))
-                        entries.Add(new HashEntry(field, value ?? ""));
-                }
+                var entries = CollectHashEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
-                string hashKeyStr = ToRedisString(hashKey);
+                string hashKeyStr = RequireText(hashKey, "hash key");
                 GetDb(host).HashSet(hashKeyStr, entries.ToArray());
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={host}");
@@ -1133,8 +1216,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string hashKeyStr = ToRedisString(hashKey);
-                string fieldStr = ToRedisString(field);
+                string hashKeyStr = RequireText(hashKey, "hash key");
+                string fieldStr = RequireText(field, "field");
                 var value = GetDb(host).HashGet(hashKeyStr, fieldStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashGet: {hashKeyStr}[{fieldStr}] = {value}, host={host}");
@@ -1156,7 +1239,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string hashKeyStr = ToRedisString(hashKey);
+                string hashKeyStr = RequireText(hashKey, "hash key");
                 var all = GetDb(host).HashGetAll(hashKeyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={host}");
@@ -1210,8 +1293,8 @@ namespace RedisExcel
                     }
                 }
                 // One round trip for all hashes instead of one command per key.
+                string fieldStr = RequireText(field, "field");
                 var batch = GetDb(host).CreateBatch();
-                string fieldStr = ToRedisString(field);
                 var tasks = keysList.Select(k => batch.HashGetAsync(k, fieldStr)).ToArray();
                 batch.Execute();
                 for (int i = 0; i < tasks.Length; i++)
@@ -1237,8 +1320,8 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string hashKeyStr = ToRedisString(hashKey);
-                string fieldStr = ToRedisString(field);
+                string hashKeyStr = RequireText(hashKey, "hash key");
+                string fieldStr = RequireText(field, "field");
                 long deleted = GetDb(host).HashDelete(hashKeyStr, fieldStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}] deleted={deleted}, host={host}");
@@ -1261,7 +1344,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 long length = GetDb(host).ListRightPush(keyStr, ToRedisString(value) ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={host}");
@@ -1284,7 +1367,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 long length = GetDb(host).ListLeftPush(keyStr, ToRedisString(value) ?? "");
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={host}");
@@ -1308,7 +1391,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var values = GetDb(host).ListRange(keyStr, ToInt64Invariant(start), ToInt64Invariant(stop));
                 if (values.Length == 0)
                 {
@@ -1339,7 +1422,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var value = GetDb(host).ListRightPop(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopRight: key={keyStr}, value={value}, host={host}");
@@ -1361,7 +1444,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var value = GetDb(host).ListLeftPop(keyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopLeft: key={keyStr}, value={value}, host={host}");
@@ -1384,7 +1467,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
                 long added = GetDb(host).SetAdd(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
@@ -1408,7 +1491,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 string valueStr = ToRedisString(value);
                 long removed = GetDb(host).SetRemove(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
@@ -1431,7 +1514,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string keyStr = ToRedisString(key);
+                string keyStr = RequireText(key, "key");
                 var members = GetDb(host).SetMembers(keyStr);
                 if (members.Length == 0)
                 {
@@ -1457,6 +1540,110 @@ namespace RedisExcel
         {
             UpdateCheck.EnsureFresh(TimeSpan.FromHours(6));
             return UpdateCheck.IsUpdateAvailable();
+        }
+    }
+
+    /// <summary>
+    /// Bounded least-recently-used cache used by PublishIfChanged to remember the
+    /// last delivered payload per host/channel without growing without limit.
+    /// Entries are evicted from the cold end when the configured capacity
+    /// (PublishDedupCacheSize) is exceeded. Each operation is serialized
+    /// internally, so different keys (which may use different striped locks in
+    /// RedisUDF) can never corrupt the shared recency list; the per-key
+    /// check -> publish -> store sequence is still protected by RedisUDF's
+    /// striped lock.
+    /// </summary>
+    internal sealed class PublishDedupCache
+    {
+        private sealed class Entry
+        {
+            public readonly string Key;
+            public string Value;
+
+            public Entry(string key, string value)
+            {
+                Key = key;
+                Value = value;
+            }
+        }
+
+        private readonly int _capacity;
+        private readonly Dictionary<string, LinkedListNode<Entry>> _entries;
+        private readonly LinkedList<Entry> _recent = new LinkedList<Entry>();
+        private readonly object _sync = new object();
+
+        public PublishDedupCache(int capacity)
+        {
+            if (capacity <= 0)
+                throw new ArgumentOutOfRangeException(nameof(capacity), "capacity must be positive");
+            _capacity = capacity;
+            // The cap can be configured very large; only use a small initial
+            // hint so a typo cannot preallocate a huge dictionary at add-in start.
+            _entries = new Dictionary<string, LinkedListNode<Entry>>(Math.Min(capacity, 1024), StringComparer.Ordinal);
+        }
+
+        public int Count
+        {
+            get
+            {
+                lock (_sync)
+                    return _entries.Count;
+            }
+        }
+
+        /// <summary>Looks up the value and marks the entry as most recently used.</summary>
+        public bool TryGet(string key, out string value)
+        {
+            lock (_sync)
+            {
+                if (!_entries.TryGetValue(key, out var node))
+                {
+                    value = null;
+                    return false;
+                }
+                _recent.Remove(node);
+                _recent.AddFirst(node);
+                value = node.Value.Value;
+                return true;
+            }
+        }
+
+        /// <summary>Adds or updates the value, evicting the least recently used
+        /// entry when the cache is over capacity.</summary>
+        public void Set(string key, string value)
+        {
+            lock (_sync)
+            {
+                if (_entries.TryGetValue(key, out var existing))
+                {
+                    existing.Value.Value = value;
+                    _recent.Remove(existing);
+                    _recent.AddFirst(existing);
+                    return;
+                }
+                var entry = new Entry(key, value);
+                var node = _recent.AddFirst(entry);
+                _entries.Add(key, node);
+                if (_entries.Count > _capacity)
+                {
+                    var oldest = _recent.Last;
+                    _recent.RemoveLast();
+                    _entries.Remove(oldest.Value.Key);
+                }
+            }
+        }
+
+        /// <summary>Removes the entry if present; returns whether it existed.</summary>
+        public bool Remove(string key)
+        {
+            lock (_sync)
+            {
+                if (!_entries.TryGetValue(key, out var node))
+                    return false;
+                _entries.Remove(key);
+                _recent.Remove(node);
+                return true;
+            }
         }
     }
 }

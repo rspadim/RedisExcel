@@ -18,5 +18,6 @@
   },
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
-  "CoalesceRealtimeUpdates": true
+  "CoalesceRealtimeUpdates": true,
+  "PublishDedupCacheSize": 10000
 }

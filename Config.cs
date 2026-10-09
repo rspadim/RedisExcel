@@ -43,6 +43,9 @@ namespace RedisExcel
         /// ExcelUpdateRateMs window instead of one per incoming message.
         /// Default on (the more performant option).</summary>
         public bool CoalesceRealtimeUpdates { get; set; } = true;
+        /// <summary>Maximum number of host/channel entries remembered by the
+        /// PublishIfChanged deduplication cache (LRU). Default 10000.</summary>
+        public int PublishDedupCacheSize { get; set; } = 10000;
     }
 
     /// <summary>
@@ -61,9 +64,18 @@ namespace RedisExcel
 
         public static ConfigRoot Current => _current.Value;
 
-        private static ConfigRoot Load()
+        private static ConfigRoot Load() => LoadFromPaths(CandidatePaths());
+
+        /// <summary>
+        /// Loads the first existing candidate path. A file that exists but cannot
+        /// be parsed stops the search: the process falls back to safe defaults
+        /// instead of silently using a lower-priority file. When no candidate
+        /// exists, the legacy no-file defaults apply (1000ms Excel flush timer).
+        /// Extracted for unit tests.
+        /// </summary>
+        internal static ConfigRoot LoadFromPaths(IEnumerable<string> paths)
         {
-            foreach (var path in CandidatePaths())
+            foreach (var path in paths)
             {
                 try
                 {
@@ -126,6 +138,7 @@ namespace RedisExcel
             if (config.UDF.timeout <= 0) config.UDF.timeout = 1000;
             if (config.RTD.RedisUpdateRateMs <= 0) config.RTD.RedisUpdateRateMs = 1000;
             if (config.RTD.ExcelUpdateRateMs <= 0) config.RTD.ExcelUpdateRateMs = 100;
+            if (config.PublishDedupCacheSize <= 0) config.PublishDedupCacheSize = 10000;
             return config;
         }
 
