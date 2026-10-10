@@ -274,6 +274,28 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void LoadFromPaths_OneBadValue_KeepsEveryOtherValue()
+        {
+            using (var temp = new TempFiles())
+            {
+                // A wrong-typed/unknown-enum value must NOT discard the rest of the
+                // file: that silently repointed the host to localhost and changed
+                // the write mode.
+                string partlyBad = temp.Write("partly-bad.json",
+                    "{\"RTD\":{\"host\":\"myhost\",\"ExcelUpdateStyle\":\"Bogus\",\"RedisUpdateRateMs\":42}," +
+                    "\"SyncWrite\":\"sync\",\"PublishDedupCacheSize\":9,\"UpdateCheck\":\"no\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("myhost", config.RTD.host);            // kept
+                Assert.Equal(42, config.RTD.RedisUpdateRateMs);      // kept
+                Assert.Equal("sync", config.SyncWrite);              // kept
+                Assert.Equal(9, config.PublishDedupCacheSize);       // kept
+                Assert.Equal(ENUMExcelUpdateStyle.Automatic, config.RTD.ExcelUpdateStyle); // bad value -> default
+            }
+        }
+
+        [Fact]
         public void LoadFromPaths_ParsesSyncWriteAndAsyncWrites()
         {
             using (var temp = new TempFiles())

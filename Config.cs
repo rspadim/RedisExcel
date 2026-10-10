@@ -88,6 +88,28 @@ namespace RedisExcel
         private static ConfigRoot Load() => LoadFromPaths(CandidatePaths());
 
         /// <summary>
+        /// Deserializes a configuration file tolerating per-value mistakes: a single
+        /// wrong-typed or unknown-enum value is skipped (logged through
+        /// <paramref name="onError"/>) and the rest of the file is kept, instead of
+        /// throwing and silently discarding every configured value (which used to
+        /// repoint the host to localhost and change the write mode). A structural
+        /// failure (not JSON) still throws to the caller's catch and falls back to
+        /// the safe defaults.
+        /// </summary>
+        internal static ConfigRoot ParseTolerant(string json, Action<Exception> onError)
+        {
+            var settings = new JsonSerializerSettings
+            {
+                Error = (_, e) =>
+                {
+                    onError?.Invoke(e.ErrorContext.Error);
+                    e.ErrorContext.Handled = true;
+                }
+            };
+            return JsonConvert.DeserializeObject<ConfigRoot>(json, settings);
+        }
+
+        /// <summary>
         /// Loads the first existing candidate path. A file that exists but cannot
         /// be parsed stops the search: the process falls back to safe defaults
         /// instead of silently using a lower-priority file. When no candidate
@@ -108,7 +130,9 @@ namespace RedisExcel
                         // First existing candidate wins: if it exists but cannot be
                         // parsed, stop here with safe defaults instead of silently
                         // falling through to a lower-priority file.
-                        var config = JsonConvert.DeserializeObject<ConfigRoot>(File.ReadAllText(path));
+                        string json = File.ReadAllText(path);
+                        var config = ParseTolerant(json, ex =>
+                            logger.Error(ex, $"AppConfig: value ignored in {path} (type mismatch), keeping the rest of the file"));
                         if (config != null)
                         {
                             logger.Info($"AppConfig: loaded configuration from {path}");
