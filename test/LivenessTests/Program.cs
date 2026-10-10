@@ -301,7 +301,11 @@ namespace RedisExcel.LivenessTests
                 return;
             }
 
+            // Clear the running max gap right before the attack so the gap
+            // measured after release is specific to THIS starvation window.
+            Pool.Reset();
             long poolTicksAtStarveStart = Pool.Ticks;
+            int attackMs = Quick ? 2500 : 6000;
 
             // Backlog enqueued while starved: its continuations need pool threads.
             int backlog = Quick ? 60 : 150;
@@ -332,7 +336,7 @@ namespace RedisExcel.LivenessTests
 
             churn.Start();
             pubs.Start();
-            Thread.Sleep(Quick ? 2500 : 6000);
+            Thread.Sleep(attackMs);
             churn.StopAndJoin();
             pubs.StopAndJoin();
 
@@ -366,8 +370,15 @@ namespace RedisExcel.LivenessTests
             Metric("A", "deliveryResumeMs", resumeMs);
             Metric("A", "queueDrainMs", drainMs);
 
-            Check("A.attack-bit", poolTicksDuringAttack == 0 && queuePendingAtAttackEnd > 0,
-                "pool ticks during attack=" + poolTicksDuringAttack + " queued items stuck=" + queuePendingAtAttackEnd + " " + poolGapAfterRelease.ToString("0.0", Inv) + "ms gap measured after release");
+            // The pool heartbeat's continuation only runs on a pool thread; while
+            // the six blocked sleepers hold the clamped (4,4) pool it cannot
+            // tick. The first gap measured AFTER release therefore spans the
+            // whole attack window: requiring it to reach ~the window is positive
+            // proof the pool was actually starved (a counter stuck at 0 could
+            // also mean the heartbeat thread died).
+            Check("A.attack-bit", poolTicksDuringAttack == 0 && queuePendingAtAttackEnd > 0
+                    && poolGapAfterRelease >= attackMs - 500,
+                "pool ticks during attack=" + poolTicksDuringAttack + " queued items stuck=" + queuePendingAtAttackEnd + " " + poolGapAfterRelease.ToString("0.0", Inv) + "ms gap measured after release (window " + attackMs + "ms)");
             Check("A.dedicated-heartbeat", Proc.MaxGapMs < StuckBoundMs, "proc max gap=" + Fmt(Proc.MaxGapMs) + "ms");
             Check("A.entrypoints-not-stuck", watchdogDuring < StuckBoundMs, "watchdog max iteration=" + Fmt(watchdogDuring) + "ms");
             Check("A.delivery-flows-during-pool-starvation", deliveryGapDuring >= 0 && deliveryGapDuring < StuckBoundMs,
@@ -1533,14 +1544,34 @@ namespace RedisExcel.LivenessTests
 
         private static void ResourceStabilityChecks(string phase)
         {
+            // A throwing RedisRuntime is a FAILURE, not a clean state: returning
+            // true here would let a genuinely broken runtime (e.g. "shutting
+            // down" InvalidOperationException) pass the leak check silently.
+            // Capture and surface the exception text so the cause is diagnosable.
+            Exception runtimeError = null;
             long runtimeZero = WaitUntil(() =>
             {
-                try { return RedisRuntime.Subscriptions.ListenerCount == 0; } catch { return true; }
+                try
+                {
+                    runtimeError = null;
+                    return RedisRuntime.Subscriptions.ListenerCount == 0;
+                }
+                catch (Exception ex)
+                {
+                    runtimeError = ex;
+                    return false;
+                }
             }, 10000);
             int runtimeListeners = -1;
-            try { runtimeListeners = RedisRuntime.Subscriptions.ListenerCount; } catch { }
-            Check(phase + ".runtime-listeners-zero", runtimeZero >= 0,
-                "RedisRuntime.Subscriptions.ListenerCount=" + runtimeListeners);
+            string runtimeReadError = null;
+            try { runtimeListeners = RedisRuntime.Subscriptions.ListenerCount; }
+            catch (Exception ex) { runtimeReadError = ex.GetType().Name + ": " + ex.Message; }
+            string runtimeDetail = runtimeError != null
+                ? " runtime threw " + runtimeError.GetType().Name + ": " + runtimeError.Message
+                : (runtimeReadError != null ? " runtime threw " + runtimeReadError : "");
+            Check(phase + ".runtime-listeners-zero", runtimeZero >= 0 && runtimeError == null,
+                "RedisRuntime.Subscriptions.ListenerCount=" + runtimeListeners
+                + " (runtimeAccess=" + (runtimeError == null && runtimeReadError == null ? "ok" : "threw") + ")" + runtimeDetail);
 
             foreach (string channel in TrackedChannels.ToArray())
             {

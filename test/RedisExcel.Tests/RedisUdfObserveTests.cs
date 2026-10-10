@@ -73,7 +73,8 @@ namespace RedisExcel.Tests
             var order = new List<string>();
             var firstStarted = new ManualResetEventSlim(false);
             var releaseFirst = new ManualResetEventSlim(false);
-            var secondStarted = new ManualResetEventSlim(false);
+            bool firstFinished = false;
+            bool secondObservedFirstFinished = false;
 
             var first = new RedisWriteObservable(host, () =>
             {
@@ -83,13 +84,17 @@ namespace RedisExcel.Tests
                 releaseFirst.Wait(5000);
                 lock (order)
                     order.Add("first-end");
+                Volatile.Write(ref firstFinished, true);
                 return (object)"first";
             });
             var second = new RedisWriteObservable(host, () =>
             {
                 lock (order)
                     order.Add("second");
-                secondStarted.Set();
+                // Deterministic serialization signal: if the shared host queue
+                // let the second write start before the first ended, the first
+                // would still be blocked on releaseFirst and this reads false.
+                secondObservedFirstFinished = Volatile.Read(ref firstFinished);
                 return (object)"second";
             });
 
@@ -104,10 +109,6 @@ namespace RedisExcel.Tests
                 // shared host queue must hold it back until the first ends.
                 using (second.Subscribe(secondObserver))
                 {
-                    Assert.False(
-                        secondStarted.Wait(200),
-                        "The second write started while the first was still running.");
-
                     releaseFirst.Set();
 
                     Assert.True(firstObserver.WaitCompleted(), "The first observable never completed.");
@@ -115,6 +116,8 @@ namespace RedisExcel.Tests
                 }
             }
 
+            Assert.True(secondObservedFirstFinished,
+                "The second write ran before the first finished (shared host queue did not serialize).");
             Assert.Equal(new[] { "first-start", "first-end", "second" }, order);
             Assert.Equal(new object[] { "first" }, firstObserver.Values);
             Assert.Equal(new object[] { "second" }, secondObserver.Values);

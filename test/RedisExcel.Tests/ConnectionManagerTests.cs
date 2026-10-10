@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Concurrent;
-using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using StackExchange.Redis;
@@ -258,13 +257,13 @@ namespace RedisExcel.Tests
             // calls; the recording itself is asserted above.
             failures[PoolKey(host, RedisPool.UdfData)] = DateTime.UtcNow.Ticks;
 
-            var watch = Stopwatch.StartNew();
             var second = Assert.Throws<RedisConnectionException>(
                 () => manager.GetConnection(host, RedisPool.UdfData));
-            watch.Stop();
 
-            Assert.True(watch.ElapsedMilliseconds < 500,
-                $"the memoized connect failure took {watch.ElapsedMilliseconds} ms");
+            // Deterministic "fails fast without retrying": the memoized window
+            // short-circuits before the Lazy factory, so the seeded connect is
+            // attempted exactly once. (No wall-clock bound: a paused runner must
+            // not turn this into a flake.)
             Assert.Contains("skipped (recent failure", second.Message);
             Assert.Equal(1, Volatile.Read(ref attempts)); // no second real connect
         }

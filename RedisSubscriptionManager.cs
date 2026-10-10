@@ -56,6 +56,24 @@ namespace RedisExcel
         private long _nextListenerId;
         private volatile bool _disposed;
 
+        /// <summary>Test-only override of <see cref="ConfigRoot.SkipRepeatedMessages"/>
+        /// (null = use the process configuration). The production sources are
+        /// compiled directly into the smoke/unit test projects, so this seam
+        /// lets those tests pin the duplicate-suppression branch
+        /// deterministically instead of depending on a machine-local
+        /// RedisExcel.json. Must be set before the manager is constructed
+        /// (the flag is captured per instance).</summary>
+#pragma warning disable 0649 // assigned only by the linked test sources
+        internal static bool? SkipRepeatedOverrideForTests;
+#pragma warning restore 0649
+
+        private static bool SkipRepeatedEnabled =>
+            SkipRepeatedOverrideForTests ?? AppConfig.Current.SkipRepeatedMessages;
+
+        /// <summary>Effective duplicate-suppression flag after applying the test
+        /// override; test-only, so the smoke test can branch deterministically.</summary>
+        internal static bool SkipRepeatedEnabledForTests => SkipRepeatedEnabled;
+
         // Per-key stripes serializing the network handoff (subscribe and
         // unsubscribe) ACROSS channel-state generations for the same registry
         // key. StackExchange.Redis reuses its internal Subscription objects per
@@ -74,7 +92,7 @@ namespace RedisExcel
         public RedisSubscriptionManager(RedisConnectionManager connections)
         {
             _connections = connections ?? throw new ArgumentNullException(nameof(connections));
-            _skipRepeated = AppConfig.Current.SkipRepeatedMessages;
+            _skipRepeated = SkipRepeatedEnabled;
         }
 
         /// <summary>Total number of channel states (literal and pattern).</summary>

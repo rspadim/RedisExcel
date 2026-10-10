@@ -273,32 +273,34 @@ namespace RedisExcel.Tests
             string host = UniqueHost();
             using (var firstStarted = new ManualResetEventSlim(false))
             using (var releaseFirst = new ManualResetEventSlim(false))
-            using (var secondStarted = new ManualResetEventSlim(false))
             {
+                bool firstFinished = false;
                 Task<object> first = RedisUdfAsync.Enqueue(host, () =>
                 {
                     firstStarted.Set();
                     releaseFirst.Wait(5000);
+                    Volatile.Write(ref firstFinished, true);
                     return (object)"first";
                 });
                 Assert.True(firstStarted.Wait(5000), "The first item never started.");
 
+                bool secondRanAfterFirstFinished = false;
                 Task<object> second = RedisUdfAsync.Enqueue(host, () =>
                 {
-                    secondStarted.Set();
+                    // Deterministic serialization signal: if the per-host FIFO is
+                    // broken this runs (and records) while the first is blocked.
+                    secondRanAfterFirstFinished = Volatile.Read(ref firstFinished);
                     return (object)"second";
                 });
-
-                // The second item must stay queued behind the blocked first.
-                Assert.False(secondStarted.Wait(200), "The second item started while the first was still running.");
 
                 releaseFirst.Set();
                 await WaitCompleted(first);
                 await WaitCompleted(second);
 
+                Assert.True(secondRanAfterFirstFinished,
+                    "The second item ran before the first finished (per-host serialization broken).");
                 Assert.Equal("first", await first);
                 Assert.Equal("second", await second);
-                Assert.True(secondStarted.IsSet);
             }
         }
 

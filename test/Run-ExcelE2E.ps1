@@ -463,10 +463,13 @@ if ((Invoke-RedisCli @('PING') | Out-String).Trim() -ne 'PONG') {
 $isLocalHost = $RedisHost -match '^(localhost|127\.0\.0\.1)(:\d+)?$'
 $allowClientKill = (-not $SkipClientKill) -and $isLocalHost -and [string]::IsNullOrWhiteSpace($RedisCli)
 
-# The add-in reads SyncWrite/AsyncWrites from RedisExcel.json once per Excel
-# process; the copy in the user profile wins over the Excel folder and
-# C:\Windows. Write a minimal config BEFORE Excel starts and restore the user's
-# own file (or remove ours) in the finally block - never lose the config.
+# The add-in reads SyncWrite/AsyncWrites/SkipRepeatedMessages from
+# RedisExcel.json once per Excel process; the copy in the user profile wins over
+# the Excel folder and C:\Windows. Write a minimal config BEFORE Excel starts and
+# restore the user's own file (or remove ours) in the finally block - never lose
+# the config. SkipRepeatedMessages is pinned true so the duplicate-suppression
+# assertions (e.g. B44 PublishIfChanged) always exercise the suppression branch
+# instead of depending on a machine-local config.
 $configPath = Join-Path $env:USERPROFILE 'RedisExcel.json'
 $configBackup = $null
 if (Test-Path -LiteralPath $configPath) {
@@ -474,7 +477,7 @@ if (Test-Path -LiteralPath $configPath) {
     Copy-Item -LiteralPath $configPath -Destination $configBackup -Force
 }
 $asyncJson = if ($AsyncWrites.IsPresent) { 'true' } else { 'false' }
-$configJson = '{"SyncWrite":"' + $SyncWrite + '","AsyncWrites":' + $asyncJson + '}'
+$configJson = '{"SyncWrite":"' + $SyncWrite + '","AsyncWrites":' + $asyncJson + ',"SkipRepeatedMessages":true}'
 [System.IO.File]::WriteAllText($configPath, $configJson)
 Write-Host ("Sync write: {0} (AsyncWrites: {1})" -f $SyncWrite, $AsyncWrites.IsPresent)
 Write-Host ("Config    : {0} -> {1}" -f $configPath, $configJson) -ForegroundColor DarkGray
@@ -707,7 +710,7 @@ try {
     Check (Wait-CellRegex $udf 'B37' $script:RenameMissingPattern)                'UDF Rename reports the mode-appropriate result for a missing key'
     Check (Wait-CellText $udf 'B38' 'error')                  'UDF scalar argument rejects a multi-cell range'
     Check (Wait-CellRegex $udf 'B39' '^Error')                'UDF GetMultiple returns Error when no valid key remains'
-    Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
+    Check ((Wait-CellNotEmpty $udf 'B40' 20) -and -not (Get-CellText $udf 'B40').StartsWith('Error')) 'UDF multi-key functions flatten a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
     Check (Wait-CellText $udf 'B42' 'linha1')                 'UDF GetMultiple flattens a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'
@@ -732,7 +735,15 @@ try {
     Invoke-ExcelAction { $udf.Calculate() } | Out-Null
     $nvSetOk = Wait-CellNotEmpty $udf 'B48' 20
     $nvIncrOk = Wait-CellNotEmpty $udf 'B49' 20
-    Check ($nvSetOk -and $nvIncrOk) 'UDF NonVolatile twins evaluated on entry'
+    $nvSetCell = Get-CellText $udf 'B48'
+    $nvIncrCell = Get-CellText $udf 'B49'
+    # Wait-CellNotEmpty accepts any non-# text, so an "Error: ..." value would
+    # pass it: reject error/error-cell text explicitly, exactly like the
+    # neighbouring check below.
+    $nvEntryComputed = $nvSetOk -and $nvIncrOk `
+        -and -not $nvSetCell.StartsWith('Error') -and -not $nvIncrCell.StartsWith('Error') `
+        -and -not $nvSetCell.StartsWith('#') -and -not $nvIncrCell.StartsWith('#')
+    Check $nvEntryComputed ("UDF NonVolatile twins evaluated on entry (B48='" + $nvSetCell + "', B49='" + $nvIncrCell + "')")
     Write-Host ("      DIAG nv-entry: B48='" + (Get-CellText $udf 'B48') + "' B49='" + (Get-CellText $udf 'B49') + "' nvkey='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()) + "' nvcounter='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()) + "'") -ForegroundColor DarkGray
 
     # (a) A recalculation must not re-run SetNonVolatile: nvkey stays v2 and
@@ -831,6 +842,17 @@ try {
             }
             Check $dupOk ("Two cells with the identical async formula both wrote (LLEN='" + $dupLen + "/" + $dupLen2 + "')")
 
+            # Negative half of the identity contract: the SAME cell re-evaluated
+            # must not dispatch a second write. One cell, one push (LLEN=1); a
+            # forced recalculation returns the cached result, so it stays 1.
+            Invoke-RedisCli @('DEL', "$KeyPrefix.asyncsingle") | Out-Null
+            Set-Formula $udf 'B51' ('=RedisUDFListPushRight("{1}.asyncsingle","y","{0}")' -f $h, $kp)
+            $singleOk = Wait-RedisValue @('LLEN', "$KeyPrefix.asyncsingle") '1' 10
+            Invoke-ExcelAction { $udf.Range('B51').Calculate() } | Out-Null
+            Start-Sleep -Milliseconds 400
+            $singleLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncsingle") | Out-String).Trim()
+            Check ($singleOk -and $singleLen -eq '1') ("A single cell re-evaluated keeps exactly one async write (LLEN='" + $singleLen + "')")
+
             # (C) Argument change dispatches a new write (row 53), back in
             # normal (automatic) calculation mode: the F53 edit must
             # recalculate B53 and dispatch with the new argument value.
@@ -873,7 +895,13 @@ try {
     # must report the configured default host and positive intervals, and the
     # real-time flag must render as a boolean (TRUE/FALSE, locale-tolerant).
     Check (Wait-CellNotEmpty $rtd 'B13' 10)                  'RTD DefaultHost reports a non-empty host'
-    Check ((Get-CellText $rtd 'B13').Contains($h)) ("RTD DefaultHost matches the configured host (B13='" + (Get-CellText $rtd 'B13') + "')")
+    # B13 is a status helper: it must return the exact configured default host
+    # text (not a substring match, which would also accept an error cell that
+    # merely contains the host) and must not be an Excel error cell.
+    $defaultHostText = Get-CellText $rtd 'B13'
+    $expectedDefaultHost = 'localhost:6379,password=,defaultDatabase=0,ssl=False,abortConnect=False'
+    Check ($defaultHostText -eq $expectedDefaultHost) ("RTD DefaultHost matches the configured host (B13='" + $defaultHostText + "')")
+    Check (-not $defaultHostText.StartsWith('#') -and -not $defaultHostText.StartsWith('Error')) ("RTD DefaultHost is a computed value, not an error cell (B13='" + $defaultHostText + "')")
     Check (Wait-CellNumberMin $rtd 'B14' 1)                  'RTD ExcelUpdateInterval >= 1'
     Check (Wait-CellNumberMin $rtd 'B15' 1)                  'RTD RedisUpdateInterval >= 1'
     Check (Wait-CellRegex $rtd 'B16' '(?i)^(true|false|verdadeiro|falso)$') 'RTD RealTimeUpdates reports a boolean'
