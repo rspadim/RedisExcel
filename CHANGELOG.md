@@ -13,16 +13,24 @@
   continuation, so no thread-pool thread is held per pending write (a large
   same-host burst no longer throttles the pool). Cell behavior is unchanged:
   pending `#N/A`, exactly one write per registered call, cached result on the
-  delivery re-call, and the usual `Error: ...` text for failures.
+  delivery re-call, and the usual `Error: ...` text for failures. The dedup is
+  per registered call, not exactly-once across the sheet lifetime: after Excel
+  detaches the topic (e.g. an unchanged recalculation) the next evaluation
+  re-registers the call and a volatile write is issued again. A duplicate
+  `Subscribe` on the same observable is ignored (one-shot guard).
 
 ### Tests
 
 - Offline unit tests for `RedisWriteObservable`: single result delivery plus
   completion, work exception mapped to the `Error: ...` text, per-host serial
-  order in submission order, different hosts running independently, and the
-  no-op dispose still completing a detached write.
-- E2E async mode checks the pending marker and single delivery (the write
-  reaches Redis while the cell is pending; settling does not re-run it).
+  order in submission order, different hosts running independently, the
+  no-op dispose still completing a detached write (including while queued),
+  the one-shot subscribe guard and the synchronous enqueue.
+- E2E async mode checks the pending marker (`WorksheetFunction.IsNA`, so the
+  check is locale-independent), single delivery (the write reaches Redis while
+  the cell is pending; settling does not re-run it), two identical formulas in
+  different cells both writing, and an argument change dispatching the new
+  write.
 
 ## v1.3.0
 

@@ -68,6 +68,39 @@ namespace RedisExcel.Tests
             public bool WaitCompleted(int timeoutMs = 5000) => _completed.Wait(timeoutMs);
         }
 
+        /// <summary>
+        /// IExcelObserver test double whose OnNext always throws: pins that the
+        /// delivery path swallows an observer failure and still completes.
+        /// </summary>
+        private sealed class OnNextThrowingObserver : IExcelObserver
+        {
+            private readonly ManualResetEventSlim _completed = new ManualResetEventSlim(false);
+            private int _nextCalls;
+            private int _completedCount;
+
+            public void OnNext(object value)
+            {
+                Interlocked.Increment(ref _nextCalls);
+                throw new InvalidOperationException("observer rejected the value");
+            }
+
+            public void OnError(Exception exception)
+            {
+            }
+
+            public void OnCompleted()
+            {
+                Interlocked.Increment(ref _completedCount);
+                _completed.Set();
+            }
+
+            public int OnNextCalls => Volatile.Read(ref _nextCalls);
+
+            public int CompletedCount => Volatile.Read(ref _completedCount);
+
+            public bool WaitCompleted(int timeoutMs = 5000) => _completed.Wait(timeoutMs);
+        }
+
         [Fact]
         public void Subscribe_DeliversResultOnceThenCompletes()
         {
@@ -209,6 +242,143 @@ namespace RedisExcel.Tests
 
                 release.Set();
                 Assert.True(observer.WaitCompleted(), "The disposed observable never completed.");
+            }
+
+            Assert.Equal(new object[] { "done" }, observer.Values);
+            Assert.Equal(1, observer.CompletedCount);
+            Assert.Empty(observer.Errors);
+        }
+
+        [Fact]
+        public void Subscribe_Twice_EnqueuesOnlyOnce()
+        {
+            string host = UniqueHost();
+            int runs = 0;
+            var observable = new RedisWriteObservable(host, () =>
+            {
+                Interlocked.Increment(ref runs);
+                return (object)1;
+            });
+
+            var first = new RecordingObserver();
+            var second = new RecordingObserver();
+
+            using (observable.Subscribe(first))
+            {
+                Assert.True(first.WaitCompleted(), "The first subscription never completed.");
+            }
+
+            // The one-shot guard: a duplicate Subscribe returns a disposable
+            // (Excel-DNA always expects one) but must never enqueue again.
+            IDisposable duplicate = observable.Subscribe(second);
+            Assert.NotNull(duplicate);
+            duplicate.Dispose();
+
+            Assert.True(
+                SpinWait.SpinUntil(() => !RedisUdfAsync.HasQueueForTests(host), 5000),
+                "The idle per-host queue was not removed.");
+
+            Assert.Equal(1, Volatile.Read(ref runs));
+            Assert.Equal(0, second.CompletedCount);
+            Assert.Empty(second.Values);
+            Assert.Empty(second.Errors);
+        }
+
+        [Fact]
+        public void Subscribe_OnNextThrows_StillCompletes()
+        {
+            var observer = new OnNextThrowingObserver();
+            int runs = 0;
+            var observable = new RedisWriteObservable(UniqueHost(), () =>
+            {
+                Interlocked.Increment(ref runs);
+                return (object)42;
+            });
+
+            // Subscribe itself must not surface an observer failure (delivery
+            // happens on the queue continuation).
+            IDisposable subscription = observable.Subscribe(observer);
+            Assert.NotNull(subscription);
+
+            Assert.True(observer.WaitCompleted(), "The observable never completed after OnNext threw.");
+
+            subscription.Dispose();
+
+            Assert.Equal(1, observer.OnNextCalls);
+            Assert.Equal(1, observer.CompletedCount);
+            Assert.Equal(1, Volatile.Read(ref runs));
+        }
+
+        [Fact]
+        public void Subscribe_DisposingAQueuedWriteIsNoOp()
+        {
+            string host = UniqueHost();
+            int secondRuns = 0;
+            var firstStarted = new ManualResetEventSlim(false);
+            var releaseFirst = new ManualResetEventSlim(false);
+
+            var first = new RedisWriteObservable(host, () =>
+            {
+                firstStarted.Set();
+                releaseFirst.Wait(5000);
+                return (object)"first";
+            });
+            var second = new RedisWriteObservable(host, () =>
+            {
+                Interlocked.Increment(ref secondRuns);
+                return (object)"second";
+            });
+
+            var firstObserver = new RecordingObserver();
+            var secondObserver = new RecordingObserver();
+
+            using (first.Subscribe(firstObserver))
+            {
+                Assert.True(firstStarted.Wait(5000), "The first write never started.");
+
+                IDisposable secondSubscription = second.Subscribe(secondObserver);
+                Assert.True(RedisUdfAsync.HasQueueForTests(host), "The second write was not queued.");
+
+                // Excel detaching the queued topic must not cancel the write.
+                secondSubscription.Dispose();
+
+                releaseFirst.Set();
+
+                Assert.True(firstObserver.WaitCompleted(), "The first observable never completed.");
+                Assert.True(secondObserver.WaitCompleted(), "The disposed observable never completed.");
+            }
+
+            Assert.Equal(1, Volatile.Read(ref secondRuns));
+            Assert.Equal(new object[] { "second" }, secondObserver.Values);
+            Assert.Equal(1, secondObserver.CompletedCount);
+            Assert.Empty(secondObserver.Errors);
+        }
+
+        [Fact]
+        public void Subscribe_EnqueuesBeforeReturning()
+        {
+            string host = UniqueHost();
+            var observer = new RecordingObserver();
+
+            using (var release = new ManualResetEventSlim(false))
+            {
+                var observable = new RedisWriteObservable(host, () =>
+                {
+                    release.Wait(5000);
+                    return (object)"done";
+                });
+
+                // Subscribe enqueues synchronously before it returns; the
+                // blocked item keeps the queue alive, so this is deterministic.
+                using (observable.Subscribe(observer))
+                {
+                    Assert.True(
+                        RedisUdfAsync.HasQueueForTests(host),
+                        "Subscribe returned before enqueuing the write.");
+
+                    release.Set();
+                    Assert.True(observer.WaitCompleted(), "The observable never completed.");
+                }
             }
 
             Assert.Equal(new object[] { "done" }, observer.Values);

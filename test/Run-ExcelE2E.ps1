@@ -299,6 +299,31 @@ function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$Timeou
     return $false
 }
 
+# #N/A is Excel's N/A error: the display text is locale-dependent (#N/A,
+# #N/D, #NV, ...), so a pending async cell is detected through
+# WorksheetFunction.IsNA instead of matching the text. The Range is passed
+# directly: reading Value2 first loses the error type (it surfaces as Int32),
+# and IsNA on that number is False.
+function Test-CellIsNA($Sheet, [string]$Address) {
+    for ($attempt = 0; ; $attempt++) {
+        try { return [bool]$script:Excel.WorksheetFunction.IsNA($Sheet.Range($Address)) }
+        catch {
+            if ($attempt -ge 40 -or -not (Test-RetryableError $_)) { return $false }
+            Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
+        }
+    }
+}
+
+function Wait-CellIsNA($Sheet, [string]$Address, [int]$TimeoutSeconds = 5) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-CellIsNA $Sheet $Address) { return $true }
+        Start-Sleep -Milliseconds 120
+    }
+    Write-Host ("      {0} = '{1}' (expected the locale-independent #N/A pending error)" -f $Address, (Get-CellText $Sheet $Address)) -ForegroundColor DarkGray
+    return $false
+}
+
 function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$TimeoutSeconds = 20) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $text = ''
@@ -682,21 +707,31 @@ try {
         try {
             Invoke-ExcelAction { $script:Excel.Calculation = -4135 } | Out-Null
 
+            # The rows below must stay free: earlier sections fill the sheet
+            # top-down, so a future check reaching this block would silently
+            # overwrite these labels/formulas.
+            $asyncBlockEmpty = $true
+            foreach ($addr in @('A50', 'B50', 'A51', 'B51', 'A52', 'B52', 'A53', 'B53', 'F53')) {
+                if (-not [string]::IsNullOrWhiteSpace((Get-CellText $udf $addr))) { $asyncBlockEmpty = $false }
+            }
+            Check $asyncBlockEmpty 'async-mode check block (rows 50-53) is unused'
+
             # (A) Pending marker + single delivery (row 50).
             Invoke-RedisCli @('DEL', "$KeyPrefix.asyncmarker") | Out-Null
             Set-Cell $udf 50 1 'Incr (async pending/single delivery)'
             Set-Formula $udf 'B50' ('=RedisUDFIncr("{1}.asyncmarker","{0}")' -f $h, $kp)
-            # The pending result is Excel's N/A error; Range.Text localizes it
-            # (#N/D on a pt-BR Excel), so match the error prefix instead of
-            # comparing the full text.
-            $pendingOk = Wait-CellRegex $udf 'B50' '^#(N/A|N/D)' 5
+            # The pending result is Excel's N/A error, detected through the
+            # object model (WorksheetFunction.IsNA) so the check is
+            # locale-independent (#N/A, #N/D, #NV, ...).
+            $pendingOk = Wait-CellIsNA $udf 'B50' 5
             Check $pendingOk ("Async pending marker shown for the queued Incr (B50='" + (Get-CellText $udf 'B50') + "')")
             # The queued write must reach Redis while the cell still shows the
             # pending marker (manual mode suppresses the delivery recalculation).
             $markerOk = Wait-RedisValue @('GET', "$KeyPrefix.asyncmarker") '1' 5
             $markerCell = Get-CellText $udf 'B50'
+            $markerStillNa = Test-CellIsNA $udf 'B50'
             $markerRedis = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncmarker") | Out-String).Trim()
-            Check ($markerOk -and ($markerCell -match '^#(N/A|N/D)')) ("Async Incr reached Redis while the cell was still pending (redis='" + $markerRedis + "', cell='" + $markerCell + "')")
+            Check ($markerOk -and $markerStillNa) ("Async Incr reached Redis while the cell was still pending (redis='" + $markerRedis + "', cell='" + $markerCell + "', isNA=" + $markerStillNa + ")")
             # Force the delivery recalculation: it must return the cached result
             # (the mode-appropriate reply, not a fresh write); the single retry
             # only covers the completion notification racing this Calculate.
@@ -720,7 +755,11 @@ try {
             Set-Formula $udf 'B51' $dupFormula
             Set-Formula $udf 'B52' $dupFormula
             $dupOk = Wait-RedisValue @('LLEN', "$KeyPrefix.asyncdup") '2' 10
+            # Re-read after settling: a late duplicate write would drift the
+            # final length from 2.
+            Start-Sleep -Milliseconds 300
             $dupLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
+            $dupOk = $dupOk -and ($dupLen -eq '2')
             if (-not $dupOk) {
                 Write-Host ("      DIAG asyncdup: B51='" + (Get-CellText $udf 'B51') + "' B52='" + (Get-CellText $udf 'B52') + "'") -ForegroundColor DarkGray
             }
@@ -746,6 +785,7 @@ try {
             }
             catch {
                 Write-Host ("WARNING: could not restore Application.Calculation: " + $_.Exception.Message) -ForegroundColor Red
+                $script:Failures++
             }
         }
     }
@@ -803,13 +843,16 @@ try {
     # SaveAs can never delete the committed sample workbook.
     $tempOut = Join-Path $env:TEMP 'RedisExcel.Test.xlsx'
     $outPath = $tempOut
-    if ($isLocalHost) {
+    if ($isLocalHost -and -not $AsyncWrites) {
         $outDir = Join-Path $RepoRoot 'test'
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
         $outPath = Join-Path $outDir 'RedisExcel.Test.xlsx'
     }
     else {
-        Write-Host "Remote host: the workbook will not be saved into the repository." -ForegroundColor DarkGray
+        # Remote hosts never write into the repository, and an async run adds
+        # scratch cells (rows 50-53) that do not belong in the committed
+        # sample: keep both in %TEMP%.
+        Write-Host "The workbook will not be saved into the repository (remote host or -AsyncWrites)." -ForegroundColor DarkGray
     }
     Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveAs($tempOut, 51) } | Out-Null

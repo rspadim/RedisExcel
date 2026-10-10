@@ -126,7 +126,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   call - Excel-DNA creates the observable at registration and its `Subscribe`
   runs synchronously on the Excel thread during the internal RTD `ConnectData`,
   and the recalculation that delivers the result returns the cached value for
-  the same identity (Excel-DNA state lookup) without re-subscribing. No
+  the same identity (Excel-DNA state lookup) without re-subscribing; a
+  duplicate `Subscribe` on the same observable is ignored (one-shot guard). No
   thread-pool thread is held per pending write: the queue continuation delivers
   `OnNext`/`OnCompleted`, so a large same-host burst no longer throttles the
   pool (the old classic `ExcelAsyncUtil.Run` dispatch blocked one pool thread
@@ -135,7 +136,10 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   completed re-call), so different cells never share one call and an argument
   change dispatches a new write. Repeated evaluations with unchanged arguments
   return the cached value while the internal topic stays connected (a volatile
-  write is not re-sent by AsyncWrites); inserting/moving rows or columns
+  write is not re-sent by AsyncWrites); when Excel detaches the topic (e.g. an
+  unchanged recalculation) the next evaluation re-registers the call and a
+  volatile write is issued again, so the dedup is best-effort, not
+  exactly-once across the sheet lifetime; inserting/moving rows or columns
   changes the cell reference and re-issues the write; a call without a
   worksheet caller is refused with an Error cell (the identity would be shared
   or unstable). Same-host writes are serialized by a per-host FIFO queue fed on
@@ -197,9 +201,11 @@ Covers: `ExcelJson` conversions, `AppConfig` load/sanitize and
 behavior, the `PublishIfChanged` dedup LRU cache, subscription keys, HGETALL
 formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
 (`IsNewer`/`NormalizeTag`), `RedisValueLocaleTests` (de-DE culture), the
-`...NonVolatile` signature-parity reflection test, and the write-mode
+`...NonVolatile` signature-parity reflection test, the write-mode
 (`SyncWrite`/`AsyncWrites`) parsing plus async write dispatch (per-host serial
-order and the synchronous path).
+order, no host overlap, the synchronous path and the caller refusal), and the
+offline `RedisWriteObservable` tests (single delivery + completion, error
+text, one-shot subscribe, no-op dispose while queued, synchronous enqueue).
 
 The unit, smoke and load test projects compile the production sources directly
 (linked `Compile` items), so a new production `.cs` needed by tests must be
@@ -229,7 +235,11 @@ and verifies the original keeps receiving; finally kills the Pub/Sub
 connections server-side and verifies automatic recovery. It also exercises the
 write modes (`sync`/`fireforget`/`fireforget-all`, async on and off) and
 asserts that a `...NonVolatile` write runs once (a worksheet recalculation must
-not re-send it).
+not re-send it). With `-AsyncWrites` it additionally checks the pending marker
+(`WorksheetFunction.IsNA`, locale-independent), that the queued write reaches
+Redis while the cell is still pending and the delivery recalculation does not
+re-run it, that two identical formulas in different cells both write, and that
+an argument change dispatches the new write.
 
 Useful parameters:
 

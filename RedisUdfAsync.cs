@@ -31,8 +31,12 @@ namespace RedisExcel
     /// evaluation a new call and re-issues the write. While the internal RTD
     /// topic stays connected, repeated evaluations with unchanged arguments
     /// return the cached completed value, so the write is not re-issued (this
-    /// includes F9 on volatile write cells under AsyncWrites). Calls without a
-    /// worksheet caller are refused with an Error cell because the identity
+    /// includes F9 on volatile write cells under AsyncWrites). When Excel
+    /// instead detaches the topic (e.g. an unchanged recalculation on the
+    /// observer skip path), the next evaluation re-registers the call and a
+    /// volatile write is issued again: the dedup is best-effort per connected
+    /// registration, not exactly-once across the sheet lifetime. Calls without
+    /// a worksheet caller are refused with an Error cell because the identity
     /// would be shared or unstable.
     /// </summary>
     internal static class RedisUdfAsync
@@ -133,8 +137,11 @@ namespace RedisExcel
                 if (asyncResult == null)
                 {
                     // Excel-DNA returns null when its internal RTD registration
-                    // failed; Subscribe was not called, so failing here cannot
-                    // duplicate the write.
+                    // failed. On some failure paths (array caller/xlUncalced)
+                    // Subscribe may already have run, so an enqueued write still
+                    // completes in order while the cell shows this error
+                    // (at-least-once, same as the previous dispatch); reporting
+                    // the failure here cannot duplicate an enqueue.
                     logger.Error($"RedisUdfAsync.Run: async RTD registration failed for {functionName}");
                     return "Error: async dispatch failed (RTD registration)";
                 }
@@ -142,9 +149,10 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                // The work has not started (RedisWriteObservable.Subscribe owns
-                // the enqueue), so this cannot duplicate a write; surface the
-                // failure instead of silently retrying on the Excel thread.
+                // A failure before Subscribe cannot duplicate a write; after it
+                // the write is already enqueued and still completes in order
+                // (at-least-once). Surface the failure instead of silently
+                // retrying on the Excel thread.
                 logger.Error(ex, $"RedisUdfAsync.Run: async dispatch failed for {functionName}");
                 return "Error: async dispatch failed: " + ex.Message;
             }
@@ -200,11 +208,21 @@ namespace RedisExcel
 
                     // Drop the queue once its last item completed and no newer
                     // item claimed it (ReferenceEquals check under the gate).
-                    next.ContinueWith(
-                        _ => ReleaseQueue(host, queue, next),
-                        CancellationToken.None,
-                        TaskContinuationOptions.None,
-                        TaskScheduler.Default);
+                    // This continuation is scheduled after the work item, so a
+                    // failure here can only leak an idle queue entry: Enqueue
+                    // must never throw once the item is scheduled.
+                    try
+                    {
+                        next.ContinueWith(
+                            _ => ReleaseQueue(host, queue, next),
+                            CancellationToken.None,
+                            TaskContinuationOptions.None,
+                            TaskScheduler.Default);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, "RedisUdfAsync.Enqueue: scheduling the idle-queue release failed");
+                    }
 
                     return next;
                 }
@@ -260,6 +278,8 @@ namespace RedisExcel
     /// the topic only disposes this subscription; the returned disposable is a
     /// no-op, so a queued or executing write still runs to completion in
     /// per-host order (same semantics as the previous thread-pool delegate).
+    /// A second Subscribe on the same instance is ignored (defensive guard;
+    /// Excel-DNA registers one observable per call).
     /// </summary>
     internal sealed class RedisWriteObservable : IExcelObservable
     {
@@ -279,6 +299,11 @@ namespace RedisExcel
         private readonly string _host;
         private readonly Func<object> _work;
 
+        // One-shot guard: Excel-DNA never subscribes twice for one registered
+        // call, but a duplicate Subscribe must never enqueue the write again
+        // (its own ThreadPoolDelegateObservable threw in that case).
+        private int _subscribed;
+
         internal RedisWriteObservable(string host, Func<object> work)
         {
             _host = host;
@@ -287,6 +312,12 @@ namespace RedisExcel
 
         public IDisposable Subscribe(IExcelObserver observer)
         {
+            if (Interlocked.CompareExchange(ref _subscribed, 1, 0) != 0)
+            {
+                logger.Trace("RedisWriteObservable: duplicate Subscribe ignored (single subscription only)");
+                return NoOpDisposable;
+            }
+
             try
             {
                 // Enqueue synchronously HERE: Excel-DNA calls Subscribe during
@@ -302,9 +333,10 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                // Enqueue converts work failures to "Error: ..." task results;
-                // this guards truly unexpected failures. The write did not
-                // start, so reporting the failure cannot duplicate it.
+                // Enqueue converts work failures to "Error: ..." task results
+                // and never throws once it schedules the item; this guards
+                // truly unexpected failures, so reporting the failure cannot
+                // duplicate a write.
                 logger.Error(ex, "RedisWriteObservable: enqueue failed");
                 DeliverAndComplete(observer, "Error: " + ex.Message);
             }

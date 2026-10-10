@@ -355,7 +355,7 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
 | Key | Default | Values | Effect |
 | --- | ------- | ------ | ------ |
 | `SyncWrite` | `"fireforget"` | `"sync"`, `"fireforget"`, `"fireforget-all"` | How a write waits for the Redis reply (modes below). |
-| `AsyncWrites` | `false` | `true` / `false` | Where a write runs: on the Excel calculation thread (`false`) or on a per-host serial worker (`true`). |
+| `AsyncWrites` | `false` | `true` / `false` | Where a write runs: on the Excel calculation thread (`false`) or through a per-host serial queue (`true`; queued items run on thread-pool threads, but no thread is held while an item is queued). |
 
 `SyncWrite` modes:
 
@@ -387,18 +387,21 @@ confirmed by Redis.
 `AsyncWrites: true` dispatches writes through Excel-DNA's Observe-based async
 support instead of the Excel calculation thread (no thread-pool thread is held
 per pending write): the cell first shows Excel's pending marker (`#N/A`) and
-then updates to the real value/error (or the fire-and-forget marker). Each
-formula writes exactly once - the recalculation that delivers the result
-returns the cached value (the call identity is the cell plus the resolved host
-plus the formula's arguments) instead of re-running the write. A write whose
-host cannot be resolved falls back to the synchronous path (no pending
-marker); a write with no worksheet caller (e.g. invoked from a macro) is
-refused with an `Error:` cell, and repeated evaluations with unchanged
-arguments keep the cached value. Same-host writes are serialized by a per-host
-FIFO queue fed on the Excel thread (other hosts are not blocked), so the order
-is the formula evaluation order. `SyncWrite` still decides whether that write
-waits for the reply - so `"sync"` + `AsyncWrites: true` returns real results
-and errors without blocking Excel.
+then updates to the real value/error (or the fire-and-forget marker). While
+the internal RTD topic stays connected, each formula writes exactly once - the
+recalculation that delivers the result returns the cached value (the call
+identity is the cell plus the resolved host plus the formula's arguments)
+instead of re-running the write. When Excel instead detaches the topic (for
+example an unchanged recalculation), the next evaluation re-registers the call
+and a volatile write is issued again: the dedup is best-effort, not
+exactly-once across the sheet lifetime. A write whose host cannot be resolved
+falls back to the synchronous path (no pending marker); a write with no
+worksheet caller (e.g. invoked from a macro) is refused with an `Error:` cell.
+Same-host writes are serialized by a per-host FIFO queue fed on the Excel
+thread (other hosts are not blocked), so the order is the formula evaluation
+order. `SyncWrite` still decides whether that write waits for the reply - so
+`"sync"` + `AsyncWrites: true` returns real results and errors without
+blocking Excel.
 
 ---
 

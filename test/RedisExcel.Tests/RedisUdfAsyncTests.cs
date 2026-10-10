@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -32,6 +33,20 @@ namespace RedisExcel.Tests
             }
         }
 
+        /// <summary>Runs the test with AsyncWrites forced to true.</summary>
+        private static void WithAsyncMode(Action test)
+        {
+            RedisUdfAsync.AsyncWritesOverrideForTests = true;
+            try
+            {
+                test();
+            }
+            finally
+            {
+                RedisUdfAsync.AsyncWritesOverrideForTests = null;
+            }
+        }
+
         private static string UniqueHost() => "test.host:" + Guid.NewGuid().ToString("N");
 
         private static async Task<object> WaitCompleted(Task<object> task, int timeoutMs = 5000)
@@ -39,6 +54,19 @@ namespace RedisExcel.Tests
             Task completed = await Task.WhenAny(task, Task.Delay(timeoutMs));
             Assert.True(completed == task, "Queued work item did not complete in time.");
             return task;
+        }
+
+        /// <summary>Raises <paramref name="stored"/> to <paramref name="candidate"/> when larger.</summary>
+        private static void InterlockedMax(ref int stored, int candidate)
+        {
+            int seen = Volatile.Read(ref stored);
+            while (candidate > seen)
+            {
+                int prior = Interlocked.CompareExchange(ref stored, candidate, seen);
+                if (prior == seen)
+                    break;
+                seen = prior;
+            }
         }
 
         // ---------------------------------------------------------------
@@ -135,6 +163,89 @@ namespace RedisExcel.Tests
                 // The sync path must not dereference the identity arguments.
                 object result = RedisUdfAsync.Run("RedisUDFSet", null, null, () => (object)"ok");
 
+                Assert.Equal("ok", result);
+            });
+        }
+
+        // ---------------------------------------------------------------
+        // Async mode offline: the caller refusal, the invalid-host fallback
+        // and the sync passthrough still running on the calling thread.
+        // ---------------------------------------------------------------
+
+        [Fact]
+        public void Run_AsyncMode_WithoutCaller_RefusesWork()
+        {
+            WithAsyncMode(() =>
+            {
+                int calls = 0;
+
+                // Offline there is no Excel host, so XlCall.Excel(xlfCaller)
+                // throws and CallerIdentityForDedup returns null: the async
+                // dispatch must refuse the write instead of sharing an identity.
+                object result = RedisUdfAsync.Run(
+                    "RedisUDFSet",
+                    null,
+                    new object[] { "key", "value" },
+                    () => { Interlocked.Increment(ref calls); return (object)42; });
+
+                Assert.Equal("Error: async write needs a worksheet caller (AsyncWrites)", result);
+                Assert.Equal(0, Volatile.Read(ref calls));
+            });
+        }
+
+        [Fact]
+        public void Run_AsyncMode_InvalidHost_FallsBackToSync()
+        {
+            WithAsyncMode(() =>
+            {
+                // A non-text host argument is rejected by ResolveHost, so
+                // ResolveHostForDispatch yields null and Run must fall back to
+                // the synchronous path (the core body surfaces the host error).
+                Assert.Null(RedisUDF.ResolveHostForDispatch(new object()));
+
+                int callerThread = Thread.CurrentThread.ManagedThreadId;
+                int workThread = -1;
+
+                object result = RedisUdfAsync.Run("RedisUDFSet", new object(), new object[] { "arg" }, () =>
+                {
+                    workThread = Thread.CurrentThread.ManagedThreadId;
+                    return (object)42;
+                });
+
+                Assert.Equal(callerThread, workThread);
+                Assert.Equal(42, result);
+            });
+        }
+
+        [Fact]
+        public void Run_SyncMode_UsesTheCallingThread()
+        {
+            WithSyncMode(() =>
+            {
+                int threadId = -1;
+                int workThread = -1;
+                object result = null;
+
+                using (var completed = new ManualResetEventSlim(false))
+                {
+                    var thread = new Thread(() =>
+                    {
+                        threadId = Thread.CurrentThread.ManagedThreadId;
+                        result = RedisUdfAsync.Run("RedisUDFSet", null, new object[] { "arg" }, () =>
+                        {
+                            workThread = Thread.CurrentThread.ManagedThreadId;
+                            return (object)"ok";
+                        });
+                        completed.Set();
+                    });
+                    thread.IsBackground = true;
+                    thread.Start();
+
+                    Assert.True(completed.Wait(5000), "The dedicated thread never completed.");
+                    Assert.True(thread.Join(5000), "The dedicated thread did not finish.");
+                }
+
+                Assert.Equal(threadId, workThread);
                 Assert.Equal("ok", result);
             });
         }
@@ -268,6 +379,36 @@ namespace RedisExcel.Tests
             Assert.True(
                 SpinWait.SpinUntil(() => !RedisUdfAsync.HasQueueForTests(host), 5000),
                 "The idle per-host queue was not removed.");
+        }
+
+        [Fact]
+        public async Task Enqueue_SameHost_NeverOverlaps()
+        {
+            string host = UniqueHost();
+            int active = 0;
+            int maxActive = 0;
+            var order = new ConcurrentQueue<int>();
+            var tasks = new List<Task<object>>();
+
+            for (int i = 0; i < 100; i++)
+            {
+                int captured = i;
+                tasks.Add(RedisUdfAsync.Enqueue(host, () =>
+                {
+                    InterlockedMax(ref maxActive, Interlocked.Increment(ref active));
+                    order.Enqueue(captured);
+                    Thread.Sleep(1);
+                    Interlocked.Decrement(ref active);
+                    return (object)captured;
+                }));
+            }
+
+            foreach (var task in tasks)
+                await WaitCompleted(task, 30000);
+
+            Assert.Equal(1, Volatile.Read(ref maxActive));
+            Assert.Equal(100, order.Count);
+            Assert.Equal(Enumerable.Range(0, 100), order);
         }
     }
 }
