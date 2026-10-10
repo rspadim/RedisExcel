@@ -400,12 +400,18 @@ namespace RedisExcel.LivenessTests
             long udfErrors = 0;
             long udfTimeouts = 0;
             int latestCount = 4, pubCount = 4;
+            // The runner can be a slow shared box: scale the stress workers down in
+            // --quick so the artificial contention cannot starve the dedicated
+            // heartbeat/thread pool and trip a bound for the wrong reason. The
+            // explicit fault phases and the bounds themselves are unchanged (the
+            // full run keeps the original counts).
+            int contentionWorkers = Quick ? 1 : 2;
             var pubChannels = Enumerable.Range(0, pubCount).Select(i => "liveness:b:pub:" + i).ToArray();
             var latestChannels = Enumerable.Range(0, latestCount).Select(i => "liveness:b:latest:" + i).ToArray();
             var leftovers = new ConcurrentBag<IDisposable>();
 
             var workers = new List<Worker>();
-            workers.Add(new Worker("B-subscribe", 2, (id, n) =>
+            workers.Add(new Worker("B-subscribe", contentionWorkers, (id, n) =>
             {
                 string ch = "liveness:b:churn:" + ((n / 2) % 24);
                 long t0 = Stopwatch.GetTimestamp();
@@ -484,7 +490,7 @@ namespace RedisExcel.LivenessTests
                 RedisUDF.RedisUDFChannelUnsubscribe(ch, Host);
                 GetLat("B.udf.unsubscribe").Record(Stopwatch.GetTimestamp() - t1);
             }));
-            workers.Add(new Worker("B-queue", 2, (id, n) =>
+            workers.Add(new Worker("B-queue", contentionWorkers, (id, n) =>
             {
                 long t0 = Stopwatch.GetTimestamp();
                 Task<object> t = RedisUdfAsync.Enqueue(Host + "|queueB", () => { Thread.SpinWait(1000); return (object)n; });
@@ -577,6 +583,11 @@ namespace RedisExcel.LivenessTests
             foreach (var ch in latestChannels) { try { RedisUDF.RedisUDFChannelUnsubscribe(ch, Host); } catch { } }
             RedisUDF.SyncWriteOverrideForTests = prevSyncWrite;
             Metric("B", "durationSec", MsSince(start) / 1000.0);
+            if (Quick)
+                Metric("B", "quick-summary",
+                    "workerErrors=" + errors + " workerTimeouts=" + timeouts + " udfErrors=" + udfErrors
+                    + " udfTimeouts=" + udfTimeouts + " deliveryGapMs=" + Fmt(Delivery.MaxGapMs)
+                    + " procHeartbeatMs=" + Fmt(Proc.MaxGapMs) + " watchdogMs=" + Fmt(Wake.MaxIterMs));
             NoteWorst("deliveryGapMs", Delivery.MaxGapMs);
             NoteWorst("watchdogMs", Wake.MaxIterMs);
             NoteWorst("deliveryResumeMs", resume);
