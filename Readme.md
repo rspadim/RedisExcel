@@ -124,6 +124,16 @@ registration).
 =RTD("RedisRtd", , "SUB", "canal_alerta")  // uses default host if omitted
 ```
 
+> **Message order is not guaranteed**: StackExchange.Redis dispatches every
+> `SUB`/`PSUB` handler on the thread pool, so two messages can be delivered out
+> of order when they are in flight at the same time (common in a fast feed,
+> rare at a slow one). Nothing is lost and nothing stalls - the delivery
+> continues - but a cell remembers the last value that finished delivering, so
+> a burst can transiently leave an older value (until the next message). Feeds
+> that care about order should carry a timestamp/sequence field in the payload
+> and compare it in the formula (or read with a polled `GET`/`HGET`, which is
+> one round trip, single-threaded per host).
+
 You can find other connection string formats in the [StackExchange.Redis configuration manual](https://stackexchange.github.io/StackExchange.Redis/Configuration).
 
 ---

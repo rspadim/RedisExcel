@@ -4,6 +4,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -310,12 +311,18 @@ internal static class Program
             RunChannelLatestRaceTest(publisher, host);
             RunGhostStaleTest(pubConn, publisher, host);
             RunPatternJoinOverClearTest(subscriptions, publisher, server, host);
+            RunChannelLatestConvergenceTest(publisher, server, host);
         }
         finally
         {
             RedisUdfAsync.AsyncWritesOverrideForTests = null;
             RedisUDF.SyncWriteOverrideForTests = null;
         }
+
+        // UDF surface coverage for the functions the safety scout found untested:
+        // HashGetAll (matrix shape/values), ServerTime (plausible epoch) and
+        // PubSubChannelsInfo (a subscribed channel with its subscriber count).
+        RunUdfFunctionsSmokeTest(connections, subscriptions, server, host);
 
         // Concurrency regression for the duplicate-suppression marker, kept last
         // because it hammers a dedicated Redis (container on 6396); it creates
@@ -1047,5 +1054,207 @@ internal static class Program
         }
 
         Check(WaitUntil(() => numsub() == 0, 5000), "pattern-join over-clear: channel released after cleanup");
+    }
+
+    /// <summary>
+    /// Convergence regression for the StackExchange.Redis out-of-order delivery.
+    /// SE.Redis hands every channel callback to the thread pool, so delivery
+    /// order is NOT guaranteed: two messages in flight together can complete out
+    /// of order. The requirement is weaker than strict ordering - a later
+    /// publish must never be permanently suppressed or ignored by the client.
+    /// The stream converges once the FINAL publish is the last one delivered.
+    ///
+    /// Phase 1 publishes a fast burst of ~500 DISTINCT payloads on a literal
+    /// channel with one ChannelLatest listener (all distinct, so the identical
+    /// consecutive-payload dedup can never drop one). Phase 2 then republishes
+    /// "FINAL-&lt;guid&gt;" up to ~50 times over about 5 s while polling
+    /// ChannelLatest until it reads that FINAL value: the FINAL value must be
+    /// observed at least once, proving the channel was not left deaf and no
+    /// later publish was permanently ignored. Strict ordering is deliberately
+    /// NOT asserted (the library does not guarantee it).
+    /// </summary>
+    private static void RunChannelLatestConvergenceTest(ISubscriber publisher, IServer server, string host)
+    {
+        const int burstCount = 500;
+        const int finalAttempts = 50;
+        string runId = Guid.NewGuid().ToString("N");
+        string channel = "smoke:converge:" + runId;
+        var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+        Console.WriteLine("convergence: channel " + channel);
+
+        Func<long> numsub = () => NumSub(server, channel);
+
+        // One ChannelLatest listener subscribes here and stays live for both phases.
+        string initial = RedisUDF.RedisUDFChannelLatest(channel, host);
+        Check(string.Equals(initial, "(null)", StringComparison.Ordinal),
+            $"convergence: the fresh ChannelLatest starts empty (got '{initial}')");
+        Check(WaitUntil(() => numsub() == 1, 5000),
+            "convergence: ChannelLatest listener subscribed on the server");
+
+        try
+        {
+            // Phase 1: a fast burst of distinct payloads. Every payload is unique,
+            // so no delivery may be dropped by the consecutive-duplicate dedup.
+            var burstBase = Stopwatch.StartNew();
+            for (int i = 0; i < burstCount; i++)
+                publisher.Publish(redisChannel, "burst-" + runId + "-" + i, CommandFlags.FireAndForget);
+
+            // Ordering barrier: PING on the publisher connection (the same
+            // multiplexer that produced `server`) proves Redis accepted every
+            // publish; a missing burst payload is then a consumer problem, not
+            // a slow publisher. Bounded: delivery is async.
+            server.Ping();
+            // Deliberately NO strict-order assertion: with out-of-order delivery
+            // the last published burst payload may be overwritten by an earlier
+            // one that arrived late. Any burst payload observed proves the
+            // stream is delivering.
+            string burstPrefix = "burst-" + runId + "-";
+            bool burstDelivered = WaitUntil(
+                () =>
+                {
+                    string latest = RedisUDF.RedisUDFChannelLatest(channel, host);
+                    return latest != null && latest.StartsWith(burstPrefix, StringComparison.Ordinal);
+                },
+                15000);
+            Check(burstDelivered,
+                $"convergence: a distinct burst payload is observed (stream delivering, {burstBase.ElapsedMilliseconds} ms)");
+
+            // Phase 2: republish FINAL repeatedly; the FINAL value must be
+            // observed at least once. Strict ordering is NOT asserted.
+            string finalPayload = "FINAL-" + runId;
+            bool finalObserved = false;
+            int finalTries = 0;
+            var finalWatch = Stopwatch.StartNew();
+            for (int attempt = 0; attempt < finalAttempts && !finalObserved; attempt++)
+            {
+                finalTries = attempt + 1;
+                publisher.Publish(redisChannel, finalPayload); // blocking: the server accepted it
+                if (WaitUntil(
+                        () => string.Equals(RedisUDF.RedisUDFChannelLatest(channel, host), finalPayload, StringComparison.Ordinal),
+                        100))
+                {
+                    finalObserved = true;
+                }
+            }
+            finalWatch.Stop();
+            Check(finalObserved,
+                $"convergence: the FINAL payload is observed at least once ({finalTries}/{finalAttempts} tries in {finalWatch.ElapsedMilliseconds} ms)");
+
+            // The stream is still alive after convergence: one more distinct
+            // payload must be delivered, proving no permanent stall.
+            string afterPayload = "after-" + runId;
+            publisher.Publish(redisChannel, afterPayload);
+            bool stillDelivering = WaitUntil(
+                () => string.Equals(RedisUDF.RedisUDFChannelLatest(channel, host), afterPayload, StringComparison.Ordinal),
+                5000);
+            Check(stillDelivering, "convergence: the stream keeps delivering after the FINAL payload");
+        }
+        finally
+        {
+            RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+        }
+
+        Check(WaitUntil(() => numsub() == 0, 5000), "convergence: channel released after cleanup");
+    }
+
+    /// <summary>
+    /// UDF surface coverage for the functions the safety scout found untested:
+    /// RedisUDFHashGetAll (rows are field/value and HGETALL values round-trip),
+    /// RedisUDFServerTime (a plausible epoch, within a minute of local UTC) and
+    /// RedisUDFPubSubChannelsInfo (a subscribed channel listed with its
+    /// subscriber count). Uses the smoke's main server and its own local
+    /// listener, so the process-wide UDF counters are left untouched.
+    /// </summary>
+    private static void RunUdfFunctionsSmokeTest(
+        RedisConnectionManager connections, RedisSubscriptionManager subscriptions, IServer server, string host)
+    {
+        string runId = Guid.NewGuid().ToString("N");
+        var db = connections.GetDatabase(host, RedisPool.UdfData);
+
+        // RedisUDFHashGetAll: a 3-field hash must come back as a 3-row,
+        // 2-column (field, value) matrix with every value round-tripped.
+        string hashKey = "smoke:hash:" + runId;
+        try
+        {
+            db.HashSet(hashKey, new HashEntry[]
+            {
+                new HashEntry("fieldA", "value-1"),
+                new HashEntry("fieldB", "value-2"),
+                new HashEntry("fieldC", "42")
+            });
+            var matrix = RedisUDF.RedisUDFHashGetAll(hashKey, host);
+            bool matrixOk = matrix != null && matrix.GetLength(0) == 3 && matrix.GetLength(1) == 2;
+            var seen = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (matrixOk)
+            {
+                for (int r = 0; r < matrix.GetLength(0); r++)
+                    seen[Convert.ToString(matrix[r, 0], CultureInfo.InvariantCulture)] =
+                        Convert.ToString(matrix[r, 1], CultureInfo.InvariantCulture);
+            }
+            Check(matrixOk
+                    && seen.TryGetValue("fieldA", out var a) && a == "value-1"
+                    && seen.TryGetValue("fieldB", out var b) && b == "value-2"
+                    && seen.TryGetValue("fieldC", out var c) && c == "42",
+                "HashGetAll: 3-field hash returns a 3x2 field/value matrix with the expected values");
+
+            // An empty/missing hash returns the single empty-cell sentinel.
+            var empty = RedisUDF.RedisUDFHashGetAll("smoke:missing:" + runId, host);
+            Check(empty != null && empty.GetLength(0) == 1 && empty.GetLength(1) == 1
+                    && string.IsNullOrEmpty(Convert.ToString(empty[0, 0], CultureInfo.InvariantCulture)),
+                "HashGetAll: a missing hash returns the empty sentinel");
+        }
+        finally
+        {
+            db.KeyDelete(hashKey);
+        }
+
+        // RedisUDFServerTime: an ISO-8601 string within 60 s of local UTC.
+        object timeResult = RedisUDF.RedisUDFServerTime(host);
+        bool timeParsed = DateTime.TryParse(
+            Convert.ToString(timeResult, CultureInfo.InvariantCulture),
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AdjustToUniversal,
+            out var serverTime);
+        bool timeOk = timeParsed && Math.Abs((serverTime - DateTime.UtcNow).TotalSeconds) < 60;
+        Check(timeOk, $"ServerTime: returns a plausible epoch/time ('{timeResult}')");
+
+        // RedisUDFPubSubChannelsInfo: subscribe one listener on a unique channel;
+        // PUBSUB CHANNELS + NUMSUB must list it with at least one subscriber.
+        string infoChannel = "smoke:info:" + runId;
+        var infoToken = subscriptions.Subscribe(host, infoChannel, pattern: false, onMessage: _ => { });
+        try
+        {
+            Check(WaitUntil(() => NumSub(server, infoChannel) == 1, 5000),
+                "PubSubChannelsInfo: listener subscribed on the server");
+
+            var info = RedisUDF.RedisUDFPubSubChannelsInfo(host);
+            bool headerOk = info != null && info.GetLength(1) == 2
+                && string.Equals(Convert.ToString(info[0, 0], CultureInfo.InvariantCulture), "Channel", StringComparison.Ordinal)
+                && string.Equals(Convert.ToString(info[0, 1], CultureInfo.InvariantCulture), "Subscribers", StringComparison.Ordinal);
+            bool channelListed = false;
+            long infoSubscribers = -1;
+            if (info != null)
+            {
+                for (int r = 1; r < info.GetLength(0); r++)
+                {
+                    if (string.Equals(
+                            Convert.ToString(info[r, 0], CultureInfo.InvariantCulture), infoChannel, StringComparison.Ordinal))
+                    {
+                        channelListed = true;
+                        infoSubscribers = Convert.ToInt64(info[r, 1], CultureInfo.InvariantCulture);
+                        break;
+                    }
+                }
+            }
+            Check(headerOk, "PubSubChannelsInfo: returns the Channel/Subscribers header row");
+            Check(channelListed && infoSubscribers >= 1,
+                $"PubSubChannelsInfo: lists the subscribed channel with its subscriber count (got {infoSubscribers})");
+        }
+        finally
+        {
+            infoToken.Dispose();
+        }
+        Check(WaitUntil(() => NumSub(server, infoChannel) == 0, 5000),
+            "PubSubChannelsInfo: channel released after cleanup");
     }
 }

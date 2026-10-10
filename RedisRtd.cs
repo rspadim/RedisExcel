@@ -84,6 +84,11 @@ namespace RedisExcel
         // _lastValue on the first Excel tick would blank the cell.
         private bool _dirty = false;
 
+        // A persistently failing Excel push stays dirty and is retried every
+        // tick; log the first failure at Error and the rest at Debug so a stuck
+        // topic cannot flood the log (cleared by a successful push).
+        private bool _updateFailureLogged;
+
         /// <summary>
         /// Marks the topic dirty when a value already arrived while ConnectData
         /// was running: Excel-DNA drops pushes for topics that are not active
@@ -319,6 +324,7 @@ namespace RedisExcel
                     // failure stay dirty so the next Excel tick retries.
                     Topic.UpdateValue(_lastValue);
                     _dirty = false;
+                    _updateFailureLogged = false;
                 }
                 catch (Exception ex)
                 {
@@ -328,7 +334,20 @@ namespace RedisExcel
                 }
             }
             if (updateError != null)
-                logger.Error(updateError, "SendToExcelIfDirty: update failed");
+            {
+                // Throttled: a permanently failing push would otherwise log an
+                // Error every Excel tick (default ~100ms).
+                if (_updateFailureLogged)
+                {
+                    if (logger.IsDebugEnabled)
+                        logger.Debug(updateError, "SendToExcelIfDirty: update still failing");
+                }
+                else
+                {
+                    _updateFailureLogged = true;
+                    logger.Error(updateError, "SendToExcelIfDirty: update failed");
+                }
+            }
         }
 
         public override string ToString()

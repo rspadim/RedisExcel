@@ -14,7 +14,8 @@ using System.Threading.Tasks;
 ///   seconds    default 10
 ///   publishers default 2 (internal fire-and-forget threads); 0 = listen-only,
 ///              use an external generator such as:
-///              docker exec &lt;redis&gt; redis-benchmark -t publish -n 3000000 -P 16
+///              docker exec &lt;redis&gt; redis-benchmark -n 20000 -q -P 16 PUBLISH &lt;channel&gt; &lt;payload&gt;
+///              (-t publish is a silent no-op on Redis 7.4)
 ///   listeners  default 1 (logical listeners registered on the same channel)
 ///   pattern    default false; true subscribes to the given channel as a pattern
 ///              (use channel "*" through the host-less listen mode to receive
@@ -22,7 +23,10 @@ using System.Threading.Tasks;
 ///   channel    default random "load:<guid>"; with pattern=true and
 ///              publishers=0 the default is "*"
 ///
-/// Reports throughput, allocated bytes per received message and GC counts.
+/// Reports throughput, allocated bytes per received message and GC counts. The
+/// "published" figure counts client-side intents: in fire-and-forget mode the
+/// server may process fewer (the client exits with an unsent queue), so the
+/// delivery ratio is an estimate - use `INFO commandstats` for server truth.
 /// </summary>
 internal static class Program
 {

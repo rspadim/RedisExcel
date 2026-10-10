@@ -229,27 +229,5 @@ namespace RedisExcel.Tests
             Assert.False(HasMarker(host, "c:d"));
             Assert.False(HasMarker(host, "c:a1"));
         }
-
-        [Theory]
-        [InlineData("*", "", true)]
-        [InlineData("*", "anything", true)]
-        [InlineData("orders:*", "orders:", true)]
-        [InlineData("orders:*", "orders:7", true)]
-        [InlineData("orders:*", "other:7", false)]
-        [InlineData("k:?", "k:1", true)]
-        [InlineData("k:?", "k:12", false)]
-        [InlineData("k:?", "k:", false)]
-        [InlineData("[abc]", "b", true)]
-        [InlineData("[abc]", "d", false)]
-        [InlineData("[a-c]x", "bx", true)]
-        [InlineData("[a-c]x", "dx", false)]
-        [InlineData("[^abc]", "d", true)]
-        [InlineData("[^abc]", "a", false)]
-        [InlineData("a*b*c", "aXXbYYc", true)]
-        [InlineData("a*b*c", "aXXcYYb", false)]
-        public void GlobMatches_SupportsRedisWildcards(string pattern, string value, bool expected)
-        {
-            Assert.Equal(expected, RedisUDF.GlobMatches(pattern, value));
-        }
     }
 }

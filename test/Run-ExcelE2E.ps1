@@ -869,6 +869,14 @@ try {
     Check (Wait-CellNumberMin $rtd 'B10' 5)                  'RTD TopicCount >= 5'
     Check (Wait-CellNumberMin $rtd 'B11' 2)                  'RTD SubscriptionCount >= 2'
     Check (Wait-CellNumberMin $rtd 'B12' 1)                  'RTD ChannelCount >= 1'
+    # Rows 13-16 were built but never asserted (coverage gap): the status helpers
+    # must report the configured default host and positive intervals, and the
+    # real-time flag must render as a boolean (TRUE/FALSE, locale-tolerant).
+    Check (Wait-CellNotEmpty $rtd 'B13' 10)                  'RTD DefaultHost reports a non-empty host'
+    Check ((Get-CellText $rtd 'B13').Contains($h)) ("RTD DefaultHost matches the configured host (B13='" + (Get-CellText $rtd 'B13') + "')")
+    Check (Wait-CellNumberMin $rtd 'B14' 1)                  'RTD ExcelUpdateInterval >= 1'
+    Check (Wait-CellNumberMin $rtd 'B15' 1)                  'RTD RedisUpdateInterval >= 1'
+    Check (Wait-CellRegex $rtd 'B16' '(?i)^(true|false|verdadeiro|falso)$') 'RTD RealTimeUpdates reports a boolean'
     Check (Wait-CellText $rtd 'B21' 'ws_key_value')          'RTD GET accepts a whitespace-only key'
     Check (Wait-CellRegex $rtd 'B20' '^#ERROR')              'RTD GET without a key returns #ERROR without freezing the host'
 
