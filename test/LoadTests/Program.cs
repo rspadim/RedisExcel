@@ -28,14 +28,33 @@ internal static class Program
 {
     private static long _received;
 
+    private const string Usage =
+        "usage: manager|raw <host:port> [seconds] [publishers] [listeners] [pattern] [channel]\n" +
+        "  publishers=0 listens only (generate the load externally, e.g.\n" +
+        "  redis-benchmark -n 20000 -q -P 16 PUBLISH <channel> <payload>; -t publish\n" +
+        "  is a silent no-op on Redis 7.4); pattern=true subscribes as a pattern.";
+
     private static int Main(string[] args)
     {
         string mode = args.Length > 0 ? args[0] : "manager";
+        if (mode != "manager" && mode != "raw")
+        {
+            Console.Error.WriteLine($"unknown mode '{mode}' (expected 'manager' or 'raw')");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
         string host = args.Length > 1 ? args[1] : "127.0.0.1:6379,abortConnect=False";
-        int seconds = args.Length > 2 ? int.Parse(args[2]) : 10;
-        int publishers = args.Length > 3 ? int.Parse(args[3]) : 2;
-        int listeners = args.Length > 4 ? int.Parse(args[4]) : 1;
-        bool pattern = args.Length > 5 && bool.Parse(args[5]);
+        int seconds = 10, publishers = 2, listeners = 1;
+        bool pattern = false;
+        if ((args.Length > 2 && !int.TryParse(args[2], out seconds))
+            || (args.Length > 3 && !int.TryParse(args[3], out publishers))
+            || (args.Length > 4 && !int.TryParse(args[4], out listeners))
+            || (args.Length > 5 && !bool.TryParse(args[5], out pattern)))
+        {
+            Console.Error.WriteLine("invalid numeric/boolean argument");
+            Console.Error.WriteLine(Usage);
+            return 2;
+        }
         string channelName = args.Length > 6 ? args[6] : null;
 
         AppDomain.MonitoringIsEnabled = true;
@@ -129,21 +148,25 @@ internal static class Program
             receivedAtStop = Interlocked.Read(ref _received);
         }
 
-        // Drain: wait until no new messages arrive for 1s (max 10s).
+        // Drain: wait until no new messages arrive for three consecutive 500ms
+        // samples (a single quiet window can truncate a post-stop backlog;
+        // max 10s).
         long last = Interlocked.Read(ref _received);
+        int stable = 0;
         var drain = Stopwatch.StartNew();
-        while (drain.Elapsed.TotalSeconds < 10)
+        while (drain.Elapsed.TotalSeconds < 10 && stable < 3)
         {
             Thread.Sleep(500);
             long now = Interlocked.Read(ref _received);
-            if (now == last)
-                break;
+            stable = now == last ? stable + 1 : 0;
             last = now;
         }
 
         long received = Interlocked.Read(ref _received);
-        long allocAfter = AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
-        long allocDelta = allocAfter - allocBefore;
+        // Capture the allocation delta at the same point as receivedAtStop, so
+        // drain traffic cannot skew the bytes-per-message figure.
+        long allocAtStop = AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
+        long allocDelta = allocAtStop - allocBefore;
 
         if (publishers > 0)
         {
@@ -151,7 +174,7 @@ internal static class Program
             Console.WriteLine($"delivery ratio : {(published == 0 ? 0 : 100.0 * receivedAtStop / published):F2}%");
         }
         Console.WriteLine($"received       : {receivedAtStop:N0} ({receivedAtStop / elapsedPublish:N0}/s in window, {received:N0} after drain)");
-        Console.WriteLine($"allocated      : {allocDelta:N0} bytes ({allocDelta / Math.Max(received, 1):N0} bytes per received message)");
+        Console.WriteLine($"allocated      : {allocDelta:N0} bytes ({allocDelta / Math.Max(receivedAtStop, 1):N0} bytes per received message in the window; process-wide estimate that includes publisher setup)");
         Console.WriteLine($"GC collections : gen0 +{GC.CollectionCount(0) - gc0}, gen1 +{GC.CollectionCount(1) - gc1}, gen2 +{GC.CollectionCount(2) - gc2}");
 
         for (int i = 0; i < tokens.Length; i++)

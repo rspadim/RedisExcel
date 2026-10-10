@@ -17,6 +17,10 @@ namespace RedisExcel
         // sized into cells and would only cost memory before failing.
         private const int MaxExcelRows = 1048576;
         private const int MaxExcelColumns = 16384;
+        // Total-cell budget: per-dimension checks alone let a 130k x 16k matrix
+        // (2.1 billion cells) through to the allocation, where the cell shows a
+        // raw OutOfMemoryException instead of the documented size error.
+        private const long MaxExcelCells = 50000000;
 
         [ExcelFunction(Description = "Converts a 2D Excel matrix to a compact JSON array of arrays.")]
         public static string RedisUDFMatrixToJSON(
@@ -233,7 +237,8 @@ namespace RedisExcel
         /// </summary>
         private static void EnsureMatrixFitsExcel(int rows, int columns)
         {
-            if (rows > MaxExcelRows || columns > MaxExcelColumns)
+            if (rows > MaxExcelRows || columns > MaxExcelColumns
+                || (long)rows * columns > MaxExcelCells)
                 throw new ArgumentException("JSON is too large for an Excel sheet");
         }
     }

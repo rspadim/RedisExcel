@@ -164,11 +164,13 @@ function Resolve-RedisCli {
         $script:RedisExe = 'redis-cli'
         return
     }
-    $container = ((& docker ps --filter name=redisexcel-test --format "{{.Names}}" 2>$null) -join '').Trim()
-    if ($container -eq 'redisexcel-test') {
-        $script:RedisExe = 'docker'
-        $script:RedisPrefix = @('exec', 'redisexcel-test', 'redis-cli')
-        return
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $container = ((& docker ps --filter name=redisexcel-test --format "{{.Names}}" 2>$null) -join '').Trim()
+        if ($container -eq 'redisexcel-test') {
+            $script:RedisExe = 'docker'
+            $script:RedisPrefix = @('exec', 'redisexcel-test', 'redis-cli')
+            return
+        }
     }
     throw "redis-cli not found and container 'redisexcel-test' is not running. Pass -RedisCli (e.g. 'docker exec my-redis redis-cli')."
 }
@@ -907,16 +909,18 @@ try {
     # SaveAs can never delete the committed sample workbook.
     $tempOut = Join-Path $env:TEMP 'RedisExcel.Test.xlsx'
     $outPath = $tempOut
-    if ($isLocalHost -and -not $AsyncWrites) {
+    if ($isLocalHost -and -not $AsyncWrites -and -not $RealChannel -and -not $RealPattern) {
         $outDir = Join-Path $RepoRoot 'test'
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
         $outPath = Join-Path $outDir 'RedisExcel.Test.xlsx'
     }
     else {
-        # Remote hosts never write into the repository, and an async run adds
+        # Remote hosts never write into the repository, an async run adds
         # scratch cells (rows 50-53) that do not belong in the committed
-        # sample: keep both in %TEMP%.
-        Write-Host "The workbook will not be saved into the repository (remote host or -AsyncWrites)." -ForegroundColor DarkGray
+        # sample, and -RealChannel/-RealPattern put real data into the RTD
+        # sheet's B17/B18 cells, which the metadata sanitizer does not touch:
+        # keep all of those runs in %TEMP%.
+        Write-Host "The workbook will not be saved into the repository (remote host, -AsyncWrites or -RealChannel/-RealPattern)." -ForegroundColor DarkGray
     }
     Remove-Item -LiteralPath $tempOut -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveAs($tempOut, 51) } | Out-Null
@@ -989,10 +993,22 @@ try {
     # rejections are retried.
     $dup = Invoke-ExcelAction {
         $sheet = $script:Excel.ActiveSheet
-        if ($sheet.Name -notlike 'RTD (*') {
+        if ($sheet -and $sheet.Name -notlike 'RTD (*') {
             $sheet = @($copy.Worksheets | Where-Object { $_.Name -like 'RTD (*' })[0]
         }
-        if (-not $sheet -or $sheet.Name -eq 'RTD') { $sheet = $copy.Worksheets.Item(2) }
+        if (-not $sheet -or $sheet.Name -eq 'RTD') {
+            # Fallback: only accept the second sheet when it is not the original
+            # 'RTD' sheet; otherwise the 'duplicated sheet receives' check would
+            # silently test the original sheet and pass without testing the
+            # duplicated one.
+            $candidate = $null
+            try { $candidate = $copy.Worksheets.Item(2) } catch { $candidate = $null }
+            if ($candidate -and $candidate.Name -ne 'RTD') { $sheet = $candidate }
+        }
+        if (-not $sheet -or $sheet.Name -eq 'RTD') {
+            $names = (@($copy.Worksheets | ForEach-Object { $_.Name }) -join ', ')
+            throw ("no duplicated RTD sheet found (need a sheet whose name is not 'RTD'); workbook sheets: " + $names)
+        }
         $sheet
     }
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-2' $rtd 'B7' 'copy-2')        'original keeps receiving after a sheet is copied'

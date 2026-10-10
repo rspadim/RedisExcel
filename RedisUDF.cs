@@ -40,7 +40,10 @@ namespace RedisExcel
         // skip a message that did not change since the last successful publish.
         // Bounded LRU: the marker is only remembered after a publish that had
         // readers, and concurrent check/publish/store must be atomic per key.
-        private static readonly PublishDedupCache _lastPublishedMessages =
+        // Not readonly: the unit tests swap it for a small deterministic cache
+        // (ResetDedupCacheForTests) so their seeds cannot be evicted by a
+        // machine RedisExcel.json with a tiny PublishDedupCacheSize.
+        private static PublishDedupCache _lastPublishedMessages =
             new PublishDedupCache(AppConfig.Current.PublishDedupCacheSize);
 
         // Striped locks: PublishIfChanged serializes its check -> publish -> store
@@ -77,6 +80,46 @@ namespace RedisExcel
         /// <summary>Dedup marker cache, exposed internally so the listener-join
         /// clearing rules can be unit tested offline.</summary>
         internal static PublishDedupCache LastPublishedMessagesForTests => _lastPublishedMessages;
+
+        /// <summary>Test-only: replaces the shared cache with a deterministic
+        /// capacity so the seeds used by the listener tests cannot be evicted
+        /// by a small PublishDedupCacheSize from the machine's config file.</summary>
+        internal static void ResetDedupCacheForTests(int capacity)
+        {
+            _lastPublishedMessages = new PublishDedupCache(capacity);
+        }
+
+        /// <summary>
+        /// Drops the process-wide ChannelLatest state (listeners, latest messages
+        /// and publish-dedup markers). Called by AddIn.AutoOpen after
+        /// RedisRuntime.ResetAfterAddInReload: the previous session's subscription
+        /// tokens died with the old runtime, so a cached listener/message would
+        /// otherwise make a reloaded add-in answer from stale state without ever
+        /// re-subscribing.
+        /// </summary>
+        internal static void ResetAfterAddInReload()
+        {
+            foreach (var kv in _channelListeners)
+            {
+                if (!_channelListeners.TryRemove(kv.Key, out var listener))
+                    continue;
+                try
+                {
+                    listener.Close();
+                    listener.Token?.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    logger.Debug(ex, $"ResetAfterAddInReload: error disposing listener {kv.Key}");
+                }
+            }
+            _latestMessages.Clear();
+            foreach (var key in _lastPublishedMessages.SnapshotKeys())
+            {
+                lock (PublishLock(key))
+                    _lastPublishedMessages.Remove(key);
+            }
+        }
 
         /// <summary>
         /// Entry point for <see cref="RedisSubscriptionManager.ListenerJoined"/>:
@@ -525,6 +568,10 @@ namespace RedisExcel
                 throw new ArgumentException("numeric argument is not valid");
             if (value is double d && !double.IsNaN(d) && d != Math.Truncate(d))
                 throw new ArgumentException("numeric argument is not an integer");
+            // float is not an Excel cell type, but the helper is shared with
+            // programmatic callers: never let a fraction slip through Convert.
+            if (value is float f && (float.IsNaN(f) || f != Math.Truncate(f)))
+                throw new ArgumentException("numeric argument is not an integer");
             if (value is decimal m && m != Math.Truncate(m))
                 throw new ArgumentException("numeric argument is not an integer");
             try
@@ -696,7 +743,7 @@ namespace RedisExcel
             return RedisUDFChannelPublishIfChangedCore(channel, json, optionalHost);
         }
 
-        [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present", IsVolatile = true)]
+        [ExcelFunction(Description = "Publishes a message to a Redis channel unless it is unchanged since the last delivery", IsVolatile = true)]
         public static object RedisUDFChannelPublishIfChanged(
             [ExcelArgument(Description = "Redis channel to publish to")] object channel,
             [ExcelArgument(Description = "Message content to publish")] object message,
@@ -708,7 +755,7 @@ namespace RedisExcel
                 () => RedisUDFChannelPublishIfChangedCore(channel, message, optionalHost));
         }
 
-        [ExcelFunction(Description = "Publishes a message to a Redis channel only if subscribers are present; runs once per entry/argument change (non-volatile)")]
+        [ExcelFunction(Description = "Publishes a message to a Redis channel unless it is unchanged since the last delivery; runs once per entry/argument change (non-volatile)")]
         public static object RedisUDFChannelPublishIfChangedNonVolatile(
             [ExcelArgument(Description = "Redis channel to publish to")] object channel,
             [ExcelArgument(Description = "Message content to publish")] object message,
@@ -838,13 +885,15 @@ namespace RedisExcel
                 string channelStr = ToRedisString(channel);
                 if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
-                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
+                // Convert before touching the connection: an invalid message
+                // argument must not initialize a connection just to be rejected.
                 string messageStr = ToRedisString(message) ?? "";
+                var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, readers={readers}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={host}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : readers + " readers(s)")}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : $"{readers} readers(s)";
             }
             catch (Exception ex)
@@ -1549,10 +1598,11 @@ namespace RedisExcel
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
+                // Thrown (not returned) so Fail() logs the diagnosis, like SetEx.
                 if (ttl <= 0)
-                    return "Error: ttl must be a positive number of seconds";
+                    throw new ArgumentException("ttl must be a positive number of seconds");
                 if (ttl > MaxTtlSeconds)
-                    return "Error: ttl is out of range";
+                    throw new ArgumentException("ttl is out of range");
                 string keyStr = RequireText(key, "key");
                 if (ShouldFireAndForget(replyDependent: true))
                 {
@@ -1702,9 +1752,11 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     var ttl = tasks[i].GetAwaiter().GetResult();
-                    // Same representation as RedisUDFTTL: fractional seconds,
-                    // -1 when the key is missing or has no expiry.
-                    result[i, 1] = ttl.HasValue ? ToRedisString(ttl.Value.TotalSeconds) : "-1";
+                    // Same representation as RedisUDFTTL: a NUMBER of seconds
+                    // (the scalar function returns a double), -1 when the key is
+                    // missing or has no expiry. Text here used to break
+                    // SUM()/ISNUMBER and exposed G17 noise ("99.74499999999999").
+                    result[i, 1] = ttl.HasValue ? (object)ttl.Value.TotalSeconds : -1;
                 }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFTTLMultiples: {count} keys, host={host}");
@@ -1789,13 +1841,16 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
+                // Validate the hash key first: the same precedence as HashSet,
+                // so a missing key reports "a hash key is required" even when
+                // the range is empty.
+                string hashKeyStr = RequireText(hashKey, "hash key");
                 if (fieldValuePairs == null)
                     throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(fieldValuePairs);
                 var entries = CollectHashEntries(pairs);
                 if (entries.Count == 0)
                     throw new ArgumentException("no entries to write");
-                string hashKeyStr = RequireText(hashKey, "hash key");
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 GetDb(host).HashSet(hashKeyStr, entries.ToArray(),
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
@@ -1902,7 +1957,18 @@ namespace RedisExcel
                 var tasks = keysList.Select(k => batch.HashGetAsync(k, fieldStr)).ToArray();
                 batch.Execute();
                 for (int i = 0; i < tasks.Length; i++)
-                    result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
+                {
+                    // Per-row try: one failing hash (e.g. WRONGTYPE) must not
+                    // discard the whole matrix - the other rows still report.
+                    try
+                    {
+                        result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
+                    }
+                    catch (Exception ex)
+                    {
+                        result[i, 1] = "Error: " + ex.Message;
+                    }
+                }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={count}, host={host}");
                 return result;

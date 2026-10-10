@@ -1,3 +1,5 @@
+using System;
+using System.Reflection;
 using ExcelDna.Integration;
 using Newtonsoft.Json.Linq;
 using Xunit;
@@ -6,6 +8,9 @@ namespace RedisExcel.Tests
 {
     public class ExcelJsonTests
     {
+        private static readonly MethodInfo EnsureMatrixFitsExcelMethod = typeof(ExcelJson)
+            .GetMethod("EnsureMatrixFitsExcel", BindingFlags.NonPublic | BindingFlags.Static);
+
         [Fact]
         public void MatrixToJSON_IntegralDoublesBecomeLongs()
         {
@@ -367,6 +372,35 @@ namespace RedisExcel.Tests
             // the exact message is not stable; only the "Error:" prefix is.
             var result = ExcelJson.RedisUDFJSONToMatrix("[1e999]", "");
             Assert.StartsWith("Error:", result[0, 0].ToString());
+        }
+
+        [Fact]
+        public void EnsureMatrixFitsExcel_TotalCellBudget_RejectsOverBudgetMatrix()
+        {
+            // 130000 x 16384 is within each per-dimension limit but is 2.1
+            // billion cells: the 50M total-cell budget must reject it before
+            // the matrix is allocated (previously an OutOfMemoryException
+            // surfaced as a raw error cell).
+            Assert.NotNull(EnsureMatrixFitsExcelMethod);
+            var invocation = Assert.Throws<TargetInvocationException>(
+                () => EnsureMatrixFitsExcelMethod.Invoke(null, new object[] { 130000, 16384 }));
+
+            var error = Assert.IsType<ArgumentException>(invocation.InnerException);
+            Assert.Equal("JSON is too large for an Excel sheet", error.Message);
+        }
+
+        [Fact]
+        public void EnsureMatrixFitsExcel_RowLimitBoundaries()
+        {
+            // The maximum row count with a single column stays within the
+            // total-cell budget and must pass...
+            Assert.Null(EnsureMatrixFitsExcelMethod.Invoke(null, new object[] { 1048576, 1 }));
+
+            // ...while one row past the Excel limit must throw.
+            var invocation = Assert.Throws<TargetInvocationException>(
+                () => EnsureMatrixFitsExcelMethod.Invoke(null, new object[] { 1048577, 1 }));
+
+            Assert.IsType<ArgumentException>(invocation.InnerException);
         }
     }
 }

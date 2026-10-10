@@ -34,6 +34,31 @@ jobs:
       - name: Install Redis server (Memurai developer edition)
         run: choco install memurai-developer -y --no-progress
 
+      - name: Wait for Redis to answer PING
+        shell: pwsh
+        run: |
+          # AbortOnConnectFail=False makes the smoke client swallow a server that
+          # is still starting; probe the raw Redis protocol until PONG before
+          # running the smoke tests, so a slow service start cannot fail the job.
+          $deadline = (Get-Date).AddSeconds(30)
+          while ((Get-Date) -lt $deadline) {
+            try {
+              $client = New-Object System.Net.Sockets.TcpClient
+              $client.Connect('127.0.0.1', 6379)
+              $stream = $client.GetStream()
+              $payload = [System.Text.Encoding]::ASCII.GetBytes("PING`r`n")
+              $stream.Write($payload, 0, $payload.Length)
+              $buffer = New-Object byte[] 16
+              $read = $stream.Read($buffer, 0, $buffer.Length)
+              $response = [System.Text.Encoding]::ASCII.GetString($buffer, 0, $read)
+              $client.Close()
+              if ($response -match 'PONG') { Write-Host "Redis is ready: $response"; exit 0 }
+            }
+            catch { }
+            Start-Sleep -Seconds 1
+          }
+          throw "Redis on 127.0.0.1:6379 did not answer PING within 30s"
+
       - name: Run smoke tests
         run: dotnet run --project test/SmokeTests -c Release -- "127.0.0.1:6379"
 

@@ -361,6 +361,7 @@ namespace RedisExcel
 
             private readonly bool _skipRepeated;
             private readonly object _serSync = new object();
+            private readonly object _dedupSync = new object();
             private volatile Action<string>[] _listenersSnapshot = EmptyListeners;
             private ISubscriber _subscriber;
             private RedisValue _lastMessage;
@@ -401,14 +402,17 @@ namespace RedisExcel
             /// </summary>
             public void ResetLastMessage()
             {
-                // HandleMessage runs on the subscriber thread without this lock.
-                // The flag is published/released with Volatile accesses (paired
-                // with HandleMessage), so a concurrent check either observes the
-                // reset or the fully published payload. A benign race with it
-                // only causes one redundant fan-out (the joiner is in the
-                // rebuilt snapshot), never a lost message.
-                Volatile.Write(ref _hasLastMessage, false);
-                _lastMessage = RedisValue.Null;
+                // Serialized with HandleMessage through _dedupSync: the marker
+                // must never be read while another thread replaces it (a torn
+                // RedisValue read used to make the comparison throw and leave
+                // the channel deaf). A reset racing a message either wins (the
+                // payload is fanned out again) or loses (the marker already
+                // reflects the delivered payload) - both safe.
+                lock (_dedupSync)
+                {
+                    _hasLastMessage = false;
+                    _lastMessage = RedisValue.Null;
+                }
             }
 
             /// <summary>
@@ -496,15 +500,25 @@ namespace RedisExcel
                 // Duplicate suppression: identical consecutive payloads (price feeds
                 // republish unchanged values constantly) change nothing in Excel, so
                 // skip the string decode and the whole fan-out. StackExchange.Redis
-                // delivers messages for a channel sequentially, so no lock is needed.
-                // Patterns are excluded because different channels interleave here.
-                // The flag is the publication point: Volatile read/write pairs with
-                // ResetLastMessage, and _lastMessage is only read after observing
-                // the flag (release/acquire), so the caller-side reset is safe.
-                if (_skipRepeated && !Pattern && Volatile.Read(ref _hasLastMessage) && message == _lastMessage)
-                    return;
-                _lastMessage = message;
-                Volatile.Write(ref _hasLastMessage, true);
+                // does NOT deliver plain handlers sequentially: MessageCompletable
+                // falls back to the thread pool, so several messages of one channel
+                // can run HandleMessage concurrently and the marker needs the lock
+                // (a torn RedisValue read once made the comparison throw inside the
+                // subscriber callback - which StackExchange.Redis swallows - and the
+                // channel stayed deaf afterwards). Patterns are excluded because
+                // different channels interleave here. Suppression stays best-effort
+                // under concurrency: two racing copies may both fan out, which is
+                // harmless.
+                if (_skipRepeated && !Pattern)
+                {
+                    lock (_dedupSync)
+                    {
+                        if (_hasLastMessage && message == _lastMessage)
+                            return;
+                        _lastMessage = message;
+                        _hasLastMessage = true;
+                    }
+                }
 
                 string text = message; // implicit RedisValue -> string conversion (may be null, as in the original code)
                 var listeners = _listenersSnapshot;

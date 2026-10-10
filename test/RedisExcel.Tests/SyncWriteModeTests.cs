@@ -6,8 +6,12 @@ namespace RedisExcel.Tests
     /// Offline checks for the SyncWrite mode helpers: the fire-and-forget
     /// decision per mode and the exact marker texts returned instead of a
     /// reply (the 24 call sites use these helpers, so pinning the helpers
-    /// pins the mode semantics).
+    /// pins the mode semantics). Shares the write-mode collection with
+    /// RedisUdfAsyncTests/UdfArgumentValidationTests: this class flips the
+    /// process-wide SyncWrite override, and the dispatch those classes test
+    /// reads the same override.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class SyncWriteModeTests
     {
         [Theory]

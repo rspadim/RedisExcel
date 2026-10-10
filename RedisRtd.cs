@@ -21,6 +21,10 @@ namespace RedisExcel
             // A same-process reload (Excel re-opening the add-in without a new
             // AppDomain) must not reuse the shut-down runtime.
             RedisRuntime.ResetAfterAddInReload();
+            // The previous session's ChannelLatest subscriptions died with the
+            // old runtime; drop the cached listeners/messages/markers so a
+            // reloaded add-in resubscribes instead of answering from stale state.
+            RedisUDF.ResetAfterAddInReload();
             ComServer.DllRegisterServer();
             UpdateCheck.Start();
         }
@@ -54,6 +58,21 @@ namespace RedisExcel
         // (poll result or subscription message); flushing the initial null
         // _lastValue on the first Excel tick would blank the cell.
         private bool _dirty = false;
+
+        /// <summary>
+        /// Marks the topic dirty when a value already arrived while ConnectData
+        /// was running: Excel-DNA drops pushes for topics that are not active
+        /// yet, so the next flush tick must re-publish the cached value once the
+        /// topic is active (UpdateValue is a no-op when the value is unchanged).
+        /// </summary>
+        internal void MarkDirtyAfterConnect()
+        {
+            lock (_sync)
+            {
+                if (_lastValue != null)
+                    _dirty = true;
+            }
+        }
 
         public TopicData(Topic topic, string type, string keyOrChannel, string field, string host)
         {
@@ -201,6 +220,14 @@ namespace RedisExcel
             }
         }
 
+        // NOTE (upstream risk, Excel-DNA 1.9.0-beta2/rc1): a worker thread calling
+        // Topic.UpdateValue takes ExcelRtdServer._updateLock and then
+        // RtdUpdateSynchronization._lockObject, while the Excel main thread inside
+        // ProcessUpdateNotifications takes them in the opposite order (ABBA). The
+        // probability per update is low and no freeze was ever observed in
+        // practice; the known mitigation (batching UpdateValue on the main thread
+        // via ExcelAsyncUtil.QueueAsMacro) would rework the whole delivery path,
+        // so this stays tracked as an upstream issue instead (DESIGN-v1.4.0.md).
         public void UpdateAndSendToExcel(string data)
         {
             if (Disconnected)
@@ -565,7 +592,7 @@ namespace RedisExcel
                         // retries it, and the cell starts with the #ERROR text
                         // below until the first message overwrites it.
                         _subscribedTopics[topic.TopicId] = td;
-                        var subscribeError = TrySubscribe(td);
+                        var subscribeError = TrySubscribe(td, out _);
                         if (subscribeError != null)
                             return $"#ERROR: ConnectData: {subscribeError}";
                         break;
@@ -579,8 +606,13 @@ namespace RedisExcel
                 // not active yet, so return the value cached by that push instead
                 // of the sentinel (which would overwrite it permanently in
                 // non-coalesced realtime mode). LastValue is read under the topic
-                // lock, so this is safe against concurrent updates.
-                return td.LastValue ?? "(ConnectData)";
+                // lock, so this is safe against concurrent updates. A value that
+                // raced the activation also marks the topic dirty, so the first
+                // flush tick re-publishes it once the topic is active
+                // (UpdateValue is a no-op when the value is unchanged).
+                string initialValue = td.LastValue;
+                td.MarkDirtyAfterConnect();
+                return initialValue ?? "(ConnectData)";
             }
             catch (Exception ex)
             {
@@ -687,21 +719,25 @@ namespace RedisExcel
         /// flood the log. Each failure schedules the next retry (1s, 2s, 4s ...
         /// capped at 30s, see NextSubscribeAttemptUtc).
         /// </summary>
-        private string TrySubscribe(TopicData td)
+        private string TrySubscribe(TopicData td, out bool attempted)
         {
+            attempted = false;
             if (td.Disconnected || td.Subscription != null)
                 return null;
             // Only one thread may run Subscribe for a topic at a time: both the
             // Excel thread (ConnectData) and the Redis tick (retry) can get here.
             if (!td.TryBeginSubscribe())
                 return null;
+            attempted = true;
             try
             {
                 if (td.Disconnected || td.Subscription != null)
                     return null;
                 var subscription = Subscribe(td);
-                // Subscribe succeeded: clear the retry backoff.
+                // Subscribe succeeded: clear the retry backoff so a later
+                // failure starts again at 1s instead of jumping to the 30s cap.
                 td.NextSubscribeAttemptUtc = default(DateTime);
+                Interlocked.Exchange(ref td.SubscribeAttempts, 0);
                 if (!td.InstallSubscription(subscription))
                 {
                     // DisconnectData/ServerTerminate raced with the install: the
@@ -760,8 +796,9 @@ namespace RedisExcel
                     continue;
                 if (td.NextSubscribeAttemptUtc > now)
                     continue;
-                retried++;
-                TrySubscribe(td);
+                TrySubscribe(td, out bool attempted);
+                if (attempted)
+                    retried++;
             }
         }
 
@@ -962,7 +999,18 @@ namespace RedisExcel
                 else if (td.Type == "GET")
                     singleTasks.Add(new KeyValuePair<TopicData, Task<RedisValue>>(td, batch.StringGetAsync(td.KeyOrChannel)));
             }
-            batch.Execute();
+            try
+            {
+                batch.Execute();
+            }
+            catch (Exception ex)
+            {
+                // The batch failed as a whole (connection lost, disposed mux...):
+                // report it for this host and fall through so the per-item loops
+                // below still observe/drain each task and nothing is lost
+                // silently (their per-item try/catch logs the individual faults).
+                logger.Error(ex, $"PollHost: batch execute failed, host={host}");
+            }
             foreach (var pair in singleTasks)
             {
                 try
@@ -1076,7 +1124,7 @@ namespace RedisExcel
         {
             try
             {
-                return RedisRtd.DefaultHost();
+                return RedisRtd.DefaultHost() ?? "";
             }
             catch
             {

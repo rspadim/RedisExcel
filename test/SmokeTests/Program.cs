@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text;
 using System.Threading;
 
 /// <summary>
@@ -16,6 +17,11 @@ using System.Threading;
 internal static class Program
 {
     private const string DefaultHost = "127.0.0.1:6379,abortConnect=False";
+
+    // Dedicated Redis for the concurrent dedup regression: a throwaway
+    // container on 6396, so the burst never touches the smoke's main server.
+    private const string ConcurrentEndpoint = "127.0.0.1:6396";
+    private const string ConcurrentContainerName = "rs-smoke-2";
 
     private static int _failures;
     private static readonly object Sync = new object();
@@ -288,7 +294,346 @@ internal static class Program
         Check(subscriptions.ListenerCount == totalListenersBefore && subscriptions.ChannelCount == totalChannelsBefore,
             "parameterless counters back to baseline after the origin test");
 
+        // Concurrency regression for the duplicate-suppression marker, kept last
+        // because it hammers a dedicated Redis (container on 6396); it creates
+        // and tears down its own listener, so the counters above are unaffected.
+        RunConcurrentDedupDeliveryTest(subscriptions, host, skipRepeated);
+
         Console.WriteLine(_failures == 0 ? "ALL PASS" : _failures + " FAILURE(S)");
         return _failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// Concurrency regression for the duplicate-suppression marker: the messages
+    /// of one literal channel are delivered by StackExchange.Redis through the
+    /// thread pool, so several HandleMessage calls can run at the same time. The
+    /// shared "last message" marker used to be read while another thread replaced
+    /// it; a torn RedisValue read then threw inside the subscriber callback (which
+    /// StackExchange.Redis swallows), leaving the channel permanently deaf -
+    /// deliveries stalled while publishers kept publishing. The product now guards
+    /// the marker with a lock. This section hammers it with 4 x 50,000 distinct
+    /// payloads (200,000 deliveries required within a bounded wait) and then
+    /// probes the suppression path with 50,000 identical payloads (one delivery
+    /// expected, a small allowance for races), finishing with a different payload
+    /// that must still arrive.
+    ///
+    /// Publishes go through a direct ConnectionMultiplexer/ISubscriber against the
+    /// dedicated container on 127.0.0.1:6396: started here when a Docker Linux
+    /// daemon is available, reused when something already answers there, and
+    /// falling back to the smoke's main host when Docker cannot provide a Linux
+    /// container (so a Docker-less CI still exercises the concurrency path).
+    /// </summary>
+    private static void RunConcurrentDedupDeliveryTest(RedisSubscriptionManager subscriptions, string fallbackHost, bool skipRepeated)
+    {
+        const int publisherCount = 4;
+        const int messagesPerPublisher = 50000;
+        const int constantProbeCount = 50000;
+        const long totalDistinct = (long)publisherCount * messagesPerPublisher;
+
+        string channel = "smoke:dedup:" + Guid.NewGuid().ToString("N");
+        string target = ConcurrentEndpoint;
+        bool startedContainer = false;
+        IDisposable token = null;
+        ConnectionMultiplexer mux = null;
+
+        Console.WriteLine("concurrent dedup: channel " + channel);
+        try
+        {
+            if (IsRedisReachable(ConcurrentEndpoint))
+            {
+                Console.WriteLine("concurrent dedup: using the Redis already answering on " + ConcurrentEndpoint);
+            }
+            else
+            {
+                string dockerDetail = null;
+                if (IsLinuxDockerAvailable(out dockerDetail))
+                {
+                    // docker run -d --rm --name rs-smoke-2 -p 6396:6379 redis:7-alpine
+                    RunTool("docker", "rm -f " + ConcurrentContainerName, 30000, out _, out _);
+                    int runExit;
+                    string runOutput;
+                    bool launched = RunTool("docker",
+                        "run -d --rm --name " + ConcurrentContainerName + " -p 6396:6379 redis:7-alpine",
+                        180000, out runExit, out runOutput);
+                    startedContainer = launched && runExit == 0;
+                    if (!startedContainer)
+                    {
+                        Check(false, "concurrent dedup: docker run " + ConcurrentContainerName +
+                            " failed (" + Summarize(runOutput) + ")");
+                        return;
+                    }
+                    if (!WaitForRedis(ConcurrentEndpoint, 30000))
+                    {
+                        Check(false, "concurrent dedup: container " + ConcurrentContainerName +
+                            " did not answer PING on " + ConcurrentEndpoint + " within 30 s");
+                        return;
+                    }
+                    Console.WriteLine("concurrent dedup: started container " + ConcurrentContainerName +
+                        " on " + ConcurrentEndpoint + " (" + dockerDetail + ")");
+                }
+                else
+                {
+                    target = fallbackHost;
+                    Console.WriteLine("concurrent dedup: Docker Linux daemon unavailable (" +
+                        Summarize(dockerDetail) + "); using the main host " + fallbackHost);
+                }
+            }
+
+            long delivered = 0;
+            token = subscriptions.Subscribe(target, channel, pattern: false,
+                onMessage: m => Interlocked.Increment(ref delivered));
+
+            var options = ConfigurationOptions.Parse(target);
+            options.AbortOnConnectFail = false;
+            options.ConnectRetry = 1;
+            options.ConnectTimeout = 5000;
+            options.SyncTimeout = 60000;
+            mux = ConnectionMultiplexer.Connect(options);
+            var publisher = mux.GetSubscriber();
+            var server = mux.GetServer(mux.GetEndPoints().First());
+            var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+
+            Func<long> numsub = () =>
+            {
+                var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
+                return arr.Length >= 2 ? (long)arr[1] : 0;
+            };
+            Check(WaitUntil(() => numsub() == 1, 10000),
+                "concurrent dedup: listener subscribed on the " + target + " server");
+
+            // Phase 1: 4 publisher threads x 50,000 globally distinct payloads.
+            // The per-thread prefix keeps every payload unique across threads, so
+            // consecutive-duplicate suppression can never legitimately drop one.
+            var phase1 = Stopwatch.StartNew();
+            var threads = new Thread[publisherCount];
+            for (int t = 0; t < publisherCount; t++)
+            {
+                int threadIndex = t;
+                threads[t] = new Thread(() =>
+                {
+                    for (int i = 0; i < messagesPerPublisher; i++)
+                        publisher.Publish(redisChannel, threadIndex + ":" + i, CommandFlags.FireAndForget);
+                });
+                threads[t].IsBackground = true;
+                threads[t].Start();
+            }
+            bool publishersJoined = true;
+            foreach (var thread in threads)
+            {
+                if (!thread.Join(60000))
+                    publishersJoined = false;
+            }
+
+            // PING on the publisher connection is an ordering barrier: Redis
+            // processes one connection's commands in order, so the reply proves
+            // the server accepted all 200,000 publishes; a missing delivery is
+            // then a consumer-side stall, not a slow publisher.
+            string barrierError = null;
+            try
+            {
+                mux.GetDatabase().Ping();
+            }
+            catch (Exception ex)
+            {
+                barrierError = ex.GetType().Name + ": " + ex.Message;
+            }
+
+            bool phase1Complete = WaitUntil(() => Interlocked.Read(ref delivered) >= totalDistinct, 60000);
+            long phase1Delivered = Interlocked.Read(ref delivered);
+            long phase1Ms = phase1.ElapsedMilliseconds;
+            if (!phase1Complete)
+            {
+                Console.WriteLine("  concurrent dedup diagnostics (delivery stalled while publishing continued):");
+                Console.WriteLine($"    issued:            {totalDistinct:N0} (4 threads x {messagesPerPublisher:N0} FireAndForget publishes)");
+                Console.WriteLine($"    delivered:         {phase1Delivered:N0}");
+                Console.WriteLine($"    elapsed:           {phase1Ms:N0} ms (bound 60000 ms)");
+                Console.WriteLine($"    publishers joined: {publishersJoined}");
+                if (barrierError != null)
+                    Console.WriteLine("    barrier PING:      " + barrierError);
+            }
+            Check(phase1Complete,
+                $"concurrent dedup: all {totalDistinct:N0} distinct payloads delivered under concurrent publish " +
+                $"(got {phase1Delivered:N0} in {phase1Ms:N0} ms)");
+
+            // Phase 2: 50,000 identical payloads must collapse to a single
+            // delivery; a few racing copies are tolerated (best-effort dedup).
+            long constantBase = Interlocked.Read(ref delivered);
+            for (int i = 0; i < constantProbeCount; i++)
+                publisher.Publish(redisChannel, "dedup-constant", CommandFlags.FireAndForget);
+
+            if (skipRepeated)
+            {
+                bool constantSeen = WaitUntil(() => Interlocked.Read(ref delivered) > constantBase, 15000);
+                if (!constantSeen)
+                {
+                    Console.WriteLine("  concurrent dedup diagnostics: the constant probe delivered nothing " +
+                        "within 15 s (listener deaf?)");
+                }
+                Thread.Sleep(1000); // bounded window for racing duplicates to surface
+                long constantDelta = Interlocked.Read(ref delivered) - constantBase;
+                Check(constantSeen && constantDelta >= 1 && constantDelta <= 3,
+                    $"concurrent dedup: constant-payload probe delivered once out of {constantProbeCount:N0} " +
+                    $"identical payloads (got {constantDelta:N0}; <=3 allowed for racing duplicates)");
+            }
+            else
+            {
+                bool constantComplete = WaitUntil(
+                    () => Interlocked.Read(ref delivered) - constantBase >= constantProbeCount, 30000);
+                long constantDelta = Interlocked.Read(ref delivered) - constantBase;
+                Check(constantComplete,
+                    $"concurrent dedup: constant payloads all delivered (dedup disabled by config; " +
+                    $"got {constantDelta:N0}/{constantProbeCount:N0})");
+            }
+
+            // Phase 3: the channel must still deliver a different payload.
+            long afterBase = Interlocked.Read(ref delivered);
+            publisher.Publish(redisChannel, "dedup-after");
+            bool afterDelivered = WaitUntil(() => Interlocked.Read(ref delivered) > afterBase, 10000);
+            long afterDelta = Interlocked.Read(ref delivered) - afterBase;
+            Check(afterDelivered,
+                $"concurrent dedup: stream still delivers after the constant-payload probe (got {afterDelta:N0} of 1)");
+        }
+        finally
+        {
+            if (token != null)
+            {
+                try { token.Dispose(); }
+                catch (Exception ex) { Console.WriteLine("concurrent dedup: listener dispose failed: " + ex.Message); }
+            }
+            if (mux != null)
+            {
+                try { mux.Dispose(); }
+                catch { }
+            }
+            if (startedContainer)
+            {
+                int stopExit;
+                string stopOutput;
+                bool stopped = RunTool("docker", "stop " + ConcurrentContainerName, 30000, out stopExit, out stopOutput);
+                if (stopped && stopExit == 0)
+                    Console.WriteLine("concurrent dedup: container " + ConcurrentContainerName + " stopped (--rm removes it)");
+                else
+                    Console.WriteLine("concurrent dedup: warning: could not stop container " + ConcurrentContainerName +
+                        ": " + Summarize(stopOutput));
+                RunTool("docker", "rm -f " + ConcurrentContainerName, 30000, out _, out _);
+            }
+        }
+    }
+
+    /// <summary>True when a PING round-trips to the endpoint (short timeouts).</summary>
+    private static bool IsRedisReachable(string endpoint)
+    {
+        try
+        {
+            var options = ConfigurationOptions.Parse(endpoint);
+            options.AbortOnConnectFail = false;
+            options.ConnectRetry = 1;
+            options.ConnectTimeout = 1500;
+            options.SyncTimeout = 3000;
+            using (var probe = ConnectionMultiplexer.Connect(options))
+            {
+                probe.GetDatabase().Ping();
+                return true;
+            }
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Bounded readiness wait for a Redis endpoint.</summary>
+    private static bool WaitForRedis(string endpoint, int timeoutMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            if (IsRedisReachable(endpoint))
+                return true;
+            Thread.Sleep(500);
+        }
+        return IsRedisReachable(endpoint);
+    }
+
+    /// <summary>
+    /// Docker can only provide the redis:7-alpine container when the CLI can
+    /// reach a Linux daemon (Docker Desktop/WSL2 or a Linux host). A Windows
+    /// container daemon or a missing/unreachable daemon reports unavailable
+    /// and the caller falls back to the smoke's main host.
+    /// </summary>
+    private static bool IsLinuxDockerAvailable(out string detail)
+    {
+        detail = string.Empty;
+        int exitCode;
+        string output;
+        if (!RunTool("docker", "version --format {{.Server.Os}}", 20000, out exitCode, out output) || exitCode != 0)
+        {
+            detail = output;
+            return false;
+        }
+        string serverOs = output.Trim();
+        detail = "docker server os=" + serverOs;
+        return string.Equals(serverOs, "linux", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Runs a tool with a bounded wait, capturing merged stdout/stderr. Returns
+    /// false on timeout or when the process could not be started at all.
+    /// </summary>
+    private static bool RunTool(string fileName, string arguments, int timeoutMs, out int exitCode, out string output)
+    {
+        exitCode = -1;
+        output = string.Empty;
+        try
+        {
+            var psi = new ProcessStartInfo(fileName, arguments)
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            using (var process = Process.Start(psi))
+            {
+                var stdout = new StringBuilder();
+                var stderr = new StringBuilder();
+                process.OutputDataReceived += (sender, args) => { if (args.Data != null) { lock (stdout) stdout.AppendLine(args.Data); } };
+                process.ErrorDataReceived += (sender, args) => { if (args.Data != null) { lock (stderr) stderr.AppendLine(args.Data); } };
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+                if (!process.WaitForExit(timeoutMs))
+                {
+                    try { process.Kill(); } catch { }
+                    output = "timed out after " + timeoutMs + " ms";
+                    return false;
+                }
+                process.WaitForExit(); // flush the async output callbacks
+                lock (stdout) output = stdout.ToString();
+                lock (stderr)
+                {
+                    string errorText = stderr.ToString();
+                    if (errorText.Length > 0)
+                        output = output.Length > 0 ? output + " " + errorText : errorText;
+                }
+                exitCode = process.ExitCode;
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            output = ex.GetType().Name + ": " + ex.Message;
+            return false;
+        }
+    }
+
+    /// <summary>One-line, length-capped tool output for diagnostics.</summary>
+    private static string Summarize(string output)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return "no output";
+        string text = output.Replace("\r", " ").Replace("\n", " ").Trim();
+        while (text.Contains("  "))
+            text = text.Replace("  ", " ");
+        return text.Length <= 300 ? text : text.Substring(0, 300) + "...";
     }
 }

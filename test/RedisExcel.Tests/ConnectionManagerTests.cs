@@ -7,7 +7,11 @@ namespace RedisExcel.Tests
     /// Offline RedisConnectionManager lifecycle tests. No Redis server is
     /// involved: every path exercised here throws or returns before I/O
     /// (shutdown fence, never-created cache entries, malformed endpoints).
+    /// Shares the runtime-singleton collection with RedisRuntimeReloadTests:
+    /// the reload tests manipulate the process-wide managers other tests run
+    /// against.
     /// </summary>
+    [Collection("runtime-singleton")]
     public class ConnectionManagerTests
     {
         [Fact]
@@ -106,7 +110,11 @@ namespace RedisExcel.Tests
     /// <summary>
     /// Offline RedisRuntime reload tests: the add-in can be unloaded/reloaded
     /// in the same process, so the shutdown tombstone must be clearable.
+    /// Shares the runtime-singleton collection with ConnectionManagerTests:
+    /// Shutdown/Reset touch the process-wide managers, which no other test in
+    /// this collection may observe mid-swap.
     /// </summary>
+    [Collection("runtime-singleton")]
     public class RedisRuntimeReloadTests
     {
         [Fact]

@@ -8,11 +8,70 @@
   the second observer: the write is still enqueued once, but every subscriber
   now receives the queued result (delivered asynchronously). Duplicates log a
   warning. The Excel-DNA one-shot contract is unchanged.
+- Pub/Sub duplicate suppression is serialized now: StackExchange.Redis does
+  not dispatch plain channel handlers sequentially (its message completion
+  falls back to the thread pool), so several messages of one channel could run
+  the handler concurrently. The lock-free `_lastMessage` marker could be read
+  while another thread replaced it; a torn `RedisValue` read threw inside the
+  subscriber callback (which StackExchange.Redis swallows) and the channel
+  stayed deaf. The dedup check/update and the join reset share one lock;
+  suppression stays best-effort (two racing copies may both fan out, which is
+  harmless).
+- RTD SUB/PSUB retry hardening: a successful subscribe clears the retry
+  backoff and the attempt counter, so a later failure waits 1s again instead
+  of jumping to the 30s cap; the retry budget counts only real attempts; a
+  value that arrived while `ConnectData` was still activating the topic marks
+  it dirty so the first flush tick re-publishes it (Excel-DNA drops pushes for
+  topics that are not active yet); a whole-batch `Execute()` failure is logged
+  before the per-item loops drain the tasks; and `RedisRTDDefaultHost` returns
+  an empty string instead of `null`.
+- `RedisConnectionManager`: each pool caps its cached multiplexers (512
+  entries) and evicts disconnected ones past the cap - arbitrary host strings
+  from spreadsheet arguments could otherwise pin unreachable multiplexers and
+  their reconnect tasks forever (connected multiplexers are never evicted) -
+  and the legacy `RtdConnectionCount`/`UdfConnectionCount` now count created
+  multiplexers like `LiveConnectionCount` instead of cached entries.
+- UDF: `RedisUDFTTLMultiples` now returns numeric seconds like the scalar
+  `RedisUDFTTL` (text broke `SUM()`/`ISNUMBER` and exposed floating-point
+  noise); `RedisUDFHashGetFieldMultipleKeys` reports per-row errors (one
+  `WRONGTYPE` hash no longer discards the whole matrix); `ToInt64Invariant`
+  also rejects non-integral `float` arguments; `RedisUDFHashSetMultiple`
+  validates the hash key before the range (same precedence as `HashSet`);
+  `RedisUDFChannelPublish` converts the message before touching the connection
+  (an invalid message no longer initializes a connection just to be rejected).
+- `UpdateCheck.NormalizeTag` re-trims after stripping the suffix (`"v1.4.1 -rc"`
+  was rejected whole and missed update alerts) and version parts parse as
+  `long` (a large-but-real version number no longer silently disables the
+  alerts).
+- `ExcelJson`: `RedisUDFJSONToMatrix` also enforces a total-cell budget (50M
+  cells) on top of the per-dimension limits, so an oversized matrix reports
+  the documented size error instead of a raw `OutOfMemoryException`.
+- The `NLog.config` sample (and the Readme copy) no longer sets
+  `concurrentWrites`, an unknown property in NLog 6.
+
+### Changed
+
+- Config: an out-of-range `ExcelUpdateStyle` falls back to `Automatic`; host
+  aliases are trimmed and matched case-insensitively (exact match first, so a
+  config with two spellings keeps its own priority); the path enumeration is
+  guarded so a probing failure can never poison the cached config (every
+  function would have failed until Excel restarted); and the `C:\Windows`
+  candidate resolves through `SpecialFolder.Windows` instead of a hardcoded
+  path.
+- `RedisConnectionManager.Shutdown` is idempotent behind a one-owner gate
+  (racing callers return immediately instead of tearing down the same
+  multiplexers twice) and closes with `Close(false)` so it never waits for
+  in-flight commands on the Excel thread; new connections set `ConnectRetry=1`
+  (the default 3 multiplied the first-connect stall for a dead host).
+- Add-in reload: `AutoOpen` calls `RedisUDF.ResetAfterAddInReload` to drop the
+  previous session's `ChannelLatest` listeners, latest messages and
+  publish-dedup markers (its subscription tokens died with the old runtime),
+  so a reloaded add-in resubscribes instead of answering from stale state.
 
 ### Tests
 
 - New concurrent-subscribe test: 8 racing duplicate Subscribes enqueue exactly
-  one write and every observer is delivered once - 235 unit tests total.
+  one write and every observer is delivered once - 248 unit tests total.
   `WaitCompleted` now returns the real work result, and the async tests share
   a collection with the argument-validation tests so the process-wide
   write-mode test seam cannot leak across parallel test classes.
@@ -20,17 +79,41 @@
   re-reads twice one second apart; the async block guard scans the full
   A50:F53 range; the copy-workbook RTD sheet resolution retries (a busy Excel
   rejecting the call, `RPC_E_CALL_REJECTED`, or answering with a not-yet-ready
-  workbook no longer aborts the run); the startup prints the registered
-  antivirus status (Windows Security Center) so AV-induced COM flakes are
-  identified immediately; after quitting, the script waits (bounded) for its
-  hidden Excel to exit and reports leftovers, so back-to-back runs do not
-  overlap a teardown under antivirus scan.
+  workbook no longer aborts the run) and its fallback refuses to test the
+  original `RTD` sheet when no copy exists (it throws with the workbook's sheet
+  list); the startup prints the registered antivirus status (Windows Security
+  Center) so AV-induced COM flakes are identified immediately; after quitting,
+  the script waits (bounded) for its hidden Excel to exit and reports
+  leftovers, so back-to-back runs do not overlap a teardown under antivirus
+  scan; and `-RealChannel`/`-RealPattern` runs keep the workbook in `%TEMP%` so
+  live data cannot land in the committed sample.
+- CI waits for Redis to answer `PING` before the smoke suite: a slow Memurai
+  start no longer fails the job (`AbortOnConnectFail=False` had let the smoke
+  client arrive while the server was still starting).
+- Load tests validate their mode/arguments and print usage on bad input; the
+  drain waits for three consecutive quiet samples (a single quiet window could
+  truncate a post-stop backlog) and bytes/message is measured at the same stop
+  point as the received count, so drain traffic cannot skew it.
+- Hardening tests: config alias trimming/case-insensitivity and the
+  undefined-`ExcelUpdateStyle` reset, the exact-match alias priority, the JSON
+  total-cell budget boundaries, the volatile-write/`NonVolatile` exclusivity
+  pin with offline delegation checks, and a project-file parity test that
+  keeps the unit project's `Compile` list complete (RedisRtd.cs stays the
+  intentional exclusion).
 
 ### Docs
 
 - The async documentation now states that a duplicate registration never
   re-enqueues the write and still receives the queued result; the coverage
   lists were refreshed.
+- The configuration reference now documents the JSON-only keys
+  (`SkipRepeatedMessages`, `CoalesceRealtimeUpdates`, `MessageCounterThreshold`,
+  `ExcelUpdateStyle`, `UseGetMultiple`), the no-config `ExcelUpdateRateMs`
+  fallback (1000 ms vs 100 ms with a loaded file) and the XLL bitness choice;
+  the E2E parameter lists document `-SyncWrite`/`-AsyncWrites`; and the
+  load-test docs use the working
+  `redis-benchmark -n 20000 -q -P 16 PUBLISH <channel> <payload>` form
+  (`-t publish` is a silent no-op on Redis 7.4).
 
 ## v1.4.0
 

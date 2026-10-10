@@ -81,21 +81,28 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   value wins per window instead of one Excel update per message.
 - Timer callbacks are protected against reentrancy: a tick that fires while the
   previous one is still running is skipped, not queued, so a slow tick never
-  overlaps the next one. The `Automatic` threshold machinery is kept for
-  status/config compatibility, while delivery is coalesced by default
-  (`CoalesceRealtimeUpdates`).
+  overlaps the next one. `ExcelUpdateStyle: Automatic` still drives the
+  real-time/timer switch through `MessageCounterThreshold` (messages in the
+  last second): above the threshold the Excel tick disables real-time delivery,
+  and the 1s tick re-enables it once the rate drops; `<= 0` disables the
+  switch. With `CoalesceRealtimeUpdates` on (default) delivery is coalesced per
+  window regardless, but with it off the switch decides per-message pushes vs
+  dirty-value flushes on the Excel tick.
 - `HGETALL` output is valid JSON: `{"field":"value",...}`; a missing hash
   returns `{}` (not a sentinel string).
 - `RedisUDFChannelPublishIfChanged` dedup: in `sync` the last payload is
-  remembered per host/channel only after it was actually delivered, and the
-  marker is cleared when any listener joins or leaves - RTD `SUB`/`PSUB` as
-  well as UDF `ChannelLatest`; a pattern subscription clears the matching
-  channels of that host - so a late subscriber is never starved by a publish
-  it did not see. In the fire-and-forget modes the marker is recorded without
-  a confirmed delivery (an external subscriber joining later can miss an
-  unchanged payload until it changes); local listener joins still clear it.
-  The cache is safe under concurrent recalculation and LRU-capped by
-  `PublishDedupCacheSize` (default 10000).
+  remembered per host/channel only after it was actually delivered (a publish
+  with zero readers drops the marker), and the marker is cleared when a
+  listener (re)joins - RTD `SUB`/`PSUB` as well as UDF `ChannelLatest`; a
+  pattern subscription clears the matching channels of that host - and by an
+  explicit `RedisUDFChannelUnsubscribe` that removes that host/channel's local
+  listener. Generic listener leaves (for example an RTD topic disconnecting)
+  do not clear the marker. So a (re)joining local subscriber is never starved
+  by a publish it did not see. In the fire-and-forget modes the marker is
+  recorded without a confirmed delivery (an external subscriber joining later
+  can miss an unchanged payload until it changes); local listener (re)joins
+  still clear it. The cache is safe under concurrent recalculation and
+  LRU-capped by `PublishDedupCacheSize` (default 10000).
 - Reads and status functions are volatile by design: they re-execute on every
   recalculation (F9/edit) so they stay fresh. Every write function also has an
   additive `...NonVolatile` twin (same args/defaults, thin delegation, no
@@ -172,7 +179,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - The config file is read once per Excel process (restart Excel after editing
   it) and searched in: user profile, Excel folder, `C:\Windows` (first existing
   wins). A malformed first-existing file uses safe defaults instead of falling
-  through to a lower-priority file.
+  through to a lower-priority file. When no config file is found at all, the
+  legacy no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the
+  loaded-file default of 100 ms). An undefined `ExcelUpdateStyle` falls back to
+  `Automatic`, and host aliases are matched after trimming and
+  case-insensitively (exact match first).
 
 ## Build
 
@@ -197,22 +208,29 @@ Redis `ClientName` for diagnostics (shown as `dev` for local builds).
 dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
-Covers: `ExcelJson` conversions, `AppConfig` load/sanitize and
-`ResolveHostCore`, the `RedisConnectionManager`/`RedisSubscriptionManager`
+Covers: `ExcelJson` conversions and the matrix size/total-cell budget,
+`AppConfig` load/sanitize, `ResolveHostCore` (alias trim/case-insensitivity,
+exact-match priority) and the undefined-`ExcelUpdateStyle` reset, the
+`RedisConnectionManager`/`RedisSubscriptionManager`
 behavior, the `PublishIfChanged` dedup LRU cache, subscription keys, HGETALL
 formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
 (`IsNewer`/`NormalizeTag`), `RedisValueLocaleTests` (de-DE culture), the
-`...NonVolatile` signature-parity reflection test, the write-mode
+`...NonVolatile` signature-parity and offline delegation tests (the volatile
+write set is pinned to the 24 twins), the write-mode
 (`SyncWrite`/`AsyncWrites`) parsing plus async write dispatch (per-host serial
 order, no host overlap, the synchronous path, the caller refusal and the
-invalid-host fallback), and the offline `RedisWriteObservable` tests (single
+invalid-host fallback), the offline `RedisWriteObservable` tests (single
 delivery + completion, error text, an observer whose `OnNext` throws is still
 completed, one-shot subscribe with duplicate delivery, no-op dispose while
-queued, synchronous enqueue).
+queued, synchronous enqueue), and a project-file parity test that keeps the
+unit project's `Compile` list complete (RedisRtd.cs is the intentional
+exclusion).
 
 The unit, smoke and load test projects compile the production sources directly
 (linked `Compile` items), so a new production `.cs` needed by tests must be
-added to their `Compile` lists. `dotnet test` no longer builds or packs the
+added to their `Compile` lists; a unit parity test pins the unit project's list
+(every top-level source except the intentionally excluded `RedisRtd.cs`).
+`dotnet test` no longer builds or packs the
 add-in; CI builds it with msbuild.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
@@ -257,6 +275,11 @@ Useful parameters:
 - `-RedisCli <command>` — custom Redis CLI command (e.g.
   `docker exec my-redis redis-cli`); a custom CLI disables the automatic
   `CLIENT KILL` step.
+- `-SyncWrite <mode>` — write mode for the run: `sync`, `fireforget`
+  (default) or `fireforget-all`; written to the user's `RedisExcel.json` for
+  the run and restored afterwards.
+- `-AsyncWrites` — run with async write dispatch (same config handling), so
+  the pending-marker and single-delivery checks above are exercised.
 - `-KeepExcelOpen` — leave Excel open for debugging.
 
 For local hosts the workbook is saved to `test\RedisExcel.Test.xlsx` (committed
@@ -272,7 +295,9 @@ dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 
 
 `manager` exercises the subscription broadcast path; `raw` is the plain
 StackExchange.Redis baseline. Parameters: host, seconds, publishers (0 =
-listen-only with an external generator like `redis-benchmark -t publish`),
+listen-only with an external generator: `redis-benchmark -t publish` is a
+silent no-op on Redis 7.4 - use
+`redis-benchmark -n 20000 -q -P 16 PUBLISH <channel> <payload>` instead),
 listeners, pattern and an optional channel (default random `load:<guid>`;
 with `pattern` and listen-only mode the default is `*`). Reports throughput,
 allocated bytes per received message and GC counts. Read-only stress runs
@@ -323,4 +348,4 @@ These cost real debugging time — read before writing automation.
 
 Push an annotated `v*` tag (from v1.2.7 on); the CI workflow builds and
 publishes the packed XLLs plus `NLog.config` and `RedisExcel.json` as release
-assets. Current release: `v1.4.0`; next planned version: TBD.
+assets. Current release: `v1.4.0`; next planned version: `v1.4.1` (unreleased).

@@ -140,30 +140,35 @@ namespace RedisExcel
             int suffix = tag.IndexOfAny(new[] { '-', '+' });
             if (suffix >= 0)
                 tag = tag.Substring(0, suffix);
-            return tag;
+            // Re-trim: "v1.4.1 -rc" would otherwise keep the space before the
+            // suffix and ParseVersion would reject the whole tag (missed
+            // update alerts).
+            return tag.Trim();
         }
 
-        private static int[] ParseVersion(string value)
+        private static long[] ParseVersion(string value)
         {
             if (string.IsNullOrEmpty(value))
                 return null;
             var parts = value.Split('.');
-            var numbers = new int[parts.Length];
+            var numbers = new long[parts.Length];
             for (int i = 0; i < parts.Length; i++)
             {
-                if (!int.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i]))
+                // long: an int.TryParse failure (overflow) would silently
+                // disable update alerts for a large-but-real version number.
+                if (!long.TryParse(parts[i], NumberStyles.None, CultureInfo.InvariantCulture, out numbers[i]))
                     return null;
             }
             return numbers;
         }
 
-        private static int Compare(int[] a, int[] b)
+        private static int Compare(long[] a, long[] b)
         {
             int length = Math.Max(a.Length, b.Length);
             for (int i = 0; i < length; i++)
             {
-                int x = i < a.Length ? a[i] : 0;
-                int y = i < b.Length ? b[i] : 0;
+                long x = i < a.Length ? a[i] : 0;
+                long y = i < b.Length ? b[i] : 0;
                 if (x != y)
                     return x.CompareTo(y);
             }

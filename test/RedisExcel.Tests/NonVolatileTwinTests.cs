@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -98,6 +99,102 @@ namespace RedisExcel.Tests
                     Assert.Equal(baseArgument.AllowReference, twinArgument.AllowReference);
                 }
             }
+        }
+
+        /// <summary>
+        /// Every volatile [ExcelFunction] that owns a ...NonVolatile twin must
+        /// be one of the 24 write functions in the explicit list, and vice
+        /// versa. The suite has 42 volatile functions in total: 24 writes with
+        /// twins plus 18 read/status helpers that are volatile by design and
+        /// intentionally have no twin. The total is pinned so a new volatile
+        /// function cannot enter unclassified: it either needs a twin and a
+        /// TwinPairs entry, or an update to these counts.
+        /// </summary>
+        [Fact]
+        public void VolatileFunctions_WithTwins_AreExactlyThe24Writes()
+        {
+            List<MethodInfo> volatileFunctions = typeof(RedisUDF)
+                .GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .Where(m => m.GetCustomAttribute<ExcelFunctionAttribute>() != null)
+                .Where(m => m.GetCustomAttribute<ExcelFunctionAttribute>().IsVolatile)
+                .ToList();
+
+            List<string> volatileWithTwin = volatileFunctions
+                .Where(m => FindUdf(m.Name + "NonVolatile") != null)
+                .Select(m => m.Name)
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+            List<string> explicitBases = TwinPairs()
+                .Select(pair => (string)pair[0])
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToList();
+
+            Assert.Equal(42, volatileFunctions.Count);
+            Assert.Equal(24, volatileWithTwin.Count);
+            Assert.Equal(18, volatileFunctions.Count - volatileWithTwin.Count);
+            Assert.Equal(explicitBases, volatileWithTwin);
+
+            foreach (string name in volatileWithTwin)
+            {
+                MethodInfo baseMethod = FindUdf(name);
+                MethodInfo twinMethod = FindUdf(name + "NonVolatile");
+                Assert.True(
+                    baseMethod.GetCustomAttribute<ExcelFunctionAttribute>().IsVolatile,
+                    $"base UDF '{name}' must be volatile");
+                Assert.False(
+                    twinMethod.GetCustomAttribute<ExcelFunctionAttribute>().IsVolatile,
+                    $"twin UDF '{name}NonVolatile' must not be volatile");
+                Assert.Equal(baseMethod.ReturnType, twinMethod.ReturnType);
+            }
+        }
+
+        /// <summary>
+        /// Behavioral delegation check: calling the twin must return exactly
+        /// what its base returns. A non-text host argument is rejected by
+        /// ResolveHost before the connection manager or the async dispatch is
+        /// touched, so the comparison is fully offline and deterministic (it
+        /// cannot race the AsyncWrites/SyncWrite seams or the RedisRuntime
+        /// singleton used by other test collections).
+        /// </summary>
+        [Fact]
+        public void Twins_DelegateToBase_WithIdenticalOfflineErrorText()
+        {
+            object invalidHost = 42; // host must be a text value
+
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFSet("key", "value", invalidHost),
+                () => RedisUDF.RedisUDFSetNonVolatile("key", "value", invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFSetEx("key", "value", 60, invalidHost),
+                () => RedisUDF.RedisUDFSetExNonVolatile("key", "value", 60, invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFIncr("key", invalidHost),
+                () => RedisUDF.RedisUDFIncrNonVolatile("key", invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFListPushRight("key", "value", invalidHost),
+                () => RedisUDF.RedisUDFListPushRightNonVolatile("key", "value", invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFHashSet("hash", "field", "value", invalidHost),
+                () => RedisUDF.RedisUDFHashSetNonVolatile("hash", "field", "value", invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFChannelPublish("channel", "message", invalidHost),
+                () => RedisUDF.RedisUDFChannelPublishNonVolatile("channel", "message", invalidHost));
+            AssertTwinMatchesBase(
+                () => RedisUDF.RedisUDFDel("key", invalidHost),
+                () => RedisUDF.RedisUDFDelNonVolatile("key", invalidHost));
+
+            // Pin the exact diagnostic once: the invalid host must be
+            // reported, not swallowed or replaced by a dispatch error.
+            Assert.Equal("Error: host must be a text value", RedisUDF.RedisUDFSet("key", "value", invalidHost));
+        }
+
+        private static void AssertTwinMatchesBase(Func<object> baseCall, Func<object> twinCall)
+        {
+            string baseText = Assert.IsType<string>(baseCall());
+            string twinText = Assert.IsType<string>(twinCall());
+
+            Assert.StartsWith("Error: ", baseText);
+            Assert.Equal(baseText, twinText);
         }
 
         private static MethodInfo FindUdf(string name) =>

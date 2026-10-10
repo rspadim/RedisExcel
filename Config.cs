@@ -81,30 +81,40 @@ namespace RedisExcel
         /// </summary>
         internal static ConfigRoot LoadFromPaths(IEnumerable<string> paths)
         {
-            foreach (var path in paths)
+            try
             {
-                try
+                foreach (var path in paths)
                 {
-                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-                        continue;
-
-                    // First existing candidate wins: if it exists but cannot be
-                    // parsed, stop here with safe defaults instead of silently
-                    // falling through to a lower-priority file.
-                    var config = JsonConvert.DeserializeObject<ConfigRoot>(File.ReadAllText(path));
-                    if (config != null)
+                    try
                     {
-                        logger.Info($"AppConfig: loaded configuration from {path}");
-                        return Sanitize(config);
+                        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+                            continue;
+
+                        // First existing candidate wins: if it exists but cannot be
+                        // parsed, stop here with safe defaults instead of silently
+                        // falling through to a lower-priority file.
+                        var config = JsonConvert.DeserializeObject<ConfigRoot>(File.ReadAllText(path));
+                        if (config != null)
+                        {
+                            logger.Info($"AppConfig: loaded configuration from {path}");
+                            return Sanitize(config);
+                        }
+                        logger.Error($"AppConfig: config file {path} deserialized to null, using defaults");
                     }
-                    logger.Error($"AppConfig: config file {path} deserialized to null, using defaults");
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"AppConfig: error reading config file {path}, using defaults");
+                    }
+                    // The first existing candidate stops the search, even on failure.
+                    break;
                 }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"AppConfig: error reading config file {path}, using defaults");
-                }
-                // The first existing candidate stops the search, even on failure.
-                break;
+            }
+            catch (Exception ex)
+            {
+                // The enumeration itself can throw (path probing): never let the
+                // Lazy cache that exception - every function would then fail
+                // until Excel restarts. Fall back to the safe defaults instead.
+                logger.Error(ex, "AppConfig: error while probing configuration paths, using defaults");
             }
             logger.Info("AppConfig: no configuration file loaded, using defaults");
             var fallback = Sanitize(new ConfigRoot());
@@ -119,7 +129,8 @@ namespace RedisExcel
             yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ConfigFileName);
             var excelDirectory = ExcelDirectory();
             yield return excelDirectory == null ? null : Path.Combine(excelDirectory, ConfigFileName);
-            yield return Path.Combine("C:\\Windows", ConfigFileName);
+            var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+            yield return string.IsNullOrEmpty(windowsDirectory) ? null : Path.Combine(windowsDirectory, ConfigFileName);
         }
 
         private static string ExcelDirectory()
@@ -145,6 +156,8 @@ namespace RedisExcel
             if (config.RTD.RedisUpdateRateMs <= 0) config.RTD.RedisUpdateRateMs = 1000;
             if (config.RTD.ExcelUpdateRateMs <= 0) config.RTD.ExcelUpdateRateMs = 100;
             if (config.PublishDedupCacheSize <= 0) config.PublishDedupCacheSize = 10000;
+            if (!Enum.IsDefined(typeof(ENUMExcelUpdateStyle), config.RTD.ExcelUpdateStyle))
+                config.RTD.ExcelUpdateStyle = ENUMExcelUpdateStyle.Automatic;
             config.SyncWrite = NormalizeSyncWrite(config.SyncWrite);
             return config;
         }
@@ -165,9 +178,23 @@ namespace RedisExcel
         /// <summary>Pure alias/default resolution (kept internal for unit tests).</summary>
         internal static string ResolveHostCore(string host, string defaultHost, IDictionary<string, string> servers)
         {
-            string candidate = string.IsNullOrWhiteSpace(host) ? defaultHost : host;
-            if (servers != null && servers.TryGetValue(candidate, out var mapped) && !string.IsNullOrWhiteSpace(mapped))
-                return mapped;
+            string candidate = string.IsNullOrWhiteSpace(host) ? defaultHost : host.Trim();
+            if (candidate == null)
+                return null;
+            if (servers != null)
+            {
+                if (servers.TryGetValue(candidate, out var mapped) && !string.IsNullOrWhiteSpace(mapped))
+                    return mapped;
+                // "PROD"/" prod " should still hit the "prod" alias: fall back
+                // to a case-insensitive scan (the exact match stays first, so a
+                // config with two spellings keeps its own priority).
+                foreach (var kv in servers)
+                {
+                    if (string.Equals(kv.Key, candidate, StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(kv.Value))
+                        return kv.Value;
+                }
+            }
             return candidate;
         }
 

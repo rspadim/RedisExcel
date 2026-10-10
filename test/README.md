@@ -10,15 +10,20 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
 The test project compiles the production sources directly (no add-in build), so
-a new production file used by the tests must be added to its `Compile` list.
-Coverage includes the JSON conversions, config load/sanitize, the
-connection/subscription managers, the publish-dedup LRU cache, `TickGate`, the
-update-check helpers, the `...NonVolatile` signature-parity reflection test,
-the write-mode dispatch (`SyncWrite`/`AsyncWrites` parsing, per-host
-serialization, no host overlap, the synchronous path and the caller
-refusal/fallback) and the offline `RedisWriteObservable` tests (single
-delivery, error text, OnNext-throw still completed, one-shot subscribe with
-duplicate delivery, no-op dispose while queued, synchronous enqueue).
+every top-level production file except the intentionally excluded `RedisRtd.cs`
+must be in its `Compile` list (a parity test enforces it).
+Coverage includes the JSON conversions and the matrix size/total-cell budget,
+config load/sanitize (including alias trim/case-insensitivity and the
+undefined-style reset), the connection/subscription managers, the publish-dedup
+LRU cache, `TickGate`, the update-check helpers, the `...NonVolatile`
+signature-parity and delegation tests, the write-mode dispatch
+(`SyncWrite`/`AsyncWrites` parsing, per-host serialization, no host overlap,
+the synchronous path and the caller refusal/fallback), the offline
+`RedisWriteObservable` tests (single delivery, error text, OnNext-throw still
+completed, one-shot subscribe with duplicate delivery, no-op dispose while
+queued, synchronous enqueue), and a project-file parity test that keeps the
+unit project's `Compile` list complete (`RedisRtd.cs` is the intentional
+exclusion).
 
 ## 2. Smoke tests (requires Redis, no Excel)
 
@@ -50,7 +55,9 @@ also keep the workbook in `%TEMP%`.
 Useful parameters: `-RepoRoot <path>` (repository root; defaults to the
 script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,
 `-RealChannel`, `-RealPattern`, `-SkipClientKill`, `-RedisCli`,
-`-KeepExcelOpen`. Supplying a custom `-RedisCli` (e.g.
+`-SyncWrite <mode>` (write mode for the run: `sync`/`fireforget`/
+`fireforget-all`, default `fireforget`), `-AsyncWrites`, `-KeepExcelOpen`.
+Supplying a custom `-RedisCli` (e.g.
 `docker exec my-redis redis-cli`) disables the automatic `CLIENT KILL` step.
 
 > Building the test workbook only uses `localhost:6379` and
@@ -65,8 +72,10 @@ dotnet run --project test\LoadTests -c Release -- manager "127.0.0.1:6379" 10 2 
 
 Modes: `manager` (RedisSubscriptionManager) and `raw` (plain
 StackExchange.Redis baseline). Parameters: host, seconds, publisher threads
-(0 = listen-only with an external generator such as
-`redis-benchmark -t publish`), listeners, pattern and an optional `[channel]`
+(0 = listen-only with an external generator; `redis-benchmark -t publish` is
+a silent no-op on Redis 7.4 - use
+`redis-benchmark -n 20000 -q -P 16 PUBLISH <channel> <payload>` instead),
+listeners, pattern and an optional `[channel]`
 (7th argument; defaults to a random `load:<guid>` channel). It reports
 throughput, allocated bytes per received message and GC counts. Read-only stress runs
 against real servers are allowed, but pass the host only as a command-line

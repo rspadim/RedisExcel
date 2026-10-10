@@ -121,6 +121,17 @@ namespace RedisExcel.Tests
     /// </summary>
     public class ListenerJoinDedupTests
     {
+        public ListenerJoinDedupTests()
+        {
+            // Deterministic capacity for the shared marker cache these tests
+            // seed directly: a tiny PublishDedupCacheSize from the machine's
+            // RedisExcel.json could otherwise evict a seed mid-test. This is
+            // the only test class that touches the shared cache (the
+            // whitespace-channel guards in the other classes fail before the
+            // cache is reached), so no cross-class collection is needed.
+            RedisUDF.ResetDedupCacheForTests(256);
+        }
+
         private static void Seed(string host, string channel, string payload)
         {
             RedisUDF.LastPublishedMessagesForTests.Set(RedisUDF.ChannelKey(host, channel), payload);

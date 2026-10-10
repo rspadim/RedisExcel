@@ -2,6 +2,7 @@ using NLog;
 using StackExchange.Redis;
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading;
 
 namespace RedisExcel
@@ -39,14 +40,32 @@ namespace RedisExcel
         // with shutdown must not leave an un-disposed multiplexer behind.
         private volatile bool _shutdown;
 
-        public int RtdConnectionCount => _rtdData.Count + _rtdSub.Count;
-        public int UdfConnectionCount => _udfData.Count;
+        // One-owner gate for Shutdown: concurrent callers return immediately
+        // instead of racing Close/Dispose on the same multiplexers.
+        private int _shutdownStarted;
+
+        // A spreadsheet argument can produce arbitrary host strings, and every
+        // parseable-but-unreachable host keeps a disconnected multiplexer (with
+        // reconnect tasks) cached forever. Past the cap, disconnected entries
+        // are evicted and disposed; connected multiplexers are never evicted.
+        private const int MaxCachedConnectionsPerPool = 512;
+
+        /// <summary>Multiplexers actually created in the RTD pools; the same
+        /// number as <see cref="LiveRtdConnectionCount"/> without the shutdown
+        /// fence. Entries whose Lazy never ran hold nothing and are not
+        /// counted.</summary>
+        public int RtdConnectionCount => CountCreated(_rtdData) + CountCreated(_rtdSub);
+
+        /// <summary>Multiplexers actually created in the UDF pool; see
+        /// <see cref="RtdConnectionCount"/>.</summary>
+        public int UdfConnectionCount => CountCreated(_udfData);
 
         /// <summary>
         /// Number of multiplexers actually created across all pools (RtdData,
-        /// RtdSub, UdfData). A cached entry whose Lazy never ran (offline host)
-        /// holds nothing and is not counted, unlike RtdConnectionCount /
-        /// UdfConnectionCount, which report cached entries.
+        /// RtdSub, UdfData); zero while the shutdown fence is set. A cached
+        /// entry whose Lazy never ran (offline host) holds nothing and is not
+        /// counted, like the legacy <see cref="RtdConnectionCount"/> /
+        /// <see cref="UdfConnectionCount"/> accessors.
         /// </summary>
         public int LiveConnectionCount()
         {
@@ -93,6 +112,44 @@ namespace RedisExcel
                     total++;
             }
             return total;
+        }
+
+        private void EvictDisconnectedConnections(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string keepHost)
+        {
+            foreach (var kv in dictionary)
+            {
+                if (dictionary.Count <= MaxCachedConnectionsPerPool)
+                    break;
+                if (string.Equals(kv.Key, keepHost, StringComparison.Ordinal) || !kv.Value.IsValueCreated)
+                    continue;
+                ConnectionMultiplexer mux;
+                try
+                {
+                    mux = kv.Value.Value; // IsValueCreated: cannot block on a connect
+                }
+                catch
+                {
+                    continue; // failed placeholder: the retry path replaces it
+                }
+                if (mux.IsConnected)
+                    continue;
+                // Conditional remove (value identity): never removes an entry a
+                // concurrent caller just replaced with a fresh Lazy.
+                if (((ICollection<KeyValuePair<string, Lazy<ConnectionMultiplexer>>>)dictionary)
+                    .Remove(new KeyValuePair<string, Lazy<ConnectionMultiplexer>>(kv.Key, kv.Value)))
+                {
+                    try
+                    {
+                        mux.Close(false);
+                        mux.Dispose();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Debug(ex, $"GetConnection: error disposing evicted connection host={kv.Key}");
+                    }
+                    logger.Info($"GetConnection: evicted disconnected connection host={kv.Key} (pool over {MaxCachedConnectionsPerPool} entries)");
+                }
+            }
         }
 
         public IDatabase GetDatabase(string host, RedisPool pool)
@@ -212,6 +269,8 @@ namespace RedisExcel
                 dictionary.TryRemove(host, out _);
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
             }
+            if (dictionary.Count > MaxCachedConnectionsPerPool)
+                EvictDisconnectedConnections(dictionary, host);
             return connection;
         }
 
@@ -235,6 +294,9 @@ namespace RedisExcel
 
             var options = ParseOptions(host);
             options.AbortOnConnectFail = false;
+            // The default ConnectRetry (3) multiplies the first-connect stall:
+            // a dead host would hold the Excel thread for attempts x timeout.
+            options.ConnectRetry = 1;
             options.ConnectTimeout = timeoutMs;
             options.SyncTimeout = timeoutMs;
             options.ClientName =
@@ -264,8 +326,9 @@ namespace RedisExcel
                 {
                     mux.Dispose();
                 }
-                catch
+                catch (Exception ex)
                 {
+                    logger.Debug(ex, "Connect: error disposing connection created during shutdown");
                 }
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
             }
@@ -312,6 +375,8 @@ namespace RedisExcel
 
         public void Shutdown()
         {
+            if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
+                return; // another caller already owns the teardown
             // Set before anything is closed/cleared: a racing connect either sees
             // the flag (and refuses) or completes before Shutdown starts walking
             // the caches, so no new connection can appear after the teardown.
@@ -336,8 +401,11 @@ namespace RedisExcel
                     try
                     {
                         // IsValueCreated: the value is materialized, so this
-                        // read cannot block behind a connect.
-                        kv.Value.Value.Close();
+                        // read cannot block behind a connect. Close(false):
+                        // never wait for in-flight commands (the no-arg Close
+                        // blocked the Excel thread up to SyncTimeout per
+                        // multiplexer, contradicting the non-blocking shutdown).
+                        kv.Value.Value.Close(false);
                         kv.Value.Value.Dispose();
                         // Drop the host entry together with its multiplexer:
                         // no "host -> disposed mux" entry may be left behind,

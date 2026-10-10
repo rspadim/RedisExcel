@@ -79,6 +79,8 @@ namespace RedisExcel.Tests
         [InlineData("", "default", null, "default")]
         [InlineData("   ", "default", null, "default")]
         [InlineData("alias", "default", "alias=resolved", "resolved")]
+        [InlineData(" prod ", "default", "prod=resolved", "resolved")] // trimmed before lookup
+        [InlineData("PROD", "default", "prod=resolved", "resolved")] // case-insensitive fallback
         [InlineData("unknown", "default", null, "unknown")]
         [InlineData("alias", "alias", "alias=resolved", "resolved")]
         public void ResolveHostCore_ResolvesAliasesAndDefaults(string host, string defaultHost, string mapping, string expected)
@@ -91,6 +93,45 @@ namespace RedisExcel.Tests
             }
 
             Assert.Equal(expected, AppConfig.ResolveHostCore(host, defaultHost, servers));
+        }
+
+        [Fact]
+        public void ResolveHostCore_ExactAliasWinsOverCaseVariant()
+        {
+            var servers = new Dictionary<string, string>
+            {
+                { "prod", "exact" },
+                { "Prod", "variant" }
+            };
+
+            // Each spelling hits its own exact key (ordinal) instead of the
+            // case-insensitive scan picking an arbitrary dictionary order.
+            Assert.Equal("exact", AppConfig.ResolveHostCore("prod", null, servers));
+            Assert.Equal("variant", AppConfig.ResolveHostCore("Prod", null, servers));
+        }
+
+        [Fact]
+        public void ResolveHostCore_NullHostAndDefault_ReturnsNull()
+        {
+            var servers = new Dictionary<string, string> { { "prod", "x" } };
+
+            // With no default host there is nothing to resolve: null in, null
+            // out (an alias mapping must not invent a host).
+            Assert.Null(AppConfig.ResolveHostCore(null, null, servers));
+            Assert.Null(AppConfig.ResolveHostCore("   ", null, servers));
+        }
+
+        [Fact]
+        public void Sanitize_UndefinedExcelUpdateStyle_ResetsToAutomatic()
+        {
+            var config = new ConfigRoot
+            {
+                RTD = new RTDConfig { ExcelUpdateStyle = (ENUMExcelUpdateStyle)99 }
+            };
+
+            Assert.Equal(
+                ENUMExcelUpdateStyle.Automatic,
+                AppConfig.Sanitize(config).RTD.ExcelUpdateStyle);
         }
 
         [Fact]

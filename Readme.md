@@ -20,6 +20,8 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 5. In Excel: `File > Options > Add-ins`
 
    * Click **Go...**, then **Browse...**, and select the `.xll` file
+   * Match the XLL to your Office bitness: `RedisExcel-packed.xll` is 32-bit,
+     `RedisExcel64-packed.xll` is 64-bit (check `File > Account > About Excel`)
 
 6. The `RedisExcel.json` file can be placed in - [Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
 >
@@ -193,9 +195,14 @@ Functions to use directly in Excel cells:
 > increments the counter every time the sheet recalculates, not once. Use
 > manual calculation (Formulas > Calculation Options > Manual) when that
 > matters, keep write calls on a sheet you update deliberately, or use the
-> non-volatile twins below. `RedisUDFChannelPublishIfChanged` guards itself: it
-> only publishes when the payload changed since the last delivery. The two JSON
-> conversion helpers (`RedisUDFMatrixToJSON` and `RedisUDFJSONToMatrix`) were
+> non-volatile twins below. One exception to the re-execution rule: with
+> `AsyncWrites: true`, the recalculation that delivers an async write's result
+> returns the cached value for the same registered call instead of re-running
+> the write (best-effort while the internal topic stays connected - see the
+> `AsyncWrites` section below). `RedisUDFChannelPublishIfChanged` guards
+> itself: it only publishes when the payload changed since the last delivery.
+> The two JSON conversion helpers (`RedisUDFMatrixToJSON` and
+> `RedisUDFJSONToMatrix`) were
 > already non-volatile: they are pure conversions with no `IsVolatile` flag and
 > recalculate only when their inputs change.
 >
@@ -238,7 +245,11 @@ Functions to use directly in Excel cells:
 | RedisUDFExpire                   | Set a TTL on a key               | key, ttlSeconds, optionalHost             |
 | RedisUDFDel                      | Delete a key (returns deleted count) | key, optionalHost                     |
 | RedisUDFIncr / RedisUDFIncrBy    | Atomic counters                  | key, optionalHost / key, increment, optionalHost |
-| RedisUDFHashSet/Get/...          | Redis Hash operations            | see combinations                          |
+| RedisUDFHashSet                  | Set a field in a hash            | hashKey, field, value, optionalHost       |
+| RedisUDFHashSetMultiple          | Set multiple hash fields         | hashKey, fieldValuePairs (2 columns), optionalHost |
+| RedisUDFHashGet                  | Get a field from a hash          | hashKey, field, optionalHost              |
+| RedisUDFHashGetAll               | Get all fields of a hash (2-column matrix; empty cell when missing) | hashKey, optionalHost |
+| RedisUDFHashGetFieldMultipleKeys | Get one field from multiple hashes (one row per key; errors stay per row) | hashKeys, field, optionalHost |
 | RedisUDFHashDel                  | Delete a hash field              | hashKey, field, optionalHost              |
 | RedisUDFListPushRight / Left     | Push to a list (returns length)  | key, value, optionalHost                  |
 | RedisUDFListRange                | Get a range of list elements     | key, start, stop, optionalHost            |
@@ -296,7 +307,6 @@ Functions to use directly in Excel cells:
             archiveAboveSize="104857600"
             archiveNumbering="Rolling"
             maxArchiveFiles="5"
-            concurrentWrites="true"
             keepFileOpen="true"
             encoding="utf-8" />
   </targets>
@@ -340,10 +350,24 @@ Functions to use directly in Excel cells:
 > **Config notes:** the file is read once per Excel process - restart Excel
 > after editing it. The first existing file wins (user profile, Excel folder,
 > `C:\Windows`); if that file is malformed, safe defaults are used instead of
-> falling through to a lower-priority file. `PublishDedupCacheSize`
-> (default `10000`) caps the LRU cache used by
+> falling through to a lower-priority file. When **no config file is found at
+> all**, the legacy no-file defaults apply: `ExcelUpdateRateMs` falls back to
+> `1000` ms (a loaded file uses `100` ms unless it sets the key explicitly).
+> `PublishDedupCacheSize` (default `10000`) caps the LRU cache used by
 > `RedisUDFChannelPublishIfChanged` to remember the last payload published per
 > host/channel.
+
+#### Other JSON keys
+
+Keys that only appear in the sample above, with their code defaults:
+
+| Key | Default | Effect |
+| --- | ------- | ------ |
+| `SkipRepeatedMessages` | `true` | Skips identical consecutive payloads before decoding/delivering for literal `SUB` and `GET`/`HGET` polling (unchanged `HGETALL` hashes too). Patterns (`PSUB`) are never deduplicated because channels interleave. Set it to `false` for feeds that republish the same value as a liveness signal. |
+| `CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. |
+| `MessageCounterThreshold` | `10000` | `Automatic` `ExcelUpdateStyle` burst threshold: above this many messages in the last second, real-time delivery is disabled and the Excel tick flushes dirty values; the 1s tick re-enables it when the rate drops. `<= 0` disables the switch. The sample's `1000` is just a choice - the code default is `10000`. |
+| `ExcelUpdateStyle` | `"Automatic"` | `Automatic`, `Timer` or `Realtime`. `Timer` never pushes per message (only the Excel tick flushes); `Realtime` always pushes; `Automatic` starts real-time and switches at the threshold. An undefined/unknown value falls back to `Automatic`. |
+| `UseGetMultiple` | `true` | Batches RTD `GET` topics of a host into a single `MGET` per polling tick. `false` polls each `GET` key in the per-host pipeline with `HGET`/`HGETALL` instead. |
 
 ### Write Behavior (`SyncWrite` / `AsyncWrites`)
 
