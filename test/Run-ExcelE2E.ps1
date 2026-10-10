@@ -710,7 +710,10 @@ try {
     Check (Wait-CellRegex $udf 'B37' $script:RenameMissingPattern)                'UDF Rename reports the mode-appropriate result for a missing key'
     Check (Wait-CellText $udf 'B38' 'error')                  'UDF scalar argument rejects a multi-cell range'
     Check (Wait-CellRegex $udf 'B39' '^Error')                'UDF GetMultiple returns Error when no valid key remains'
-    Check ((Wait-CellNotEmpty $udf 'B40' 20) -and -not (Get-CellText $udf 'B40').StartsWith('Error')) 'UDF multi-key functions flatten a 2x2 range row-major'
+    # B40 flattens the 2x2 input row-major into a 4x2 echo matrix: element (2,1)
+    # is the SECOND key in row-major order, so an exact "missing1" match proves
+    # the order (an Error cell would fail it too).
+    Check (Wait-CellText $udf 'B40' "$KeyPrefix.missing1")    'UDF multi-key functions flatten a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B41' '^Error')                'UDF Keys rejects a blank pattern'
     Check (Wait-CellText $udf 'B42' 'linha1')                 'UDF GetMultiple flattens a 2x2 range row-major'
     Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'

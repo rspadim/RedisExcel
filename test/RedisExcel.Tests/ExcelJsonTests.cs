@@ -396,11 +396,13 @@ namespace RedisExcel.Tests
             // total-cell budget and must pass...
             Assert.Null(EnsureMatrixFitsExcelMethod.Invoke(null, new object[] { 1048576, 1 }));
 
-            // ...while one row past the Excel limit must throw.
+            // ...while one row past the Excel limit must throw with the same
+            // stable message the total-cell-budget test asserts.
             var invocation = Assert.Throws<TargetInvocationException>(
                 () => EnsureMatrixFitsExcelMethod.Invoke(null, new object[] { 1048577, 1 }));
 
-            Assert.IsType<ArgumentException>(invocation.InnerException);
+            var error = Assert.IsType<ArgumentException>(invocation.InnerException);
+            Assert.Equal("JSON is too large for an Excel sheet", error.Message);
         }
     }
 }
