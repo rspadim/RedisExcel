@@ -65,6 +65,19 @@ jobs:
       - name: Run liveness tests (quick)
         run: dotnet run --project test/LivenessTests -c Release -- "127.0.0.1:6379" --quick --skip-restart
 
+      - name: Verify CHANGELOG matches the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          # A release tag must name the finalized changelog section, otherwise
+          # the repo would ship an "(unreleased)" heading and no release body.
+          $tag = "${{ github.ref_name }}"
+          $heading = (Get-Content CHANGELOG.md -TotalCount 6 | Where-Object { $_ -match '^##\s' } | Select-Object -First 1)
+          if ($heading -notmatch [regex]::Escape($tag)) {
+            throw "CHANGELOG.md top heading '$heading' does not match the tag '$tag'. Finalize the changelog (remove '(unreleased)') and set 'Current release' in AGENTS.md before tagging."
+          }
+          Write-Host "CHANGELOG heading matches the tag: $heading"
+
       - name: Build RedisExcel (.NET Framework 4.8)
         shell: pwsh
         run: |

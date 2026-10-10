@@ -28,7 +28,15 @@ namespace RedisExcel
         private static DateTime _lastSuccessUtc;
         private static string _latestTag;
 
-        internal static string CurrentTag => BuildInfo.Tag;
+        internal static string CurrentTag => CurrentTagOverrideForTests ?? BuildInfo.Tag;
+
+        /// <summary>Test-only override of the running build tag (null = the real
+        /// InformationalVersion). Lets the offline tests exercise the positive
+        /// "an update is available" path deterministically, which the local
+        /// "dev" build tag otherwise skips.</summary>
+#pragma warning disable 0649 // assigned only by the linked unit test sources
+        internal static string CurrentTagOverrideForTests;
+#pragma warning restore 0649
 
         /// <summary>Starts the check at add-in load time.</summary>
         internal static void Start() => EnsureFresh(TimeSpan.Zero);

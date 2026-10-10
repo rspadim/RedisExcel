@@ -5,6 +5,11 @@
     <TargetFramework>net48</TargetFramework>
     <!-- Embedded in the Redis ClientName; the CI overrides it with the release tag. -->
     <InformationalVersion Condition="'$(InformationalVersion)' == ''">dev</InformationalVersion>
+    <!-- Release binaries must not embed the builder's local paths: the RSDS
+         debug directory of a locally-built RedisExcel.dll used to carry the
+         absolute path of the .pdb (a local-data leak in a shipped asset).
+         No debug directory in Release. -->
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
   </PropertyGroup>
 
   <ItemGroup>

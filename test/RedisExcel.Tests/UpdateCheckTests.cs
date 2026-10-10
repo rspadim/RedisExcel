@@ -65,14 +65,21 @@ namespace RedisExcel.Tests
                 LatestTagField.SetValue(null, UpdateCheck.CurrentTag);
                 Assert.False(RedisUDF.RedisUDFUpdateAvailable());
 
-                // A strictly newer tag flips it to true. "dev" (and any other
-                // unparseable current tag) can never be beaten by design, so the
-                // true case only runs for a parseable version.
-                string newer = NewerThan(UpdateCheck.CurrentTag);
-                if (newer != null)
+                // A strictly newer tag flips it to true. Force a parseable
+                // running tag first: the local "dev" build tag can never be
+                // beaten, which would silently skip the positive branch.
+                UpdateCheck.CurrentTagOverrideForTests = "1.4.0";
+                try
                 {
-                    LatestTagField.SetValue(null, newer);
+                    LatestTagField.SetValue(null, "v9.9.9");
                     Assert.True(RedisUDF.RedisUDFUpdateAvailable());
+                    // ...and the running build is never newer than itself.
+                    LatestTagField.SetValue(null, "1.4.0");
+                    Assert.False(RedisUDF.RedisUDFUpdateAvailable());
+                }
+                finally
+                {
+                    UpdateCheck.CurrentTagOverrideForTests = null;
                 }
             }
             finally
@@ -84,7 +91,8 @@ namespace RedisExcel.Tests
 
         /// <summary>Returns a "v{major+1}.0.0" tag guaranteed newer than the
         /// running build, or null when the build tag is not a plain numeric
-        /// version (e.g. "dev", for which IsNewer always answers false).</summary>
+        /// version (e.g. "dev", for which IsNewer always answers false).
+        /// Kept for the "dev never alerts" case.</summary>
         private static string NewerThan(string currentTag)
         {
             string normalized = UpdateCheck.NormalizeTag(currentTag);

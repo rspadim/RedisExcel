@@ -313,7 +313,7 @@ Functions to use directly in Excel cells:
     <target name="file" xsi:type="File"
             fileName="RedisExcel.log"
             layout="${longdate}|${level:uppercase=true}|${logger}|${message} ${exception:format=toString}"
-            archiveFileName="RedisExcel.${environment-user}.{#}.log"
+            archiveFileName="RedisExcel.{#}.log"
             archiveAboveSize="104857600"
             archiveNumbering="Rolling"
             maxArchiveFiles="5"
