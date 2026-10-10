@@ -1,11 +1,14 @@
 using RedisExcel;
 using StackExchange.Redis;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 /// <summary>
 /// Behavior smoke test for RedisConnectionManager / RedisSubscriptionManager
@@ -293,6 +296,26 @@ internal static class Program
             "origin channel counts drop after disposal");
         Check(subscriptions.ListenerCount == totalListenersBefore && subscriptions.ChannelCount == totalChannelsBefore,
             "parameterless counters back to baseline after the origin test");
+
+        // Liveness hardening regressions (v1.4.x working tree): the per-key
+        // NetworkGate that serializes subscribe/unsubscribe across channel-state
+        // generations, the ChannelLatest lifecycle epochs + per-listener sync,
+        // and the pattern-join publish-marker purge (ClearForListener). They use
+        // the process-wide RedisRuntime (what RedisUDF uses) and the local
+        // manager created above, and release every listener they create.
+        RunConcurrentChurnTest(subscriptions, publisher, server, host);
+        RedisUdfAsync.AsyncWritesOverrideForTests = false; // exercise the synchronous UDF path
+        try
+        {
+            RunChannelLatestRaceTest(publisher, host);
+            RunGhostStaleTest(pubConn, publisher, host);
+            RunPatternJoinOverClearTest(subscriptions, publisher, server, host);
+        }
+        finally
+        {
+            RedisUdfAsync.AsyncWritesOverrideForTests = null;
+            RedisUDF.SyncWriteOverrideForTests = null;
+        }
 
         // Concurrency regression for the duplicate-suppression marker, kept last
         // because it hammers a dedicated Redis (container on 6396); it creates
@@ -635,5 +658,406 @@ internal static class Program
         while (text.Contains("  "))
             text = text.Replace("  ", " ");
         return text.Length <= 300 ? text : text.Substring(0, 300) + "...";
+    }
+
+    // Process-wide ChannelLatest state, reached through reflection: the manager
+    // listener count proves a live subscription, the registry/cache counts also
+    // catch ghost entries whose subscription is already gone.
+    private static readonly FieldInfo UdfChannelListenersField =
+        typeof(RedisUDF).GetField("_channelListeners", BindingFlags.NonPublic | BindingFlags.Static);
+    private static readonly FieldInfo UdfLatestMessagesField =
+        typeof(RedisUDF).GetField("_latestMessages", BindingFlags.NonPublic | BindingFlags.Static);
+
+    /// <summary>UDF-origin listeners in the process-wide subscription manager.</summary>
+    private static int UdfListenerCount() => RedisRuntime.Subscriptions.ListenerCountWithOrigin("UDF");
+
+    /// <summary>Size of RedisUDF's own ChannelLatest registry (reflection).</summary>
+    private static int UdfRegisteredListenerCount()
+        => UdfChannelListenersField == null ? -1 : ((ICollection)UdfChannelListenersField.GetValue(null)).Count;
+
+    /// <summary>Size of RedisUDF's cached latest messages (reflection).</summary>
+    private static int UdfLatestMessageCount()
+        => UdfLatestMessagesField == null ? -1 : ((ICollection)UdfLatestMessagesField.GetValue(null)).Count;
+
+    /// <summary>Atomically raises <paramref name="target"/> to <paramref name="value"/>.</summary>
+    private static void UpdateMax(ref long target, long value)
+    {
+        long current;
+        while (value > (current = Interlocked.Read(ref target)))
+        {
+            if (Interlocked.CompareExchange(ref target, value, current) == current)
+                return;
+        }
+    }
+
+    /// <summary>
+    /// Liveness regression for the per-key NetworkGate working-tree hardening:
+    /// 4 threads x 300 cycles, every cycle subscribe -> publish a unique token
+    /// -> wait for THIS listener -> dispose, all on one channel. Before the
+    /// gate, a joiner attaching while the previous channel-state generation was
+    /// being torn down could skip the wire SUBSCRIBE and leave the channel
+    /// permanently deaf (about 20% of the tokens were missed with no error at
+    /// all). Also samples the server: while the manager holds listeners,
+    /// PUBSUB NUMSUB must be 1 within a short grace window (a listener is
+    /// registered before its wire SUBSCRIBE completes, so a single fresh zero
+    /// sample is not a violation by itself; a zero that outlives the window
+    /// while listeners remain is the deaf-channel state).
+    /// </summary>
+    private static void RunConcurrentChurnTest(
+        RedisSubscriptionManager subscriptions, ISubscriber publisher, IServer server, string host)
+    {
+        const int threadCount = 4;
+        const int cyclesPerThread = 300;
+        const int totalCycles = threadCount * cyclesPerThread;
+        const int numsubGraceMs = 1000;
+        string channel = "smoke:churn:" + Guid.NewGuid().ToString("N");
+        string runId = Guid.NewGuid().ToString("N");
+        var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+        Console.WriteLine("concurrent churn: channel " + channel);
+
+        Func<long> numsub = () =>
+        {
+            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
+            return arr.Length >= 2 ? (long)arr[1] : 0;
+        };
+
+        int misses = 0;
+        long worstDeliveryMs = 0;
+        int numsubSamples = 0;
+        int numsubViolations = 0;
+        long worstZeroWindowMs = 0;
+        bool churnDone = false;
+        var start = new ManualResetEventSlim(false);
+        var churnWatch = Stopwatch.StartNew();
+
+        var workers = new Thread[threadCount];
+        for (int t = 0; t < threadCount; t++)
+        {
+            int threadIndex = t;
+            workers[t] = new Thread(() =>
+            {
+                start.Wait();
+                for (int i = 0; i < cyclesPerThread; i++)
+                {
+                    string token = "churn-" + threadIndex + "-" + i + "-" + runId;
+                    var delivered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    IDisposable tokenSubscription = null;
+                    try
+                    {
+                        tokenSubscription = subscriptions.Subscribe(host, channel, pattern: false,
+                            onMessage: message =>
+                            {
+                                if (string.Equals(message, token, StringComparison.Ordinal))
+                                    delivered.TrySetResult(true);
+                            });
+                        long publishTicks = Stopwatch.GetTimestamp();
+                        publisher.Publish(redisChannel, token); // blocking: the server accepted the publish
+                        if (delivered.Task.Wait(5000))
+                        {
+                            long elapsedMs = (Stopwatch.GetTimestamp() - publishTicks) * 1000 / Stopwatch.Frequency;
+                            UpdateMax(ref worstDeliveryMs, elapsedMs);
+                        }
+                        else
+                        {
+                            Interlocked.Increment(ref misses);
+                            Console.WriteLine("  churn miss: thread " + threadIndex + " cycle " + i + " token " + token);
+                        }
+                    }
+                    finally
+                    {
+                        tokenSubscription?.Dispose();
+                    }
+                }
+            });
+            workers[t].IsBackground = true;
+        }
+
+        var sampler = new Thread(() =>
+        {
+            while (!Volatile.Read(ref churnDone))
+            {
+                Thread.Sleep(10);
+                if (subscriptions.ListenerCount <= 0)
+                    continue;
+                Interlocked.Increment(ref numsubSamples);
+                if (numsub() == 1)
+                    continue;
+                var zero = Stopwatch.StartNew();
+                bool reached = false;
+                while (zero.ElapsedMilliseconds < numsubGraceMs && subscriptions.ListenerCount > 0)
+                {
+                    if (numsub() == 1)
+                    {
+                        reached = true;
+                        break;
+                    }
+                    Thread.Sleep(5);
+                }
+                UpdateMax(ref worstZeroWindowMs, zero.ElapsedMilliseconds);
+                if (!reached && subscriptions.ListenerCount > 0)
+                {
+                    Interlocked.Increment(ref numsubViolations);
+                    Console.WriteLine("  churn NUMSUB violation: listeners=" + subscriptions.ListenerCount +
+                        ", channel not subscribed on the server for " + zero.ElapsedMilliseconds + " ms");
+                }
+            }
+        });
+        sampler.IsBackground = true;
+
+        for (int t = 0; t < threadCount; t++)
+            workers[t].Start();
+        sampler.Start();
+        start.Set();
+        foreach (var worker in workers)
+            worker.Join();
+        Volatile.Write(ref churnDone, true);
+        sampler.Join();
+        churnWatch.Stop();
+
+        bool released = WaitUntil(() => subscriptions.ListenerCount == 0, 5000)
+            && WaitUntil(() => numsub() == 0, 5000);
+        Check(released, "churn: channel and listeners released after the churn");
+        Check(misses == 0,
+            $"churn: {totalCycles:N0} token deliveries while {threadCount} threads churned one channel, 0 misses (got {misses})");
+        Check(worstDeliveryMs < 1000,
+            $"churn: worst delivery {worstDeliveryMs} ms < 1000 ms ({totalCycles:N0} deliveries)");
+        Check(numsubViolations == 0,
+            $"churn: PUBSUB NUMSUB == 1 whenever listeners were live ({numsubSamples} samples, {numsubViolations} violations, " +
+            $"worst zero window {worstZeroWindowMs} ms, grace {numsubGraceMs} ms)");
+        Console.WriteLine($"concurrent churn: {threadCount} threads x {cyclesPerThread} cycles in {churnWatch.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>
+    /// Regression for the ChannelLatest lifecycle epochs + per-listener sync
+    /// (working tree): a concurrent unsubscribe used to lose the subscribe
+    /// race every time - the removal found nothing to remove while the network
+    /// SUBSCRIBE was in flight, and the returned listener stayed alive as a
+    /// ghost entry. 400 rounds, each a racing ChannelLatest call and an
+    /// Unsubscribe call (the unsubscribe runs after the listener showed up in
+    /// the manager, so it deterministically overlaps the install decision);
+    /// after both join, the manager and the registry must hold no UDF listener.
+    /// A fresh ChannelLatest must then subscribe and receive a new publish.
+    /// </summary>
+    private static void RunChannelLatestRaceTest(ISubscriber publisher, string host)
+    {
+        const int rounds = 400;
+        string channel = "smoke:latest:" + Guid.NewGuid().ToString("N");
+        var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+        Console.WriteLine("channel-latest race: channel " + channel);
+
+        int badRounds = 0;
+        long worstRoundMs = 0;
+        var raceWatch = Stopwatch.StartNew();
+        for (int round = 0; round < rounds; round++)
+        {
+            // Never let a leftover from a previous round pollute the next race.
+            if (UdfListenerCount() != 0 || UdfRegisteredListenerCount() != 0)
+                RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+
+            var roundWatch = Stopwatch.StartNew();
+            var latest = Task.Run(() => RedisUDF.RedisUDFChannelLatest(channel, host));
+            // The manager listener appears after the lifecycle check snapshotted
+            // the epoch, so this Unsubscribe always races the install decision.
+            bool observed = SpinWait.SpinUntil(() => UdfListenerCount() > 0, 5000);
+            Thread.SpinWait(1000);
+            RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+            bool joined = latest.Wait(20000);
+            long roundMs = roundWatch.ElapsedMilliseconds;
+            if (roundMs > worstRoundMs)
+                worstRoundMs = roundMs;
+
+            int managerCount = UdfListenerCount();
+            int registryCount = UdfRegisteredListenerCount();
+            if (!observed || !joined || managerCount != 0 || registryCount != 0)
+            {
+                badRounds++;
+                Console.WriteLine("  channel-latest race: round " + round + " bad (observed=" + observed +
+                    ", joined=" + joined + ", manager=" + managerCount + ", registry=" + registryCount +
+                    ", result='" + (joined ? latest.Result : "<not joined>") + "')");
+            }
+        }
+        raceWatch.Stop();
+
+        Check(badRounds == 0,
+            $"channel-latest race: 0 of {rounds} racing subscribe/unsubscribe rounds left a listener " +
+            $"(manager 0, registry 0; worst round {worstRoundMs} ms, total {raceWatch.ElapsedMilliseconds} ms)");
+
+        string fresh = RedisUDF.RedisUDFChannelLatest(channel, host);
+        Check(string.Equals(fresh, "(null)", StringComparison.Ordinal),
+            $"channel-latest race: a fresh ChannelLatest after the race starts empty (got '{fresh}')");
+        Check(UdfListenerCount() == 1 && UdfRegisteredListenerCount() == 1,
+            "channel-latest race: the fresh ChannelLatest subscribed exactly one listener");
+
+        string probe = "post-race-" + Guid.NewGuid().ToString("N");
+        publisher.Publish(redisChannel, probe);
+        bool delivered = SpinWait.SpinUntil(
+            () => string.Equals(RedisUDF.RedisUDFChannelLatest(channel, host), probe, StringComparison.Ordinal), 5000);
+        Check(delivered, "channel-latest race: the fresh listener receives a new publish");
+
+        RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+        Check(UdfListenerCount() == 0 && UdfRegisteredListenerCount() == 0,
+            "channel-latest race: unsubscribe after the fresh read leaves no listener");
+    }
+
+    /// <summary>
+    /// Ghost/stale regression (working tree): a message callback that already
+    /// passed the closed check used to be able to write the shared latest-message
+    /// cache after the unsubscribe had cleared it; the per-listener Sync now
+    /// serializes the callback write against Close+remove. ChannelLatest churns
+    /// (subscribe -> unsubscribe) while a publisher spams the channel; after the
+    /// publisher stops and the final unsubscribe returns, a fresh ChannelLatest
+    /// must not surface any old message (no ghost re-add) until a new publish,
+    /// which the fresh subscription must deliver.
+    /// </summary>
+    private static void RunGhostStaleTest(ConnectionMultiplexer publisherConnection, ISubscriber publisher, string host)
+    {
+        const int churnRounds = 300;
+        string channel = "smoke:ghost:" + Guid.NewGuid().ToString("N");
+        var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+        Console.WriteLine("ghost/stale: channel " + channel);
+
+        bool stopPublishing = false;
+        long published = 0;
+        var publisherThread = new Thread(() =>
+        {
+            long i = 0;
+            int burst = 0;
+            while (!Volatile.Read(ref stopPublishing))
+            {
+                publisher.Publish(redisChannel, "ghost-churn-" + i++, CommandFlags.FireAndForget);
+                Interlocked.Increment(ref published);
+                if (++burst >= 32)
+                {
+                    burst = 0;
+                    Thread.Sleep(1);
+                }
+            }
+        });
+        publisherThread.IsBackground = true;
+
+        var churnThread = new Thread(() =>
+        {
+            for (int round = 0; round < churnRounds; round++)
+            {
+                RedisUDF.RedisUDFChannelLatest(channel, host);
+                Thread.SpinWait(500);
+                RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+            }
+        });
+        churnThread.IsBackground = true;
+
+        var watch = Stopwatch.StartNew();
+        churnThread.Start();
+        publisherThread.Start();
+        churnThread.Join();
+        Volatile.Write(ref stopPublishing, true);
+        publisherThread.Join();
+        // Ordering barrier: once PING replies on the publisher connection the
+        // server processed every publish; the drain wait lets those deliveries
+        // reach the current listener before the final unsubscribe.
+        publisherConnection.GetDatabase().Ping();
+        Thread.Sleep(750);
+        watch.Stop();
+
+        RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+        Check(WaitUntil(() => UdfListenerCount() == 0, 5000) && UdfRegisteredListenerCount() == 0,
+            "ghost/stale: the final unsubscribe leaves no listener and no registry entry");
+        Thread.Sleep(200); // a ghost callback would have to fire in this window
+        Check(UdfLatestMessageCount() == 0,
+            $"ghost/stale: no stale latest-message cache entry after the churn (got {UdfLatestMessageCount()})");
+
+        string fresh = RedisUDF.RedisUDFChannelLatest(channel, host);
+        Check(string.Equals(fresh, "(null)", StringComparison.Ordinal),
+            $"ghost/stale: a fresh ChannelLatest after the churn returns no ghost message (got '{fresh}')");
+
+        string probe = "ghost-probe-" + Guid.NewGuid().ToString("N");
+        publisher.Publish(redisChannel, probe);
+        bool delivered = SpinWait.SpinUntil(
+            () => string.Equals(RedisUDF.RedisUDFChannelLatest(channel, host), probe, StringComparison.Ordinal), 5000);
+        Check(delivered, "ghost/stale: a new publish is delivered to the fresh subscription");
+
+        RedisUDF.RedisUDFChannelUnsubscribe(channel, host);
+        Check(WaitUntil(() => UdfListenerCount() == 0, 5000) && UdfRegisteredListenerCount() == 0,
+            "ghost/stale: cleanup leaves no listener");
+        Console.WriteLine($"ghost/stale: {churnRounds} churn rounds, {Interlocked.Read(ref published):N0} publishes in {watch.ElapsedMilliseconds} ms");
+    }
+
+    /// <summary>
+    /// Regression for the pattern-join marker purge (working tree): the local
+    /// glob matcher could under-clear (reversed ranges, unterminated classes),
+    /// so ClearForListener now clears every publish-if-changed marker of that
+    /// host on a pattern join. A PSUB listener on a pattern that does NOT match
+    /// the channel must still invalidate the marker: the next identical
+    /// PublishIfChanged is published again instead of answering "No change".
+    /// A raw direct subscriber (no manager dedup) proves the republish really
+    /// reached the server.
+    /// </summary>
+    private static void RunPatternJoinOverClearTest(
+        RedisSubscriptionManager subscriptions, ISubscriber publisher, IServer server, string host)
+    {
+        string runId = Guid.NewGuid().ToString("N");
+        string channel = "smoke:overclear:" + runId + ":real";
+        string pattern = "smoke:overclear-nomatch:" + runId + ":*";
+        const string payload = "overclear-payload";
+        Console.WriteLine("pattern-join over-clear: channel " + channel + ", pattern " + pattern);
+
+        var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
+        int rawDelivered = 0;
+        Action<RedisChannel, RedisValue> rawHandler = (_, __) => Interlocked.Increment(ref rawDelivered);
+        publisher.Subscribe(redisChannel, rawHandler);
+
+        int listenerDelivered = 0;
+        var listenerToken = subscriptions.Subscribe(host, channel, pattern: false,
+            onMessage: _ => Interlocked.Increment(ref listenerDelivered), origin: "smokeOverClear");
+
+        Func<long> numsub = () =>
+        {
+            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
+            return arr.Length >= 2 ? (long)arr[1] : 0;
+        };
+
+        try
+        {
+            Check(WaitUntil(() => numsub() == 2, 5000),
+                "pattern-join over-clear: literal listener and raw subscriber live on the server");
+            RedisUDF.SyncWriteOverrideForTests = "sync"; // deterministic readers count, marker stored only when delivered
+
+            string first = RedisUDF.RedisUDFChannelPublishIfChanged(channel, payload, host)?.ToString();
+            Check(first != "No change" && first != null && !first.StartsWith("Error:", StringComparison.Ordinal),
+                $"pattern-join over-clear: first publish delivered (result '{first}')");
+            Check(WaitUntil(() => rawDelivered == 1 && listenerDelivered == 1, 5000),
+                "pattern-join over-clear: the first publish reached both subscribers");
+
+            string second = RedisUDF.RedisUDFChannelPublishIfChanged(channel, payload, host)?.ToString();
+            Check(string.Equals(second, "No change", StringComparison.Ordinal),
+                $"pattern-join over-clear: identical republish suppressed before any join (result '{second}')");
+            Check(WaitUntil(() => rawDelivered == 1 && listenerDelivered == 1, 750),
+                "pattern-join over-clear: the suppressed republish was not sent to the server");
+
+            // A pattern that cannot match the channel; its join still clears the
+            // host's markers synchronously inside Subscribe (over-clearing is
+            // intentional: under-clearing starves a returning listener).
+            var patternToken = subscriptions.Subscribe(host, pattern, pattern: true,
+                onMessage: _ => { }, origin: "smokeOverClearPattern");
+
+            string third = RedisUDF.RedisUDFChannelPublishIfChanged(channel, payload, host)?.ToString();
+            Check(third != "No change" && third != null && !third.StartsWith("Error:", StringComparison.Ordinal),
+                $"pattern-join over-clear: identical republish after the non-matching pattern join was not suppressed (result '{third}')");
+            // The raw subscriber sees every publish; the literal manager listener
+            // may still dedup the identical payload (its own channel-state marker
+            // is untouched by a pattern join), which is orthogonal by design.
+            Check(WaitUntil(() => rawDelivered == 2, 5000),
+                "pattern-join over-clear: the republished payload reached the server (raw subscriber count 2)");
+
+            patternToken.Dispose();
+        }
+        finally
+        {
+            RedisUDF.SyncWriteOverrideForTests = null;
+            listenerToken.Dispose();
+            publisher.Unsubscribe(redisChannel, rawHandler);
+        }
+
+        Check(WaitUntil(() => numsub() == 0, 5000), "pattern-join over-clear: channel released after cleanup");
     }
 }

@@ -56,6 +56,30 @@ namespace RedisExcel
         private long _nextListenerId;
         private volatile bool _disposed;
 
+        // Per-key stripes serializing the network handoff (subscribe and
+        // unsubscribe) ACROSS channel-state generations for the same registry
+        // key. StackExchange.Redis reuses its internal Subscription objects per
+        // channel: a joiner attaching while the previous generation is being
+        // torn down could skip the wire SUBSCRIBE (its internal map entry was
+        // already being removed) and leave the channel permanently deaf - churn
+        // stress reproduced misses with 10 s gaps. Serializing the handoff
+        // closes that window.
+        private const int NetworkGateCount = 64;
+        private static readonly object[] NetworkGates = CreateNetworkGates();
+
+        private static object[] CreateNetworkGates()
+        {
+            var gates = new object[NetworkGateCount];
+            for (int i = 0; i < gates.Length; i++)
+                gates[i] = new object();
+            return gates;
+        }
+
+        private static object NetworkGate(string key)
+        {
+            return NetworkGates[(key.GetHashCode() & 0x7FFFFFFF) % NetworkGateCount];
+        }
+
         public RedisSubscriptionManager(RedisConnectionManager connections)
         {
             _connections = connections ?? throw new ArgumentNullException(nameof(connections));
@@ -123,6 +147,21 @@ namespace RedisExcel
         }
 
         /// <summary>
+        /// Whether any live channel state for the host still has listeners.
+        /// Consumed by the connection manager: evicting such a multiplexer
+        /// would silence those subscriptions permanently.
+        /// </summary>
+        public bool HasActiveSubscribers(string host)
+        {
+            foreach (var state in _channels.Values)
+            {
+                if (string.Equals(state.Host, host, StringComparison.Ordinal) && !state.Listeners.IsEmpty)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Registers a listener for the channel. The optional <paramref name="origin"/>
         /// is a caller-defined tag (for example "RTD" or "UDF") used only for counting
         /// via <see cref="ListenerCountWithOrigin(string)"/> / <see cref="ChannelCountWithOrigin(string)"/>.
@@ -146,6 +185,7 @@ namespace RedisExcel
             string key = MakeKey(host, channel, pattern);
             ChannelState state;
             long id;
+            int disposedSpins = 0;
             while (true)
             {
                 if (_disposed)
@@ -156,9 +196,21 @@ namespace RedisExcel
                 {
                     if (state.Disposed)
                     {
-                        // Bounded busy-wait until the remover finishes evicting the
-                        // state; the next GetOrAdd then creates a fresh one.
-                        Thread.Yield();
+                        // The remover marks the state disposed BEFORE removing the
+                        // mapping. Wait bounded for that removal; if it never comes
+                        // (scheduler pause, or the remover lost a restore race),
+                        // evict the stale mapping ourselves so this can never spin
+                        // forever on the Excel thread.
+                        if (++disposedSpins > 500)
+                        {
+                            RemoveChannelEntry(key, state);
+                            if (_channels.TryGetValue(key, out var stillCurrent) && ReferenceEquals(stillCurrent, state))
+                                throw new InvalidOperationException("a disposed channel state could not be recreated");
+                        }
+                        else
+                        {
+                            Thread.Yield();
+                        }
                         continue;
                     }
                     bool wasActive = !state.Listeners.IsEmpty;
@@ -181,7 +233,13 @@ namespace RedisExcel
                 bool subscribed;
                 try
                 {
-                    subscribed = state.TryEnsureSubscribed(_connections, this);
+                    // Serialize the network handoff per registry key across
+                    // generations: a joiner must not attach to a dying
+                    // generation's subscription object (see NetworkGate).
+                    lock (NetworkGate(key))
+                    {
+                        subscribed = state.TryEnsureSubscribed(_connections, this);
+                    }
                 }
                 catch
                 {
@@ -255,8 +313,10 @@ namespace RedisExcel
             }
             if (!lastListener)
                 return;
-            RemoveChannelEntry(MakeKey(state.Host, state.Name, state.Pattern), state);
-            state.ReleaseSubscription();
+            string key = MakeKey(state.Host, state.Name, state.Pattern);
+            RemoveChannelEntry(key, state);
+            lock (NetworkGate(key))
+                state.ReleaseSubscription();
         }
 
         /// <summary>
@@ -295,7 +355,8 @@ namespace RedisExcel
             {
                 lock (state.Sync)
                     state.Disposed = true;
-                state.ReleaseSubscription();
+                lock (NetworkGate(MakeKey(state.Host, state.Name, state.Pattern)))
+                    state.ReleaseSubscription();
             }
             _channels.Clear();
         }
@@ -316,7 +377,8 @@ namespace RedisExcel
                 return;
 
             RemoveChannelEntry(MakeKey(state.Host, state.Name, state.Pattern), state);
-            state.ReleaseSubscription();
+            lock (NetworkGate(MakeKey(state.Host, state.Name, state.Pattern)))
+                state.ReleaseSubscription();
             logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
 
@@ -458,7 +520,14 @@ namespace RedisExcel
                         }
                         catch (Exception ex)
                         {
-                            logger.Debug(ex, $"TryEnsureSubscribed rollback: host={Host}, channel={Name}");
+                            // Rollback unsubscribe failed: the handler may still be
+                            // registered on the shared subscriber, so this state can
+                            // never be trusted again. Poison it and drop the registry
+                            // mapping; the next Subscribe builds a fresh state
+                            // instead of risking a duplicate handler registration.
+                            logger.Error(ex, $"TryEnsureSubscribed rollback: host={Host}, channel={Name}");
+                            Disposed = true;
+                            manager.RemoveChannelEntry(MakeKey(Host, Name, Pattern), this);
                         }
                         throw;
                     }

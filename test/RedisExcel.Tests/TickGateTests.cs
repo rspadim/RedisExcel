@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
@@ -64,6 +65,37 @@ namespace RedisExcel.Tests
             int winners = 0;
             Parallel.For(0, 64, _ => { if (gate.TryEnter()) Interlocked.Increment(ref winners); });
             Assert.Equal(1, winners);
+        }
+
+        [Fact]
+        public void TryEnter_ReleasedWhenGuardedRegionThrows()
+        {
+            var gate = new TickGate();
+
+            // Timer callbacks guard their body with try/finally (see
+            // RedisRtd.CreateTimer): a throwing tick must release the gate, or
+            // every later tick would be skipped forever.
+            var failure = Assert.Throws<InvalidOperationException>(() => RunTick(gate));
+            Assert.Equal("tick failed", failure.Message);
+
+            Assert.True(gate.TryEnter());
+            gate.Exit();
+        }
+
+        private static void RunTick(TickGate gate)
+        {
+            if (!gate.TryEnter())
+                throw new InvalidOperationException("the gate was already held");
+
+            try
+            {
+                Assert.False(gate.TryEnter()); // exclusive while the tick runs
+                throw new InvalidOperationException("tick failed");
+            }
+            finally
+            {
+                gate.Exit();
+            }
         }
     }
 }

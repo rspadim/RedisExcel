@@ -50,6 +50,24 @@ namespace RedisExcel
         // are evicted and disposed; connected multiplexers are never evicted.
         private const int MaxCachedConnectionsPerPool = 512;
 
+        // Short negative cache of connect failures per (host, pool): a burst of
+        // N SUB topics / volatile UDF reads against a dead host used to pay
+        // N x ConnectTimeout on the Excel thread; the first failure now makes
+        // the following attempts within the window fail fast. The retry loops
+        // (RTD backoff, next recalculation) still recover.
+        private const int ConnectFailureMemoMs = 2000;
+        private readonly ConcurrentDictionary<string, long> _recentConnectFailures =
+            new ConcurrentDictionary<string, long>();
+
+        // Live-consumer protection for eviction: hosts with active subscribers
+        // are never evicted (a disconnected walk must not orphan a channel).
+        private Func<string, bool> _hostProtection;
+
+        internal void SetEvictionProtection(Func<string, bool> isHostProtected)
+        {
+            _hostProtection = isHostProtected;
+        }
+
         /// <summary>Multiplexers actually created in the RTD pools; the same
         /// number as <see cref="LiveRtdConnectionCount"/> without the shutdown
         /// fence. Entries whose Lazy never ran hold nothing and are not
@@ -114,14 +132,31 @@ namespace RedisExcel
             return total;
         }
 
-        private void EvictDisconnectedConnections(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string keepHost)
+        private void EvictDisconnectedConnections(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string keepHost, RedisPool pool)
         {
             foreach (var kv in dictionary)
             {
                 if (dictionary.Count <= MaxCachedConnectionsPerPool)
                     break;
-                if (string.Equals(kv.Key, keepHost, StringComparison.Ordinal) || !kv.Value.IsValueCreated)
+                if (string.Equals(kv.Key, keepHost, StringComparison.Ordinal))
                     continue;
+                // Never evict a host with live subscribers: the subscription
+                // manager holds handlers on that multiplexer, and disposing it
+                // would silence the channel permanently (its fast paths trust
+                // the stored subscriber/wrapper). Consumer-less entries still
+                // keep the cap bounded.
+                var protection = _hostProtection;
+                if (protection != null && protection(kv.Key))
+                    continue;
+                if (!kv.Value.IsValueCreated)
+                {
+                    // A never-materialized entry holds nothing (also the state of
+                    // a failed factory on .NET Framework): reclaim it so failed
+                    // host entries cannot sit past the cap forever. No wrappers
+                    // can exist for a multiplexer that never materialized.
+                    RemoveConnectionEntry(dictionary, kv.Key, kv.Value);
+                    continue;
+                }
                 ConnectionMultiplexer mux;
                 try
                 {
@@ -135,8 +170,7 @@ namespace RedisExcel
                     continue;
                 // Conditional remove (value identity): never removes an entry a
                 // concurrent caller just replaced with a fresh Lazy.
-                if (((ICollection<KeyValuePair<string, Lazy<ConnectionMultiplexer>>>)dictionary)
-                    .Remove(new KeyValuePair<string, Lazy<ConnectionMultiplexer>>(kv.Key, kv.Value)))
+                if (RemoveConnectionEntry(dictionary, kv.Key, kv.Value))
                 {
                     try
                     {
@@ -147,9 +181,21 @@ namespace RedisExcel
                     {
                         logger.Debug(ex, $"GetConnection: error disposing evicted connection host={kv.Key}");
                     }
+                    // Invalidate the cached wrappers too: they are bound to the
+                    // disposed multiplexer, and leaving them would make every
+                    // later call on this host throw ObjectDisposedException
+                    // forever (GetDatabase/GetSubscriber would never rebuild).
+                    _databases.TryRemove(PoolKey(kv.Key, pool), out _);
+                    _subscribers.TryRemove(PoolKey(kv.Key, pool), out _);
                     logger.Info($"GetConnection: evicted disconnected connection host={kv.Key} (pool over {MaxCachedConnectionsPerPool} entries)");
                 }
             }
+        }
+
+        private static bool RemoveConnectionEntry(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string host, Lazy<ConnectionMultiplexer> lazy)
+        {
+            return ((ICollection<KeyValuePair<string, Lazy<ConnectionMultiplexer>>>)dictionary)
+                .Remove(new KeyValuePair<string, Lazy<ConnectionMultiplexer>>(host, lazy));
         }
 
         public IDatabase GetDatabase(string host, RedisPool pool)
@@ -228,6 +274,9 @@ namespace RedisExcel
             }
             catch
             {
+                // Record the failure so a burst of calls within the memo window
+                // fails fast instead of repeating the connect stall.
+                _recentConnectFailures[PoolKey(host, pool)] = DateTime.UtcNow.Ticks;
                 if (_shutdown)
                 {
                     // Shutdown won the race: Connect already refused/disposed the
@@ -270,7 +319,7 @@ namespace RedisExcel
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
             }
             if (dictionary.Count > MaxCachedConnectionsPerPool)
-                EvictDisconnectedConnections(dictionary, host);
+                EvictDisconnectedConnections(dictionary, host, pool);
             return connection;
         }
 
@@ -288,6 +337,15 @@ namespace RedisExcel
         {
             if (_shutdown)
                 throw new InvalidOperationException("RedisConnectionManager is shutting down");
+
+            string memoKey = PoolKey(host, pool);
+            if (_recentConnectFailures.TryGetValue(memoKey, out var failedAtTicks))
+            {
+                long elapsedMs = (DateTime.UtcNow.Ticks - failedAtTicks) / TimeSpan.TicksPerMillisecond;
+                if (elapsedMs >= 0 && elapsedMs < ConnectFailureMemoMs)
+                    throw new RedisConnectionException(ConnectionFailureType.UnableToConnect,
+                        $"connect to '{host}' skipped (recent failure {elapsedMs}ms ago)");
+            }
 
             var config = AppConfig.Current;
             int timeoutMs = pool == RedisPool.UdfData ? config.UDF.timeout : config.RTD.timeout;
@@ -342,6 +400,7 @@ namespace RedisExcel
             {
                 logger.Info($"RedisConnect: connection restored ({pool}) host={host}");
             };
+            _recentConnectFailures.TryRemove(memoKey, out _);
             return mux;
         }
 
@@ -383,6 +442,7 @@ namespace RedisExcel
             _shutdown = true;
             _databases.Clear();
             _subscribers.Clear();
+            _recentConnectFailures.Clear();
             foreach (var dictionary in new[] { _rtdData, _rtdSub, _udfData })
             {
                 foreach (var kv in dictionary)

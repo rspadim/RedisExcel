@@ -8,17 +8,30 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Dependencies of the linked production sources below. -->
+    <PackageReference Include="ExcelDna.Integration" Version="1.9.0-beta2" />
     <PackageReference Include="NLog" Version="6.0.0-rc3" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
-  <!-- Compiles the production sources directly: no Excel dependency for these files. -->
+  <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+  <!-- Compiles the production sources directly. The UDF sources need the
+       managed ExcelDna.Integration assembly only: the smoke test never enables
+       AsyncWrites and never calls a worksheet function, so no Excel process is
+       involved. -->
   <ItemGroup>
     <Compile Include="..\..\Config.cs" />
+    <Compile Include="..\..\ExcelJson.cs" />
     <Compile Include="..\..\RedisConnectionManager.cs" />
     <Compile Include="..\..\RedisSubscriptionManager.cs" />
     <Compile Include="..\..\RedisRuntime.cs" />
+    <Compile Include="..\..\RedisUDF.cs" />
+    <Compile Include="..\..\RedisUdfAsync.cs" />
+    <Compile Include="..\..\UpdateCheck.cs" />
   </ItemGroup>
 
 </Project>

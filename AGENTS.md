@@ -61,6 +61,14 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   server instance.
 - One StackExchange.Redis handler per channel broadcasts to every listener;
   a channel is unsubscribed only when its last listener leaves.
+- Subscribe/unsubscribe network handoff is serialized per registry key
+  (striped gates) across channel-state generations: StackExchange.Redis reuses
+  its internal per-channel subscription object, so a joiner attaching while
+  the previous generation was torn down could skip the wire SUBSCRIBE and
+  leave the channel permanently deaf. The disposed-state wait in `Subscribe`
+  is bounded (after 500 yields the joiner evicts the stale mapping itself),
+  and a failed rollback unsubscribe poisons the state (the next Subscribe
+  builds a fresh one) instead of risking a duplicate handler registration.
 - Subscription listeners carry an origin tag ("RTD"/"UDF"): the RTD status
   counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) report RTD
   listeners only, so UDF subscriptions no longer inflate them. After the RTD
@@ -103,6 +111,12 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   can miss an unchanged payload until it changes); local listener (re)joins
   still clear it. The cache is safe under concurrent recalculation and
   LRU-capped by `PublishDedupCacheSize` (default 10000).
+- `ChannelLatest` lifecycle: per-key epochs + per-listener locks. An
+  unsubscribe/reset (including add-in reload) bumps the epoch before removing,
+  so a subscribe that raced it declines to install (no ghost listener), and a
+  callback that passed its closed check cannot re-add a payload after the
+  removal; the network Subscribe runs outside the lifecycle lock and the
+  install re-checks the epoch under it.
 - Reads and status functions are volatile by design: they re-execute on every
   recalculation (F9/edit) so they stay fresh. Every write function also has an
   additive `...NonVolatile` twin (same args/defaults, thin delegation, no
@@ -155,9 +169,28 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   order again. `AsyncWrites` decides where a write blocks (Excel thread vs
   worker) and `SyncWrite` decides whether the reply is awaited on that thread,
   so `sync` + async yields real replies without blocking Excel.
+- `AutoOpen` raises the ThreadPool floor (min 16 worker/IO threads, best
+  effort) so a starved pool (other add-ins, hosted CLR, policy) cannot stall
+  the async write queue or RTD timer continuations; a failing ComServer
+  registration is logged instead of aborting `AutoOpen`.
 - Connection counters report live multiplexers per pool only (closed/failed
   entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
   only), and shutdown no longer blocks on closing connections.
+- Cached multiplexer eviction (past the 512-entry cap) vetoes hosts with live
+  subscription listeners (`RedisConnectionManager.SetEvictionProtection` wired
+  to `RedisSubscriptionManager.HasActiveSubscribers`), reclaims entries whose
+  Lazy factory never materialized, and invalidates the cached
+  `IDatabase`/`ISubscriber` wrappers of the evicted multiplexer so later calls
+  rebuild instead of throwing `ObjectDisposedException` forever.
+- A connect failure is memoized for 2 s per (host, pool): a burst of `SUB`
+  topics or volatile reads against a dead host pays one connect attempt
+  instead of N x ConnectTimeout; a successful connect clears the memo, and the
+  retry loops/recalculations recover after the window.
+- Every pipelined batch wait is bounded (`RedisUDF.WaitBounded` with the
+  configured response timeout + 500 ms): an orphaned batch task (multiplexer
+  disposed mid-execute) surfaces as a timeout instead of stalling a timer or
+  the Excel thread forever. Covers RTD polled reads and the UDF batch
+  `...Multiples` functions.
 - `RedisRuntime.ResetAfterAddInReload` supports a same-process add-in reload
   without reusing the previous managers.
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written
@@ -226,11 +259,11 @@ queued, synchronous enqueue), and a project-file parity test that keeps the
 unit project's `Compile` list complete (RedisRtd.cs is the intentional
 exclusion).
 
-The unit, smoke and load test projects compile the production sources directly
-(linked `Compile` items), so a new production `.cs` needed by tests must be
-added to their `Compile` lists; a unit parity test pins the unit project's list
-(every top-level source except the intentionally excluded `RedisRtd.cs`).
-`dotnet test` no longer builds or packs the
+The unit, smoke, load and liveness test projects compile the production
+sources directly (linked `Compile` items), so a new production `.cs` needed by
+tests must be added to their `Compile` lists; a unit parity test pins the unit
+project's list (every top-level source except the intentionally excluded
+`RedisRtd.cs`). `dotnet test` no longer builds or packs the
 add-in; CI builds it with msbuild.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
@@ -303,6 +336,28 @@ with `pattern` and listen-only mode the default is `*`). Reports throughput,
 allocated bytes per received message and GC counts. Read-only stress runs
 against real servers are allowed, but pass the host only as a command-line
 argument (never commit it) and keep the runs short.
+
+### 5. Liveness tests (requires Redis; Docker optional)
+
+```powershell
+dotnet run --project test\LivenessTests -c Release -- "127.0.0.1:6399,abortConnect=False"
+```
+
+Drives the real managers under adversarial conditions — ThreadPool starvation,
+subscribe/dispose churn, lock contention on every public entry point,
+`CLIENT KILL TYPE pubsub` storms, async queue/observable bursts and dedup
+re-join — and enforces the liveness bounds with a dedicated process heartbeat
+and watchdog thread: a stall past **5 s** fails the run, delivery/queue must
+resume within **30 s** and the async backlog must drain within **20 s**.
+
+With `--container <name>` the suite manages its own disposable
+`redis:7-alpine` container (started on the host's port, restarted mid-stream in
+phase C, removed at the end; loopback hosts and a working Docker CLI required).
+`--skip-restart` skips only the restart sub-phase (the kill storm still runs on
+loopback hosts) and `--quick` shortens the attack windows for a fast sanity
+run. The layer is **not wired into CI yet** — run it manually on a machine with
+Redis (and Docker when using `--container`), and only against a
+disposable/local server.
 
 ## Excel automation lessons (hard-won)
 

@@ -76,6 +76,9 @@ namespace RedisExcel
                     return;
                 var connections = new RedisConnectionManager();
                 var subscriptions = new RedisSubscriptionManager(connections);
+                // Eviction must never orphan a live subscription: the
+                // subscription manager vetoes evicting hosts with listeners.
+                connections.SetEvictionProtection(subscriptions.HasActiveSubscribers);
                 // StackExchange.Redis re-subscribes channels automatically after a
                 // reconnect, so no explicit resubscribe wiring is required here.
                 // Publish _subscriptions first: a reader that observes a non-null

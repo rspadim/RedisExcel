@@ -48,6 +48,50 @@
   the documented size error instead of a raw `OutOfMemoryException`.
 - The `NLog.config` sample (and the Readme copy) no longer sets
   `concurrentWrites`, an unknown property in NLog 6.
+- Pub/Sub network handoff is serialized per registry key across channel-state
+  generations (striped gates): StackExchange.Redis reuses its internal
+  per-channel subscription object, so a joiner attaching while the previous
+  generation was being torn down could skip the wire SUBSCRIBE and leave the
+  channel permanently deaf (subscribe/dispose churn reproduced multi-second
+  delivery misses). The disposed-state wait in `Subscribe` is bounded (500
+  yields, then the joiner evicts the stale mapping itself), and a failed
+  rollback unsubscribe poisons the state and drops the registry mapping
+  instead of leaving a possibly duplicated handler registered.
+- `RedisConnectionManager` eviction can no longer break a live consumer or the
+  evicted host itself: hosts with active subscription listeners are vetoed
+  (`SetEvictionProtection` wired to `RedisSubscriptionManager.HasActiveSubscribers`),
+  the cached `IDatabase`/`ISubscriber` wrappers bound to an evicted multiplexer
+  are invalidated so later calls rebuild instead of throwing
+  `ObjectDisposedException` forever (an evicted host used to be permanently
+  broken), and never-created `Lazy` entries are reclaimed so dead hosts cannot
+  pin the cap.
+- Pipelined batch waits are bounded (`RedisUDF.WaitBounded` with the configured
+  response timeout + 500 ms): RTD polled `GET`/`HGET`/`HGETALL` and the UDF
+  `...Multiples` batch functions report a timeout instead of letting an
+  orphaned task (multiplexer disposed mid-execute) stall a timer or the Excel
+  thread forever.
+- RTD topics keep the dirty flag after an immediate `UpdateValue` push: a value
+  that arrives while Excel-DNA is still activating the topic in `ConnectData`
+  (pushes are dropped for inactive topics) is re-published by the next Excel
+  tick instead of never reaching the cell.
+- A recovered `SUB`/`PSUB` subscription pushes a neutral "(subscribed)"
+  placeholder, so a quiet channel stops showing the stale
+  `#ERROR: ConnectData...` text.
+- `ChannelLatest` registrations gained lifecycle epochs and per-listener locks:
+  an unsubscribe/reset bumps the epoch first, so a racing subscribe declines to
+  install (no ghost listener resurrected after the removal), a callback that
+  already passed its closed check cannot re-add a pre-unsubscribe payload after
+  the removal, and a reset drops the latest message under the listener lock.
+- Pattern joins clear every publish-dedup marker of the host: the local glob
+  matcher could not reproduce Redis `stringmatchlen` semantics exactly
+  (reversed ranges, unterminated classes...), and one under-cleared marker
+  starves the returning listener until the payload changes (over-clearing only
+  costs one extra publish).
+- `RedisUDFConnectionCount` never throws during shutdown/reload races: it
+  returns the neutral `0` like the other status helpers.
+- A failing `ComServer.DllRegisterServer` no longer aborts `AutoOpen`: the
+  failure is logged and the UDFs keep working (`=RTD` shows `#N/D` until the
+  ProgID is registered).
 
 ### Changed
 
@@ -63,15 +107,28 @@
   multiplexers twice) and closes with `Close(false)` so it never waits for
   in-flight commands on the Excel thread; new connections set `ConnectRetry=1`
   (the default 3 multiplied the first-connect stall for a dead host).
+- Connect failures are memoized for 2 s per (host, pool): a burst of `SUB`
+  topics or volatile reads against a dead host pays one connect attempt
+  instead of N x ConnectTimeout on the Excel thread; a successful connect
+  clears the memo and the retry loops/recalculations recover after the window.
 - Add-in reload: `AutoOpen` calls `RedisUDF.ResetAfterAddInReload` to drop the
   previous session's `ChannelLatest` listeners, latest messages and
   publish-dedup markers (its subscription tokens died with the old runtime),
   so a reloaded add-in resubscribes instead of answering from stale state.
+- `AutoOpen` raises the ThreadPool floor (min 16 worker/IO threads, best
+  effort): the async write queue and the RTD timers run pool continuations,
+  and a starved pool (other add-ins, hosted CLR, policy) would stall cells
+  while the locks themselves stay healthy.
+- `RedisUDFPubSubChannelsInfo` resolves all channels with one `PUBSUB NUMSUB`
+  round-trip instead of one per channel (K x SyncTimeout in the worst case).
+- `RedisUDFKeys` enumerates with a bounded list (1,000,000 rows) and throws the
+  documented "narrow the pattern" error above the cap, instead of
+  materializing an unbounded keyspace on the Excel thread.
 
 ### Tests
 
 - New concurrent-subscribe test: 8 racing duplicate Subscribes enqueue exactly
-  one write and every observer is delivered once - 248 unit tests total.
+  one write and every observer is delivered once.
   `WaitCompleted` now returns the real work result, and the async tests share
   a collection with the argument-validation tests so the process-wide
   write-mode test seam cannot leak across parallel test classes.
@@ -100,6 +157,24 @@
   pin with offline delegation checks, and a project-file parity test that
   keeps the unit project's `Compile` list complete (RedisRtd.cs stays the
   intentional exclusion).
+- Hardening coverage for this round: unit tests for the pipelined-wait bound
+  (`WaitBounded`: a completed or faulted task returns true, a task that never
+  completes reports the timeout instead of blocking the caller), the
+  observable latch (an enqueue failure delivers the same error to a duplicate
+  `Subscribe`; an exception whose `Message` getter itself throws still
+  completes the cell), and the pattern-join marker semantics (every marker of
+  the host is cleared, other hosts untouched). The smoke suite keeps covering
+  ref-counted Pub/Sub and the concurrent dedup burst against its dedicated
+  disposable Redis.
+- New liveness layer (`test\LivenessTests`, not wired to CI yet): drives the
+  real managers under ThreadPool starvation, subscribe/dispose churn, lock
+  contention on every public entry point, `CLIENT KILL` storms plus a server
+  restart, async queue/observable bursts and dedup re-join. The
+  process/watchdog heartbeat must not stall past 5 s, delivery/queue must
+  resume within 30 s and the async backlog must drain within 20 s. The suite
+  can manage its own disposable `redis:7-alpine` container (`--container
+  <name>`, restarted mid-stream and removed afterwards), with
+  `--skip-restart` and `--quick` for constrained runs.
 
 ### Docs
 

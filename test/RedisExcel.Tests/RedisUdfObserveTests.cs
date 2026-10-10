@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using ExcelDna.Integration;
@@ -100,6 +101,16 @@ namespace RedisExcel.Tests
             public int CompletedCount => Volatile.Read(ref _completedCount);
 
             public bool WaitCompleted(int timeoutMs = 5000) => _completed.Wait(timeoutMs);
+        }
+
+        /// <summary>
+        /// Exception whose Message getter itself throws: the pathological fault
+        /// the error-conversion guards (SafeMessage/ResultForExcel) exist for.
+        /// </summary>
+        private sealed class ThrowingMessageException : Exception
+        {
+            public override string Message =>
+                throw new InvalidOperationException("the message getter itself failed");
         }
 
         [Fact]
@@ -435,6 +446,83 @@ namespace RedisExcel.Tests
             Assert.Equal(new object[] { "done" }, observer.Values);
             Assert.Equal(1, observer.CompletedCount);
             Assert.Empty(observer.Errors);
+        }
+
+        [Fact]
+        public void Subscribe_EnqueueFailure_LatchesTheSameErrorForBothObservers()
+        {
+            int runs = 0;
+
+            // A null host makes ConcurrentDictionary.GetOrAdd throw inside
+            // Enqueue: the one way Enqueue throws before scheduling the item.
+            var observable = new RedisWriteObservable(null, () =>
+            {
+                Interlocked.Increment(ref runs);
+                return (object)1;
+            });
+
+            var first = new RecordingObserver();
+            using (observable.Subscribe(first))
+            {
+                Assert.True(first.WaitCompleted(), "The first observer never completed.");
+            }
+
+            // The failure was published through the latch before the first
+            // Subscribe returned, so the duplicate must get the same queued
+            // result without spinning for the queue.
+            var second = new RecordingObserver();
+            var watch = Stopwatch.StartNew();
+            IDisposable duplicate = observable.Subscribe(second);
+            watch.Stop();
+            duplicate.Dispose();
+
+            Assert.True(watch.ElapsedMilliseconds < 200,
+                $"The duplicate Subscribe blocked for {watch.ElapsedMilliseconds} ms.");
+            Assert.True(second.WaitCompleted(), "The duplicate observer never completed.");
+
+            Assert.Equal(1, first.CompletedCount);
+            Assert.Equal(1, second.CompletedCount);
+            Assert.Empty(first.Errors);
+            Assert.Empty(second.Errors);
+            Assert.Equal(0, Volatile.Read(ref runs));
+
+            object[] firstValues = first.Values;
+            object[] secondValues = second.Values;
+            Assert.Single(firstValues);
+            Assert.Single(secondValues);
+            var firstValue = Assert.IsType<string>(firstValues[0]);
+            var secondValue = Assert.IsType<string>(secondValues[0]);
+            Assert.StartsWith("Error: ", firstValue);
+            Assert.Equal(firstValue, secondValue);
+        }
+
+        [Fact]
+        public void Subscribe_WorkFaultWithThrowingMessageGetter_DeliversOneTerminalSignal()
+        {
+            int runs = 0;
+            var observer = new RecordingObserver();
+            var observable = new RedisWriteObservable(UniqueHost(), () =>
+            {
+                Interlocked.Increment(ref runs);
+                throw new ThrowingMessageException();
+            });
+
+            // The guard on the error conversion must turn the pathological
+            // fault into error text: one OnNext and OnCompleted within the
+            // 5s bound, never a faulted task that strands the cell.
+            using (observable.Subscribe(observer))
+            {
+                Assert.True(observer.WaitCompleted(5000),
+                    "The observable never completed within the 5s bound.");
+            }
+
+            Assert.Equal(1, Volatile.Read(ref runs));
+            Assert.Equal(1, observer.CompletedCount);
+            Assert.Empty(observer.Errors);
+
+            object[] values = observer.Values;
+            Assert.Single(values);
+            Assert.StartsWith("Error: ", Assert.IsType<string>(values[0]));
         }
     }
 }

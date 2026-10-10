@@ -6,6 +6,8 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RedisExcel
 {
@@ -22,6 +24,10 @@ namespace RedisExcel
         {
             public string Channel;
             public IDisposable Token;
+            // Serializes the callback's write against Close+remove in the
+            // unsubscribe/reset paths: a callback that already passed the
+            // IsClosed check must not re-add a stale message after removal.
+            public readonly object Sync = new object();
             // Set before the token is disposed/unsubscribed so an in-flight
             // callback cannot publish a pre-unsubscribe message after the
             // channel entry was removed.
@@ -66,6 +72,36 @@ namespace RedisExcel
             return _publishLocks[hash % _publishLocks.Length];
         }
 
+        // Per-key stripes for the ChannelLatest lifecycle (subscribe install vs
+        // unsubscribe/reset). Separate from PublishLock: the lifecycle lock is
+        // NEVER held across the network Subscribe call, and the epoch count
+        // (bumped by every unsubscribe/reset) lets an install detect that a
+        // removal raced it and decline instead of resurrecting the listener.
+        private const int LifecycleLockStripeCount = 64;
+        private static readonly object[] _lifecycleLocks = CreateLifecycleLocks();
+        private static readonly ConcurrentDictionary<string, long> _channelEpochs =
+            new ConcurrentDictionary<string, long>();
+
+        private static object[] CreateLifecycleLocks()
+        {
+            var locks = new object[LifecycleLockStripeCount];
+            for (int i = 0; i < locks.Length; i++)
+                locks[i] = new object();
+            return locks;
+        }
+
+        private static object LifecycleLock(string key)
+        {
+            int hash = key.GetHashCode() & 0x7FFFFFFF;
+            return _lifecycleLocks[hash % _lifecycleLocks.Length];
+        }
+
+        private static long ChannelEpoch(string key)
+            => _channelEpochs.TryGetValue(key, out var epoch) ? epoch : 0;
+
+        private static long BumpChannelEpoch(string key)
+            => _channelEpochs.AddOrUpdate(key, 1, (_, current) => current + 1);
+
         static RedisUDF()
         {
             // RTD SUB/PSUB listeners consume UDF publishes too. When such a
@@ -90,6 +126,38 @@ namespace RedisExcel
         }
 
         /// <summary>
+        /// Hard bound for a pipelined task wait: an orphaned task (for example a
+        /// batch left incomplete when its multiplexer is disposed mid-execute)
+        /// must never block a thread forever. Returns false on timeout; a
+        /// faulted task returns true so the caller's GetResult surfaces the
+        /// original failure.
+        /// </summary>
+        internal static bool WaitBounded(Task task, int timeoutMs)
+        {
+            try
+            {
+                return task.Wait(timeoutMs);
+            }
+            catch (AggregateException)
+            {
+                return true;
+            }
+        }
+
+        /// <summary>Response wait bound: the configured timeout plus slack.</summary>
+        internal static int ResponseTimeoutMs()
+        {
+            try
+            {
+                return Math.Max(500, AppConfig.Current.RTD.timeout + 500);
+            }
+            catch
+            {
+                return 1500;
+            }
+        }
+
+        /// <summary>
         /// Drops the process-wide ChannelLatest state (listeners, latest messages
         /// and publish-dedup markers). Called by AddIn.AutoOpen after
         /// RedisRuntime.ResetAfterAddInReload: the previous session's subscription
@@ -101,11 +169,20 @@ namespace RedisExcel
         {
             foreach (var kv in _channelListeners)
             {
-                if (!_channelListeners.TryRemove(kv.Key, out var listener))
-                    continue;
+                ChannelListener listener;
+                lock (LifecycleLock(kv.Key))
+                {
+                    BumpChannelEpoch(kv.Key);
+                    if (!_channelListeners.TryRemove(kv.Key, out listener))
+                        continue;
+                }
                 try
                 {
-                    listener.Close();
+                    lock (listener.Sync)
+                    {
+                        listener.Close();
+                        _latestMessages.TryRemove(kv.Key, out _);
+                    }
                     listener.Token?.Dispose();
                 }
                 catch (Exception ex)
@@ -141,7 +218,11 @@ namespace RedisExcel
         /// <summary>
         /// Clears the publish dedup markers invalidated by a listener join:
         /// the exact key for a literal subscription, or every marker of the
-        /// same host whose channel matches the Redis glob for a pattern.
+        /// same host for a pattern. Matching the Redis glob exactly would need
+        /// stringmatchlen semantics (reversed ranges, unterminated classes...)
+        /// that the old local matcher got wrong; an under-cleared marker starves
+        /// the returning listener until the payload changes, while over-clearing
+        /// only costs one extra publish.
         /// </summary>
         internal static void ClearForListener(string host, string channel, bool pattern)
         {
@@ -157,19 +238,37 @@ namespace RedisExcel
             string[] keys = _lastPublishedMessages.SnapshotKeys();
             for (int i = 0; i < keys.Length; i++)
             {
-                if (!TryParseChannelKey(keys[i], out var keyHost, out var keyChannel))
+                if (!TryParseChannelKey(keys[i], out var keyHost, out _))
                     continue; // not one of our markers: leave it alone
                 if (!string.Equals(keyHost, host, StringComparison.Ordinal))
                     continue;
-                if (GlobMatches(channel, keyChannel))
-                    ClearMarker(keys[i]);
+                ClearMarker(keys[i]);
             }
         }
 
         private static void ClearMarker(string key)
         {
-            lock (PublishLock(key))
-                _lastPublishedMessages.Remove(key);
+            // Bounded retry: one failed removal must not leave a joining
+            // listener starved; the failure is logged (the join event handler
+            // already isolates it and never throws into Subscribe).
+            for (int attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    lock (PublishLock(key))
+                        _lastPublishedMessages.Remove(key);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (attempt >= 2)
+                    {
+                        logger.Error(ex, $"ClearMarker failed for key={key}");
+                        return;
+                    }
+                    Thread.Yield();
+                }
+            }
         }
 
         /// <summary>
@@ -624,23 +723,33 @@ namespace RedisExcel
                 // Only listeners registered for this host/channel pair are
                 // removed; the same channel on another host stays subscribed.
                 string key = ChannelKey(host, channelStr);
-                foreach (var kv in _channelListeners)
+                ChannelListener removed = null;
+                lock (LifecycleLock(key))
                 {
-                    if (!string.Equals(kv.Key, key, StringComparison.Ordinal))
-                        continue;
-                    if (_channelListeners.TryRemove(kv.Key, out var listener))
+                    // Bump first: a concurrent ChannelLatest that captured the
+                    // old epoch declines to install its listener after this
+                    // removal (otherwise the unsubscribe could return
+                    // "successfully" while a racing listener stays live).
+                    BumpChannelEpoch(key);
+                    if (_channelListeners.TryRemove(key, out var listener))
+                        removed = listener;
+                }
+                if (removed != null)
+                {
+                    // Close and drop the latest message under the listener lock,
+                    // so a callback that already passed the IsClosed check cannot
+                    // re-add a pre-unsubscribe payload after the removal.
+                    lock (removed.Sync)
                     {
-                        // Mark closed before disposing so an in-flight callback
-                        // stops writing; only then drop the latest message.
-                        listener.Close();
-                        listener.Token?.Dispose();
-                        _latestMessages.TryRemove(kv.Key, out _);
-                        // Drop the publish dedup marker with the listener so a
-                        // rejoining listener receives the next publish even when
-                        // the payload did not change.
-                        lock (PublishLock(key))
-                            _lastPublishedMessages.Remove(key);
+                        removed.Close();
+                        _latestMessages.TryRemove(key, out _);
                     }
+                    removed.Token?.Dispose();
+                    // Drop the publish dedup marker with the listener so a
+                    // rejoining listener receives the next publish even when
+                    // the payload did not change.
+                    lock (PublishLock(key))
+                        _lastPublishedMessages.Remove(key);
                 }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr}, host={host} unsubscribed");
@@ -655,10 +764,19 @@ namespace RedisExcel
         [ExcelFunction(Description = "Returns the number of active Redis connections", IsVolatile = true)]
         public static object RedisUDFConnectionCount()
         {
-            int count = RedisRuntime.Connections.LiveUdfConnectionCount();
-            if (logger.IsTraceEnabled)
-                logger.Trace($"RedisUDFConnectionCount: connections={count}");
-            return count;
+            // Like the other status helpers: a shutdown/reload race returns the
+            // neutral value instead of throwing into Excel.
+            try
+            {
+                int count = RedisRuntime.Connections.LiveUdfConnectionCount();
+                if (logger.IsTraceEnabled)
+                    logger.Trace($"RedisUDFConnectionCount: connections={count}");
+                return count;
+            }
+            catch
+            {
+                return 0;
+            }
         }
 
         [ExcelFunction(Description = "Reads the latest Pub/Sub message from a Redis channel", IsVolatile = true)]
@@ -675,17 +793,40 @@ namespace RedisExcel
                 if (string.IsNullOrWhiteSpace(channelStr))
                     throw new ArgumentException("a channel is required");
                 string key = ChannelKey(host, channelStr);
-                if (!_channelListeners.ContainsKey(key))
+                long epochBefore = 0;
+                bool needsSubscribe = false;
+                lock (LifecycleLock(key))
+                {
+                    if (!_channelListeners.ContainsKey(key))
+                    {
+                        epochBefore = ChannelEpoch(key);
+                        needsSubscribe = true;
+                    }
+                }
+                if (needsSubscribe)
                 {
                     var listener = new ChannelListener { Channel = channelStr };
+                    // Network I/O outside the lifecycle lock.
                     listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
                         onMessage: message =>
                         {
-                            if (listener.IsClosed)
-                                return;
-                            _latestMessages[key] = message ?? "";
+                            lock (listener.Sync)
+                            {
+                                if (listener.IsClosed)
+                                    return;
+                                _latestMessages[key] = message ?? "";
+                            }
                         }, origin: "UDF");
-                    if (_channelListeners.TryAdd(key, listener))
+                    bool installed = false;
+                    lock (LifecycleLock(key))
+                    {
+                        // Install only when no unsubscribe/reset raced the network
+                        // subscribe: an epoch change means the removal already
+                        // completed and this listener must not come back alive.
+                        if (ChannelEpoch(key) == epochBefore && _channelListeners.TryAdd(key, listener))
+                            installed = true;
+                    }
+                    if (installed)
                     {
                         // A freshly registered listener never saw the currently
                         // remembered payload; drop the marker so the next publish
@@ -695,9 +836,11 @@ namespace RedisExcel
                     }
                     else
                     {
-                        // Another thread registered first: close before disposing
-                        // so this losing listener never writes.
-                        listener.Close();
+                        // Lost a race (another thread registered first) or an
+                        // unsubscribe/reset won: close before disposing so this
+                        // losing listener never writes.
+                        lock (listener.Sync)
+                            listener.Close();
                         listener.Token.Dispose();
                     }
                 }
@@ -929,20 +1072,42 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels={channels.Length}");
 
+                var channelNames = new string[channels.Length];
                 for (int i = 0; i < channels.Length; i++)
                 {
-                    string channel = channels[i].ToString();
-                    result[i + 1, 0] = channel;
+                    channelNames[i] = channels[i].ToString();
+                    result[i + 1, 0] = channelNames[i];
+                }
+                if (channelNames.Length > 0)
+                {
+                    // One PUBSUB NUMSUB with every channel: the old per-channel
+                    // loop paid K round-trips (K x SyncTimeout in the worst case)
+                    // on the Excel thread.
                     try
                     {
-                        var numsubResult = server.Execute("PUBSUB", "NUMSUB", channel);
-                        var numsubArray = (RedisResult[])numsubResult;
-                        result[i + 1, 1] = numsubArray.Length >= 2 ? (long)numsubArray[1] : 0;
+                        var numsubArgs = new object[channelNames.Length + 1];
+                        numsubArgs[0] = "NUMSUB";
+                        for (int i = 0; i < channelNames.Length; i++)
+                            numsubArgs[i + 1] = channelNames[i];
+                        var numsubResult = server.Execute("PUBSUB", numsubArgs);
+                        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+                        if (numsubResult.Resp2Type == ResultType.Array)
+                        {
+                            var flat = (RedisResult[])numsubResult;
+                            for (int i = 0; i + 1 < flat.Length; i += 2)
+                            {
+                                try { counts[flat[i].ToString()] = (long)flat[i + 1]; }
+                                catch { /* keep the default 0 for this channel */ }
+                            }
+                        }
+                        for (int i = 0; i < channelNames.Length; i++)
+                            result[i + 1, 1] = counts.TryGetValue(channelNames[i], out var count) ? count : 0;
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={host}, PUBSUB NUMSUB {channel}");
-                        result[i + 1, 1] = $"Error: {ex.Message}";
+                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={host}, PUBSUB NUMSUB batch");
+                        for (int i = 0; i < channelNames.Length; i++)
+                            result[i + 1, 1] = $"Error: {ex.Message}";
                     }
                 }
                 return result;
@@ -1343,10 +1508,17 @@ namespace RedisExcel
                         hasPageSize = true;
                     }
                 }
-                if (hasPageSize)
-                    keys = server.Keys(pattern: patternStr, pageSize: pageSizeInt).Select(k => k.ToString()).ToList();
-                else
-                    keys = server.Keys(pattern: patternStr).Select(k => k.ToString()).ToList();
+                // Bounded enumeration: a huge keyspace must not materialize an
+                // unbounded list (or thousands of SCAN round-trips) on the Excel
+                // thread; narrow the pattern when the cap is hit.
+                const int MaxKeysRows = 1000000;
+                keys = new List<string>();
+                foreach (var key in server.Keys(pattern: patternStr, pageSize: hasPageSize ? pageSizeInt : 250))
+                {
+                    if (keys.Count >= MaxKeysRows)
+                        throw new ArgumentException($"too many keys for pattern '{patternStr}' (over {MaxKeysRows}); narrow the pattern");
+                    keys.Add(key.ToString());
+                }
 
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFKeys: pattern={patternStr}, found={keys.Count}, host={host}");
@@ -1443,8 +1615,13 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyExistsAsync(k)).ToArray();
                 batch.Execute();
+                int timeoutMs = ResponseTimeoutMs();
                 for (int i = 0; i < tasks.Length; i++)
+                {
+                    if (!WaitBounded(tasks[i], timeoutMs))
+                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                     result[i, 1] = tasks[i].GetAwaiter().GetResult() ? "1" : "0";
+                }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExistsMultiples: {count} keys, host={host}");
                 return result;
@@ -1749,8 +1926,11 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyTimeToLiveAsync(k)).ToArray();
                 batch.Execute();
+                int timeoutMs = ResponseTimeoutMs();
                 for (int i = 0; i < tasks.Length; i++)
                 {
+                    if (!WaitBounded(tasks[i], timeoutMs))
+                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                     var ttl = tasks[i].GetAwaiter().GetResult();
                     // Same representation as RedisUDFTTL: a NUMBER of seconds
                     // (the scalar function returns a double), -1 when the key is
@@ -1956,12 +2136,15 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.HashGetAsync(k, fieldStr)).ToArray();
                 batch.Execute();
+                int timeoutMs = ResponseTimeoutMs();
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     // Per-row try: one failing hash (e.g. WRONGTYPE) must not
                     // discard the whole matrix - the other rows still report.
                     try
                     {
+                        if (!WaitBounded(tasks[i], timeoutMs))
+                            throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                         result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
                     }
                     catch (Exception ex)

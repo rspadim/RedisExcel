@@ -16,6 +16,8 @@ namespace RedisExcel
 {
     public class AddIn : IExcelAddIn
     {
+        private static readonly Logger logger = LogManager.GetCurrentClassLogger();
+
         public void AutoOpen()
         {
             // A same-process reload (Excel re-opening the add-in without a new
@@ -25,7 +27,30 @@ namespace RedisExcel
             // old runtime; drop the cached listeners/messages/markers so a
             // reloaded add-in resubscribes instead of answering from stale state.
             RedisUDF.ResetAfterAddInReload();
-            ComServer.DllRegisterServer();
+            // Raise the ThreadPool floor a little: the async write queue and the
+            // RTD timers run continuations on the pool, and a starved pool
+            // (other add-ins, hosted CLR, policy) would stall cells while the
+            // locks themselves stay healthy. Best effort only.
+            try
+            {
+                ThreadPool.GetMinThreads(out int minWorkers, out int minIo);
+                ThreadPool.SetMinThreads(Math.Max(minWorkers, 16), Math.Max(minIo, 16));
+            }
+            catch (Exception ex)
+            {
+                logger.Debug(ex, "AutoOpen: could not raise the thread pool floor");
+            }
+            try
+            {
+                ComServer.DllRegisterServer();
+            }
+            catch (Exception ex)
+            {
+                // A COM registration failure (no writable hive, policy...) must
+                // not abort the whole AutoOpen: UDFs keep working and =RTD
+                // shows #N/D until the ProgID is registered.
+                logger.Error(ex, "AutoOpen: ComServer.DllRegisterServer failed");
+            }
             UpdateCheck.Start();
         }
 
@@ -246,7 +271,14 @@ namespace RedisExcel
                 try
                 {
                     Topic.UpdateValue(data);
-                    _dirty = false;
+                    // Intentionally keep the topic dirty: the push may have been
+                    // dropped because Excel-DNA had not activated the topic yet
+                    // (the ConnectData window), and a value arriving in that
+                    // window would then never reach the cell until it changes.
+                    // The next Excel tick re-pushes the CURRENT value once the
+                    // topic is active (UpdateValue is a no-op when unchanged),
+                    // which reconciles that window; the tick clears the flag.
+                    _dirty = true;
                 }
                 catch
                 {
@@ -798,7 +830,14 @@ namespace RedisExcel
                     continue;
                 TrySubscribe(td, out bool attempted);
                 if (attempted)
+                {
                     retried++;
+                    // A recovered subscription must stop showing the initial
+                    // "#ERROR: ConnectData..." text on a quiet channel: push a
+                    // neutral placeholder that the next tick publishes.
+                    if (td.Subscription != null && td.LastValue == null)
+                        td.UpdateOnly("(subscribed)");
+                }
             }
         }
 
@@ -1011,10 +1050,15 @@ namespace RedisExcel
                 // silently (their per-item try/catch logs the individual faults).
                 logger.Error(ex, $"PollHost: batch execute failed, host={host}");
             }
+            int responseTimeoutMs = RedisUDF.ResponseTimeoutMs();
             foreach (var pair in singleTasks)
             {
                 try
                 {
+                    // Hard bound: an orphaned batch task (multiplexer disposed
+                    // mid-execute) must never block the tick thread forever.
+                    if (!RedisUDF.WaitBounded(pair.Value, responseTimeoutMs))
+                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                     var value = pair.Value.GetAwaiter().GetResult();
                     if (_skipRepeatedMessages && !pair.Key.HasChangedPolledValue(value))
                         continue;
@@ -1032,6 +1076,8 @@ namespace RedisExcel
             {
                 try
                 {
+                    if (!RedisUDF.WaitBounded(pair.Value, responseTimeoutMs))
+                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                     var entries = pair.Value.GetAwaiter().GetResult();
                     if (_skipRepeatedMessages && !pair.Key.HasChangedPolledHash(entries))
                         continue;

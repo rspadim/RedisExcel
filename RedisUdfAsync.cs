@@ -155,7 +155,7 @@ namespace RedisExcel
                 // (at-least-once). Surface the failure instead of silently
                 // retrying on the Excel thread.
                 logger.Error(ex, $"RedisUdfAsync.Run: async dispatch failed for {functionName}");
-                return "Error: async dispatch failed: " + ex.Message;
+                return "Error: async dispatch failed: " + SafeMessage(ex);
             }
         }
 
@@ -260,7 +260,24 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 logger.Error(ex, "RedisUdfAsync: queued work item failed");
-                return "Error: " + ex.Message;
+                return "Error: " + SafeMessage(ex);
+            }
+        }
+
+        /// <summary>
+        /// The exception message, defensively: a throwing Message getter must
+        /// never turn the error conversion itself into a faulted task (the
+        /// observable would then have no terminal signal for the cell).
+        /// </summary>
+        internal static string SafeMessage(Exception ex)
+        {
+            try
+            {
+                return ex.Message;
+            }
+            catch
+            {
+                return "async write failed";
             }
         }
 
@@ -304,10 +321,13 @@ namespace RedisExcel
         // One-shot enqueue guard: Excel-DNA never subscribes twice for one
         // registered call, but a duplicate Subscribe must never enqueue the
         // write again (its own ThreadPoolDelegateObservable threw in that
-        // case). _queued publishes the single queued item so a duplicate
-        // Subscribe is still delivered the same result instead of starving.
+        // case). The latch is published before any enqueue so a duplicate
+        // subscription never blocks the calling (Excel) thread: it waits for
+        // the queued task asynchronously and receives the very same result,
+        // including an enqueue failure.
         private int _subscribed;
-        private Task<object> _queued;
+        private readonly TaskCompletionSource<Task<object>> _queuedReady =
+            new TaskCompletionSource<Task<object>>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal RedisWriteObservable(string host, Func<object> work)
         {
@@ -317,68 +337,72 @@ namespace RedisExcel
 
         public IDisposable Subscribe(IExcelObserver observer)
         {
-            Task<object> queued = Volatile.Read(ref _queued);
-            if (queued == null)
+            if (Interlocked.CompareExchange(ref _subscribed, 1, 0) == 0)
             {
-                if (Interlocked.CompareExchange(ref _subscribed, 1, 0) == 0)
+                Task<object> queued;
+                try
                 {
-                    try
-                    {
-                        // Enqueue synchronously HERE: Excel-DNA calls Subscribe
-                        // during the RTD ConnectData on the Excel thread, so
-                        // same-host writes enter the FIFO in formula evaluation
-                        // order. The delivery runs only when the item reaches
-                        // the head of the queue.
-                        queued = RedisUdfAsync.Enqueue(_host, _work);
-                        Volatile.Write(ref _queued, queued);
-                    }
-                    catch (Exception ex)
-                    {
-                        // Enqueue converts work failures to "Error: ..." task
-                        // results and never throws once it schedules the item;
-                        // this guards truly unexpected failures, so reporting
-                        // the failure cannot duplicate a write.
-                        logger.Error(ex, "RedisWriteObservable: enqueue failed");
-                        DeliverAndComplete(observer, "Error: " + ex.Message);
-                        return NoOpDisposable;
-                    }
+                    // Enqueue synchronously HERE: Excel-DNA calls Subscribe
+                    // during the RTD ConnectData on the Excel thread, so
+                    // same-host writes enter the FIFO in formula evaluation
+                    // order. The delivery runs only when the item reaches
+                    // the head of the queue.
+                    queued = RedisUdfAsync.Enqueue(_host, _work);
                 }
-                else
+                catch (Exception ex)
                 {
-                    // The first Subscribe is still publishing the queued item;
-                    // wait briefly (this duplicate path is already exotic).
-                    SpinWait.SpinUntil(() => Volatile.Read(ref _queued) != null, 2000);
-                    queued = Volatile.Read(ref _queued);
-                    if (queued == null)
-                    {
-                        logger.Warn("RedisWriteObservable: duplicate Subscribe before the write was queued");
-                        DeliverAndComplete(observer, "Error: duplicate async registration");
-                        return NoOpDisposable;
-                    }
+                    // Enqueue converts work failures to "Error: ..." task
+                    // results and never throws once it schedules the item; this
+                    // guards truly unexpected failures. Publish the failure
+                    // through the same latch so a duplicate Subscribe gets the
+                    // identical result instantly instead of a spin + error.
+                    logger.Error(ex, "RedisWriteObservable: enqueue failed");
+                    queued = Task.FromResult<object>("Error: " + RedisUdfAsync.SafeMessage(ex));
                 }
-            }
-            else
-            {
-                // Duplicate Subscribe for an already-registered call: never
-                // enqueue again, but still deliver the same queued result once.
-                logger.Warn("RedisWriteObservable: duplicate Subscribe; delivering the same queued result");
+                _queuedReady.TrySetResult(queued);
+                AttachDelivery(queued, observer);
+                return NoOpDisposable;
             }
 
+            // Duplicate Subscribe for an already-registered call: never enqueue
+            // again, and never block the calling (Excel) thread: wait for the
+            // first Subscribe to publish the queued task asynchronously and
+            // deliver the very same result to this observer.
+            logger.Warn("RedisWriteObservable: duplicate Subscribe; the same queued result is delivered");
+            _queuedReady.Task.ContinueWith(
+                inner => AttachDelivery(inner.Result, observer),
+                CancellationToken.None,
+                TaskContinuationOptions.RunContinuationsAsynchronously,
+                TaskScheduler.Default);
+            return NoOpDisposable;
+        }
+
+        private static void AttachDelivery(Task<object> queued, IExcelObserver observer)
+        {
             queued.ContinueWith(
                 OnQueuedCompleted,
                 observer,
                 CancellationToken.None,
                 TaskContinuationOptions.RunContinuationsAsynchronously,
                 TaskScheduler.Default);
-
-            // No-op: a queued/executing write completes even if Excel detaches
-            // the topic before the result arrives.
-            return NoOpDisposable;
         }
 
         private static void OnQueuedCompleted(Task<object> queued, object state)
         {
-            DeliverAndComplete((IExcelObserver)state, ResultForExcel(queued));
+            object result;
+            try
+            {
+                result = ResultForExcel(queued);
+            }
+            catch (Exception ex)
+            {
+                // Computing the result must never strand a cell: a pathological
+                // fault (an exception whose Message getter itself throws) would
+                // skip the delivery entirely and leave Excel pending forever.
+                logger.Error(ex, "RedisWriteObservable: computing the async write result failed");
+                result = "Error: async write failed";
+            }
+            DeliverAndComplete((IExcelObserver)state, result);
         }
 
         /// <summary>
