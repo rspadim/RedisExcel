@@ -54,6 +54,14 @@ namespace RedisExcel
         public bool AsyncWrites { get; set; } = false;
     }
 
+    /// <summary>Write mode names accepted by <see cref="ConfigRoot.SyncWrite"/>.</summary>
+    internal static class SyncWriteModes
+    {
+        public const string Sync = "sync";
+        public const string FireForget = "fireforget";
+        public const string FireForgetAll = "fireforget-all";
+    }
+
     /// <summary>
     /// Loads RedisExcel.json once per process and resolves host aliases.
     /// Before: every call could re-read the file from disk, and a missing section
@@ -168,10 +176,10 @@ namespace RedisExcel
         {
             switch (mode?.Trim().ToLowerInvariant())
             {
-                case "sync": return "sync";
-                case "fireforget": return "fireforget";
-                case "fireforget-all": return "fireforget-all";
-                default: return "fireforget";
+                case SyncWriteModes.Sync: return SyncWriteModes.Sync;
+                case SyncWriteModes.FireForget: return SyncWriteModes.FireForget;
+                case SyncWriteModes.FireForgetAll: return SyncWriteModes.FireForgetAll;
+                default: return SyncWriteModes.FireForget;
             }
         }
 

@@ -26,20 +26,15 @@ namespace RedisExcel
         // calls race with the teardown.
         private static volatile bool _shutdown;
 
+        private static readonly Func<RedisConnectionManager> ReadConnections = () => _connections;
+        private static readonly Func<RedisSubscriptionManager> ReadSubscriptions = () => _subscriptions;
+
         public static RedisConnectionManager Connections
         {
             get
             {
                 EnsureInitialized();
-                var value = _connections;
-                if (value == null)
-                {
-                    // Shutdown raced with this access: EnsureInitialized now
-                    // throws instead of recreating the managers.
-                    EnsureInitialized();
-                    value = _connections;
-                }
-                return value ?? throw new InvalidOperationException("RedisRuntime is shutting down");
+                return EnsureManager(_connections, ReadConnections);
             }
         }
 
@@ -48,16 +43,28 @@ namespace RedisExcel
             get
             {
                 EnsureInitialized();
-                var value = _subscriptions;
-                if (value == null)
-                {
-                    // Shutdown raced with this access: EnsureInitialized now
-                    // throws instead of recreating the managers.
-                    EnsureInitialized();
-                    value = _subscriptions;
-                }
-                return value ?? throw new InvalidOperationException("RedisRuntime is shutting down");
+                return EnsureManager(_subscriptions, ReadSubscriptions);
             }
+        }
+
+        /// <summary>
+        /// Shared null-handling tail of the manager getters: a null value
+        /// means the initializer may have raced with Shutdown, so re-run it
+        /// (it now throws instead of recreating the managers) and re-read;
+        /// the final throw covers a Shutdown that completed in between.
+        /// <paramref name="reread"/> reads the volatile field again without
+        /// passing it by ref (forbidden for volatile fields).
+        /// </summary>
+        private static T EnsureManager<T>(T value, Func<T> reread) where T : class
+        {
+            if (value == null)
+            {
+                // Shutdown raced with this access: EnsureInitialized now
+                // throws instead of recreating the managers.
+                EnsureInitialized();
+                value = reread();
+            }
+            return value ?? throw new InvalidOperationException("RedisRuntime is shutting down");
         }
 
         private static void EnsureInitialized()

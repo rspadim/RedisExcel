@@ -17,6 +17,9 @@ server, including the v1.1.0 Pub/Sub regression scenario:
   5. Kills the Pub/Sub connections server-side (CLIENT KILL TYPE pubsub) and
      verifies the subscriptions recover automatically. This step only runs
      against local hosts; use -SkipClientKill to force it off.
+  6. Kills its own hidden Excel mid-stream and verifies the Redis server drops
+     every subscription (a crashed add-in leaves no dangling state; skipped
+     with -KeepExcelOpen).
 
 TESTS USE ONLY THE test.redisexcel.* CHANNELS AND test.redisexcel.* KEYS.
 
@@ -99,9 +102,16 @@ $script:Failures = 0
 $script:RedisExe = $null
 $script:RedisPrefix = @()
 $script:RedisArgs = @()
+# Attempt count of the last Invoke-ExcelAction call, read by the Set-*/Get-*
+# helpers to report the "succeeded after N retries" diagnostic.
+$script:ExcelActionAttempts = 0
 $script:Excel = $null
 $script:Workbook = $null
 $script:ExcelPidsBefore = @()
+# Set when the "Excel dies mid-stream" scenario intentionally kills this run's
+# hidden Excel: the finally must then skip the COM close/quit calls and the
+# wait-for-exit loop (the COM proxy is dead; the process is already gone).
+$script:ExcelKilled = $false
 
 # ------------------------------------------------------------- write mode ----
 # v1.3.0 SyncWrite/AsyncWrites (written to RedisExcel.json before Excel starts;
@@ -147,6 +157,20 @@ function Get-RedisEndpoint([string]$ConnectionString) {
 
 function Invoke-RedisCli([string[]]$Arguments) {
     return (& $script:RedisExe @($script:RedisPrefix + $script:RedisArgs + $Arguments))
+}
+
+# Reads the numeric part of a redis-cli PUBSUB reply: NUMSUB answers
+# "<channel>\n<count>" (the count is the last line), NUMPAT just "<count>".
+# Returns -1 when the reply is empty, missing or not a number.
+function Get-RedisPubsubCount([string[]]$Arguments) {
+    $lines = @((Invoke-RedisCli $Arguments | Out-String).Trim() -split '\r?\n')
+    $lastLine = ''
+    if ($lines.Count -gt 0 -and $lines[-1]) { $lastLine = $lines[-1].Trim() }
+    # TryParse zeroes the ref value on failure, so test its return explicitly:
+    # a garbage reply must yield -1, never the "clean" value 0.
+    $value = 0
+    if ([int]::TryParse($lastLine, [ref]$value)) { return $value }
+    return -1
 }
 
 function Resolve-RedisCli {
@@ -226,13 +250,31 @@ function Get-AntivirusStatus {
 
 function Invoke-ExcelAction([scriptblock]$Action, [int]$Retries = 40) {
     for ($attempt = 0; $attempt -lt $Retries; $attempt++) {
-        try { return (& $Action) }
+        try {
+            $script:ExcelActionAttempts = $attempt
+            return (& $Action)
+        }
         catch {
-            if (-not (Test-RetryableError $_)) { throw }
+            if (-not (Test-RetryableError $_)) {
+                $script:ExcelActionAttempts = $attempt
+                throw
+            }
             Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
         }
     }
+    $script:ExcelActionAttempts = $Retries
     return (& $Action)
+}
+
+# Single bounded poll used by the Wait-* family: runs $Probe every $IntervalMs
+# until it returns true or $TimeoutSeconds elapse.
+function Wait-Until([scriptblock]$Probe, [int]$TimeoutSeconds, [int]$IntervalMs = 120) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        if (& $Probe) { return $true }
+        Start-Sleep -Milliseconds $IntervalMs
+    }
+    return $false
 }
 
 function Get-CellAddress([int]$Row, [int]$Col) {
@@ -252,90 +294,61 @@ function Set-Cell($Sheet, [int]$Row, [int]$Col, $Value) {
     # "cannot convert Int32 to String") that security software makes worse.
     # The unit tests cover numeric JSON conversion; the workbook only needs text.
     $text = if ($null -eq $Value) { '' } else { [string]$Value }
-    for ($attempt = 0; ; $attempt++) {
-        try {
-            $Sheet.Range($address).Value2 = $text
-            if ($attempt -gt 0) {
-                Write-Host ("      Set-Cell[{0}] succeeded after {1} retries (transient COM failure)" -f $address, $attempt) -ForegroundColor DarkYellow
-            }
-            return
-        }
-        catch {
-            if ($attempt -ge 40 -or -not (Test-RetryableError $_)) {
-                Write-Host ("Set-Cell[{0}] failed after {1} attempts: {2}" -f $address, $attempt, $_.Exception.Message) -ForegroundColor Red
-                throw
-            }
-            Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
-        }
+    try {
+        Invoke-ExcelAction { $Sheet.Range($address).Value2 = $text } | Out-Null
+    }
+    catch {
+        Write-Host ("Set-Cell[{0}] failed after {1} attempts: {2}" -f $address, $script:ExcelActionAttempts, $_.Exception.Message) -ForegroundColor Red
+        throw
+    }
+    if ($script:ExcelActionAttempts -gt 0) {
+        Write-Host ("      Set-Cell[{0}] succeeded after {1} retries (transient COM failure)" -f $address, $script:ExcelActionAttempts) -ForegroundColor DarkYellow
     }
 }
 
 function Set-Formula($Sheet, [string]$Address, [string]$Formula) {
-    for ($attempt = 0; ; $attempt++) {
-        try {
-            $Sheet.Range($Address).Formula = $Formula
-            if ($attempt -gt 0) {
-                Write-Host ("      Set-Formula[{0}] succeeded after {1} retries (transient COM failure)" -f $Address, $attempt) -ForegroundColor DarkYellow
-            }
-            return
-        }
-        catch {
-            if ($attempt -ge 40 -or -not (Test-RetryableError $_)) {
-                Write-Host ("Set-Formula[{0}] failed after {1} attempts: {2}" -f $Address, $attempt, $_.Exception.Message) -ForegroundColor Red
-                throw
-            }
-            Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
-        }
+    try {
+        Invoke-ExcelAction { $Sheet.Range($Address).Formula = $Formula } | Out-Null
+    }
+    catch {
+        Write-Host ("Set-Formula[{0}] failed after {1} attempts: {2}" -f $Address, $script:ExcelActionAttempts, $_.Exception.Message) -ForegroundColor Red
+        throw
+    }
+    if ($script:ExcelActionAttempts -gt 0) {
+        Write-Host ("      Set-Formula[{0}] succeeded after {1} retries (transient COM failure)" -f $Address, $script:ExcelActionAttempts) -ForegroundColor DarkYellow
     }
 }
 
 function Get-CellText($Sheet, [string]$Address) {
-    for ($attempt = 0; ; $attempt++) {
-        try { return [string]$Sheet.Range($Address).Text }
-        catch {
-            if ($attempt -ge 40 -or -not (Test-RetryableError $_)) { throw }
-            Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
-        }
-    }
+    return [string](Invoke-ExcelAction { [string]$Sheet.Range($Address).Text })
 }
 
 function Wait-CellText($Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $text = ''
-    while ((Get-Date) -lt $deadline) {
-        $text = Get-CellText $Sheet $Address
-        if ($text -eq $Expected) { return $true }
-        Start-Sleep -Milliseconds 120
-    }
-    Write-Host ("      {0} = '{1}' (expected '{2}')" -f $Address, $text, $Expected) -ForegroundColor DarkGray
+    $last = @('')
+    $ok = Wait-Until { $last[0] = Get-CellText $Sheet $Address; return ($last[0] -eq $Expected) } $TimeoutSeconds
+    if ($ok) { return $true }
+    Write-Host ("      {0} = '{1}' (expected '{2}')" -f $Address, $last[0], $Expected) -ForegroundColor DarkGray
     return $false
 }
 
 function Wait-CellNotEmpty($Sheet, [string]$Address, [int]$TimeoutSeconds = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $text = ''
-    while ((Get-Date) -lt $deadline) {
-        $text = Get-CellText $Sheet $Address
-        if (-not [string]::IsNullOrWhiteSpace($text) -and
-            $text -ne '(ConnectData)' -and
-            -not $text.StartsWith('#')) {
-            return $true
-        }
-        Start-Sleep -Milliseconds 120
-    }
-    Write-Host ("      {0} = '{1}' (empty/placeholder after {2}s)" -f $Address, $text, $TimeoutSeconds) -ForegroundColor DarkGray
+    $last = @('')
+    $ok = Wait-Until {
+        $last[0] = Get-CellText $Sheet $Address
+        return (-not [string]::IsNullOrWhiteSpace($last[0]) -and
+            $last[0] -ne '(ConnectData)' -and
+            -not $last[0].StartsWith('#'))
+    } $TimeoutSeconds
+    if ($ok) { return $true }
+    Write-Host ("      {0} = '{1}' (empty/placeholder after {2}s)" -f $Address, $last[0], $TimeoutSeconds) -ForegroundColor DarkGray
     return $false
 }
 
 function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$TimeoutSeconds = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $text = ''
-    while ((Get-Date) -lt $deadline) {
-        $text = Get-CellText $Sheet $Address
-        if ($text -match $Pattern) { return $true }
-        Start-Sleep -Milliseconds 120
-    }
-    Write-Host ("      {0} = '{1}' (expected /{2}/)" -f $Address, $text, $Pattern) -ForegroundColor DarkGray
+    $last = @('')
+    $ok = Wait-Until { $last[0] = Get-CellText $Sheet $Address; return ($last[0] -match $Pattern) } $TimeoutSeconds
+    if ($ok) { return $true }
+    Write-Host ("      {0} = '{1}' (expected /{2}/)" -f $Address, $last[0], $Pattern) -ForegroundColor DarkGray
     return $false
 }
 
@@ -343,65 +356,52 @@ function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$Timeou
 # #N/D, #NV, ...), so a pending async cell is detected through
 # WorksheetFunction.IsNA instead of matching the text. The Range is passed
 # directly: reading Value2 first loses the error type (it surfaces as Int32),
-# and IsNA on that number is False.
+# and IsNA on that number is False. A failed check (retries exhausted or a
+# non-retryable COM error) returns $false.
 function Test-CellIsNA($Sheet, [string]$Address) {
-    for ($attempt = 0; ; $attempt++) {
-        try { return [bool]$script:Excel.WorksheetFunction.IsNA($Sheet.Range($Address)) }
-        catch {
-            if ($attempt -ge 40 -or -not (Test-RetryableError $_)) { return $false }
-            Start-Sleep -Milliseconds ([Math]::Min(150 * ($attempt + 1), 3000))
-        }
-    }
+    try { return [bool](Invoke-ExcelAction { [bool]$script:Excel.WorksheetFunction.IsNA($Sheet.Range($Address)) }) }
+    catch { return $false }
 }
 
 function Wait-CellIsNA($Sheet, [string]$Address, [int]$TimeoutSeconds = 5) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    while ((Get-Date) -lt $deadline) {
-        if (Test-CellIsNA $Sheet $Address) { return $true }
-        Start-Sleep -Milliseconds 120
-    }
+    $ok = Wait-Until { Test-CellIsNA $Sheet $Address } $TimeoutSeconds
+    if ($ok) { return $true }
     Write-Host ("      {0} = '{1}' (expected the locale-independent #N/A pending error)" -f $Address, (Get-CellText $Sheet $Address)) -ForegroundColor DarkGray
     return $false
 }
 
 function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$TimeoutSeconds = 20) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $text = ''
-    while ((Get-Date) -lt $deadline) {
-        $text = (Get-CellText $Sheet $Address).Replace(',', '.')
+    $last = @('')
+    $ok = Wait-Until {
+        $last[0] = (Get-CellText $Sheet $Address).Replace(',', '.')
         $value = 0.0
-        if ([double]::TryParse($text, [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -and $value -ge $Min) { return $true }
-        Start-Sleep -Milliseconds 120
-    }
-    Write-Host ("      {0} = '{1}' (expected >= {2})" -f $Address, $text, $Min) -ForegroundColor DarkGray
+        return ([double]::TryParse($last[0], [System.Globalization.NumberStyles]::Any, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$value) -and $value -ge $Min)
+    } $TimeoutSeconds
+    if ($ok) { return $true }
+    Write-Host ("      {0} = '{1}' (expected >= {2})" -f $Address, $last[0], $Min) -ForegroundColor DarkGray
     return $false
 }
 
 # Polls a Redis command reply (e.g. GET/LLEN) until it equals the expected
 # text; prints the last observed reply on timeout so failures are diagnosable.
 function Wait-RedisValue([string[]]$Arguments, [string]$Expected, [int]$TimeoutSeconds = 5) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $value = ''
-    while ((Get-Date) -lt $deadline) {
-        $value = (Invoke-RedisCli $Arguments | Out-String).Trim()
-        if ($value -eq $Expected) { return $true }
-        Start-Sleep -Milliseconds 120
-    }
-    Write-Host ("      Redis {0} = '{1}' (expected '{2}')" -f ($Arguments -join ' '), $value, $Expected) -ForegroundColor DarkGray
+    $last = @('')
+    $ok = Wait-Until { $last[0] = (Invoke-RedisCli $Arguments | Out-String).Trim(); return ($last[0] -eq $Expected) } $TimeoutSeconds
+    if ($ok) { return $true }
+    Write-Host ("      Redis {0} = '{1}' (expected '{2}')" -f ($Arguments -join ' '), $last[0], $Expected) -ForegroundColor DarkGray
     return $false
 }
 
 # A workbook may (re)register its RTD topics asynchronously; a single publish
 # can be lost before that happens, so repeat it until the cell shows the value.
 function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 30) {
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $publishResult = ''
-    while ((Get-Date) -lt $deadline) {
-        $publishResult = (Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-String).Trim()
-        if (Wait-CellText $Sheet $Address $Expected 3) { return $true }
-        Start-Sleep -Milliseconds 250
-    }
-    Write-Host ("      PUBLISH {0} '{1}' last reply: '{2}' (cell {3} never showed '{4}')" -f $Channel, $Message, $publishResult, $Address, $Expected) -ForegroundColor DarkGray
+    $last = @('')
+    $ok = Wait-Until {
+        $last[0] = (Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-String).Trim()
+        return (Wait-CellText $Sheet $Address $Expected 3)
+    } $TimeoutSeconds 250
+    if ($ok) { return $true }
+    Write-Host ("      PUBLISH {0} '{1}' last reply: '{2}' (cell {3} never showed '{4}')" -f $Channel, $Message, $last[0], $Address, $Expected) -ForegroundColor DarkGray
     return $false
 }
 
@@ -1028,6 +1028,67 @@ try {
     else {
         Write-Host "SKIP  CLIENT KILL (not a local host, -SkipClientKill, or a custom -RedisCli); subscriptions not tested against a blip." -ForegroundColor DarkGray
     }
+
+    # --------------------------- regression: Excel dies mid-stream ----
+    # Kill ONLY this run's own hidden Excel: the victim is the EXCEL.EXE PID
+    # outside the pre-run baseline captured before this script created its
+    # instance, so a user window is never a candidate. While the RTD SUB/PSUB
+    # and the UDF ChannelLatest listeners are live, then wait for the server to
+    # drop every subscription. This proves a crashed add-in leaves no dangling
+    # Pub/Sub state behind and a fresh client would start clean. Skipped with
+    # -KeepExcelOpen, which intentionally leaves Excel running.
+    if (-not $KeepExcelOpen) {
+        $rtdChannel = "$KeyPrefix.rtd"       # RTD SUB topic (RTD sheet row 7)
+        $udfChannel = "$KeyPrefix.channel"   # UDF ChannelLatest (UDF sheet row 13)
+
+        # 1) The subscription state is live before the kill.
+        $preRtd = Get-RedisPubsubCount @('PUBSUB', 'NUMSUB', $rtdChannel)
+        $prePat = Get-RedisPubsubCount @('PUBSUB', 'NUMPAT')
+        Write-Host ("      pre-kill : PUBSUB NUMSUB {0} = {1}; PUBSUB NUMPAT = {2} (PSUB {0}* live)" -f $rtdChannel, $preRtd, $prePat) -ForegroundColor DarkGray
+        Check ($preRtd -ge 1) ('RTD subscription exists before the kill (NUMSUB ' + $rtdChannel + ' = ' + $preRtd + ', expected >= 1)')
+        Check ($prePat -ge 1) ('PSUB pattern state exists before the kill (NUMPAT = ' + $prePat + ', expected >= 1)')
+
+        # 2) Kill this run's hidden Excel. The baseline diff leaves exactly one
+        #    candidate by design; any other count means we cannot tell which
+        #    process is ours, so fail loudly and do not kill anything.
+        $newExcel = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
+            Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
+        if ($newExcel.Count -eq 1) {
+            $killedPid = $newExcel[0].Id
+            Write-Host ("      Stopping this run's hidden Excel (PID {0}) with Stop-Process -Force." -f $killedPid) -ForegroundColor DarkGray
+            $script:ExcelKilled = $true
+            try {
+                Stop-Process -Id $killedPid -Force -ErrorAction Stop
+            }
+            catch {
+                # The kill did not happen: restore the normal COM teardown.
+                $script:ExcelKilled = $false
+                Check $false ('could not kill the hidden Excel (PID ' + $killedPid + '): ' + $_.Exception.Message)
+            }
+        }
+        else {
+            Check $false ('expected exactly one EXCEL.EXE outside the pre-run baseline to kill, found ' + $newExcel.Count + ' (not killing anything)')
+        }
+
+        # 3) The killed process must tear its subscriptions down server-side
+        #    (no Quit, no unsubscribe): the RTD SUB, the UDF channel listener
+        #    and the RTD PSUB pattern all drop to zero, bounded at 20s.
+        $postRtd = -1
+        $postChan = -1
+        $postPat = -1
+        $cleanDeadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $cleanDeadline) {
+            $postRtd = Get-RedisPubsubCount @('PUBSUB', 'NUMSUB', $rtdChannel)
+            $postChan = Get-RedisPubsubCount @('PUBSUB', 'NUMSUB', $udfChannel)
+            $postPat = Get-RedisPubsubCount @('PUBSUB', 'NUMPAT')
+            if ($postRtd -eq 0 -and $postChan -eq 0 -and $postPat -eq 0) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        Write-Host ("      post-kill: PUBSUB NUMSUB {0} = {1}; PUBSUB NUMSUB {2} = {3}; PUBSUB NUMPAT = {4}" -f $rtdChannel, $postRtd, $udfChannel, $postChan, $postPat) -ForegroundColor DarkGray
+        Check ($postRtd -eq 0) ('no dangling RTD subscription after the crash (last NUMSUB ' + $rtdChannel + ' = ' + $postRtd + ', expected 0)')
+        Check ($postChan -eq 0) ('no dangling UDF channel subscription after the crash (last NUMSUB ' + $udfChannel + ' = ' + $postChan + ', expected 0)')
+        Check ($postPat -eq 0) ('no dangling pattern subscription after the crash (last NUMPAT = ' + $postPat + ', expected 0)')
+    }
 }
 finally {
     if ($KeepExcelOpen) {
@@ -1037,28 +1098,35 @@ finally {
         }
     }
     else {
-        try { if ($copy) { Invoke-ExcelAction { $copy.Close($false) } | Out-Null } } catch { }
-        try { if ($script:Workbook) { Invoke-ExcelAction { $script:Workbook.Close($false) } | Out-Null } } catch { }
-        if ($script:Excel -ne $null) {
-            try { Invoke-ExcelAction { $script:Excel.Quit() } | Out-Null } catch { }
-            [System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:Excel) | Out-Null
-            [GC]::Collect(); [GC]::WaitForPendingFinalizers()
-        }
+        # The "Excel dies mid-stream" scenario killed this run's hidden Excel
+        # with Stop-Process: the COM proxy is dead, so Workbook.Close/Quit/
+        # ReleaseComObject and the wait-for-exit loop are skipped (COM calls
+        # against the dead instance would only burn the retry budget). The
+        # config restore and the temp-workbook cleanup below still run.
+        if (-not $script:ExcelKilled) {
+            try { if ($copy) { Invoke-ExcelAction { $copy.Close($false) } | Out-Null } } catch { }
+            try { if ($script:Workbook) { Invoke-ExcelAction { $script:Workbook.Close($false) } | Out-Null } } catch { }
+            if ($script:Excel -ne $null) {
+                try { Invoke-ExcelAction { $script:Excel.Quit() } | Out-Null } catch { }
+                [System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:Excel) | Out-Null
+                [GC]::Collect(); [GC]::WaitForPendingFinalizers()
+            }
 
-        # Wait for this run's hidden Excel to actually exit before returning: a
-        # lingering instance (plus antivirus scanning its teardown) makes a
-        # back-to-back run slow enough to trip the COM retries. Never kill
-        # EXCEL.EXE blindly; wait bounded and report leftovers.
-        $pending = @()
-        $exitDeadline = (Get-Date).AddSeconds(30)
-        while ((Get-Date) -lt $exitDeadline) {
-            $pending = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
-                Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
-            if ($pending.Count -eq 0) { break }
-            Start-Sleep -Milliseconds 250
-        }
-        if ($pending.Count -gt 0) {
-            Write-Host ("WARNING: a hidden Excel instance did not exit within 30s (PIDs: " + (($pending | ForEach-Object { $_.Id }) -join ',') + "); back-to-back runs may be slow.") -ForegroundColor Yellow
+            # Wait for this run's hidden Excel to actually exit before returning: a
+            # lingering instance (plus antivirus scanning its teardown) makes a
+            # back-to-back run slow enough to trip the COM retries. Never kill
+            # EXCEL.EXE blindly; wait bounded and report leftovers.
+            $pending = @()
+            $exitDeadline = (Get-Date).AddSeconds(30)
+            while ((Get-Date) -lt $exitDeadline) {
+                $pending = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
+                    Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
+                if ($pending.Count -eq 0) { break }
+                Start-Sleep -Milliseconds 250
+            }
+            if ($pending.Count -gt 0) {
+                Write-Host ("WARNING: a hidden Excel instance did not exit within 30s (PIDs: " + (($pending | ForEach-Object { $_.Id }) -join ',') + "); back-to-back runs may be slow.") -ForegroundColor Yellow
+            }
         }
         # Short cooldown so security software can finish scanning the files
         # this run created/removed before the next run starts.

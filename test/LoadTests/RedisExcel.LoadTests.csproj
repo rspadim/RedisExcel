@@ -19,6 +19,7 @@
     <Compile Include="..\..\RedisConnectionManager.cs" />
     <Compile Include="..\..\RedisSubscriptionManager.cs" />
     <Compile Include="..\..\RedisRuntime.cs" />
+    <Compile Include="..\..\TickGate.cs" />
   </ItemGroup>
 
 </Project>

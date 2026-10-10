@@ -46,6 +46,14 @@ internal static class Program
         return condition();
     }
 
+    /// <summary>PUBSUB NUMSUB for one channel: the subscriber count (0 when the
+    /// reply is missing the count element).</summary>
+    private static long NumSub(IServer server, string channel)
+    {
+        var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
+        return arr.Length >= 2 ? (long)arr[1] : 0;
+    }
+
     private static int Main(string[] args)
     {
         string host = args.Length > 0 ? args[0] : DefaultHost;
@@ -76,11 +84,7 @@ internal static class Program
         var publisher = pubConn.GetSubscriber();
         var server = pubConn.GetServer(pubConn.GetEndPoints().First());
 
-        Func<long> numsub = () =>
-        {
-            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
-            return arr.Length >= 2 ? (long)arr[1] : 0;
-        };
+        Func<long> numsub = () => NumSub(server, channel);
 
         Check(WaitUntil(() => numsub() == 1, 5000), "server sees exactly one physical subscription for the channel");
         Check(subscriptions.ChannelCount == 1 && subscriptions.ListenerCount == 2, "counters: 1 channel, 2 listeners");
@@ -147,11 +151,7 @@ internal static class Program
         var litToken = subscriptions.Subscribe(host, patBase + ":other", pattern: false,
             onMessage: m => { lock (Sync) receivedLit.Add(m); });
 
-        Func<string, long> numsubOf = ch =>
-        {
-            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", ch);
-            return arr.Length >= 2 ? (long)arr[1] : 0;
-        };
+        Func<string, long> numsubOf = ch => NumSub(server, ch);
 
         // Pattern subscriptions do not show up in PUBSUB NUMSUB; their delivery
         // assertions below prove them, while the literal side is waited on here.
@@ -416,11 +416,7 @@ internal static class Program
             var server = mux.GetServer(mux.GetEndPoints().First());
             var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
 
-            Func<long> numsub = () =>
-            {
-                var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
-                return arr.Length >= 2 ? (long)arr[1] : 0;
-            };
+            Func<long> numsub = () => NumSub(server, channel);
             Check(WaitUntil(() => numsub() == 1, 10000),
                 "concurrent dedup: listener subscribed on the " + target + " server");
 
@@ -715,11 +711,7 @@ internal static class Program
         var redisChannel = new RedisChannel(channel, RedisChannel.PatternMode.Literal);
         Console.WriteLine("concurrent churn: channel " + channel);
 
-        Func<long> numsub = () =>
-        {
-            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
-            return arr.Length >= 2 ? (long)arr[1] : 0;
-        };
+        Func<long> numsub = () => NumSub(server, channel);
 
         int misses = 0;
         long worstDeliveryMs = 0;
@@ -1010,11 +1002,7 @@ internal static class Program
         var listenerToken = subscriptions.Subscribe(host, channel, pattern: false,
             onMessage: _ => Interlocked.Increment(ref listenerDelivered), origin: "smokeOverClear");
 
-        Func<long> numsub = () =>
-        {
-            var arr = (RedisResult[])server.Execute("PUBSUB", "NUMSUB", channel);
-            return arr.Length >= 2 ? (long)arr[1] : 0;
-        };
+        Func<long> numsub = () => NumSub(server, channel);
 
         try
         {

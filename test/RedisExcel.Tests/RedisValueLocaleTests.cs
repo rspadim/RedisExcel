@@ -7,24 +7,35 @@ namespace RedisExcel.Tests
 {
     public class RedisValueLocaleTests
     {
-        [Fact]
-        public void ToRedisString_UsesInvariantCultureForNumbers()
+        /// <summary>
+        /// Runs <paramref name="test"/> under the given culture and restores the
+        /// original one afterwards.
+        /// </summary>
+        private static void WithCulture(string culture, Action test)
         {
-            // Force a comma-decimal culture: the fact only proves invariance if it
-            // would fail when the implementation falls back to CurrentCulture.
             var original = CultureInfo.CurrentCulture;
             try
             {
-                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-
-                Assert.Equal("67000.5", RedisUDF.ToRedisString(67000.5));
-                Assert.Equal("0.1", RedisUDF.ToRedisString(0.1));
-                Assert.Equal("2", RedisUDF.ToRedisString(2.0));
+                CultureInfo.CurrentCulture = new CultureInfo(culture);
+                test();
             }
             finally
             {
                 CultureInfo.CurrentCulture = original;
             }
+        }
+
+        [Fact]
+        public void ToRedisString_UsesInvariantCultureForNumbers()
+        {
+            // Force a comma-decimal culture: the fact only proves invariance if it
+            // would fail when the implementation falls back to CurrentCulture.
+            WithCulture("de-DE", () =>
+            {
+                Assert.Equal("67000.5", RedisUDF.ToRedisString(67000.5));
+                Assert.Equal("0.1", RedisUDF.ToRedisString(0.1));
+                Assert.Equal("2", RedisUDF.ToRedisString(2.0));
+            });
         }
 
         [Fact]
@@ -61,17 +72,11 @@ namespace RedisExcel.Tests
         [Fact]
         public void ToRedisString_FormatsBooleansInvariantly()
         {
-            var original = CultureInfo.CurrentCulture;
-            try
+            WithCulture("de-DE", () =>
             {
-                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
                 Assert.Equal("true", RedisUDF.ToRedisString(true));
                 Assert.Equal("false", RedisUDF.ToRedisString(false));
-            }
-            finally
-            {
-                CultureInfo.CurrentCulture = original;
-            }
+            });
         }
 
         [Fact]
@@ -92,11 +97,8 @@ namespace RedisExcel.Tests
         [Fact]
         public void ToRedisString_DoublesRoundTrip()
         {
-            var original = CultureInfo.CurrentCulture;
-            try
+            WithCulture("de-DE", () =>
             {
-                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-
                 // G15 is not enough for these; the implementation must fall back to
                 // G17 so the invariant parse returns the exact same double.
                 foreach (var value in new[] { 0.84551240822557006, double.MaxValue })
@@ -104,21 +106,14 @@ namespace RedisExcel.Tests
                     var result = RedisUDF.ToRedisString(value);
                     Assert.Equal(value, double.Parse(result, CultureInfo.InvariantCulture));
                 }
-            }
-            finally
-            {
-                CultureInfo.CurrentCulture = original;
-            }
+            });
         }
 
         [Fact]
         public void ToInt64Invariant_ParsesInvariantNumbers()
         {
-            var original = CultureInfo.CurrentCulture;
-            try
+            WithCulture("de-DE", () =>
             {
-                CultureInfo.CurrentCulture = new CultureInfo("de-DE");
-
                 Assert.Equal(5L, RedisUDF.ToInt64Invariant(5.0));
                 Assert.Equal(7L, RedisUDF.ToInt64Invariant("7"));
 
@@ -127,11 +122,7 @@ namespace RedisExcel.Tests
                 // culture; the stable error message is what this asserts.
                 var ex = Assert.Throws<ArgumentException>(() => RedisUDF.ToInt64Invariant("1,5"));
                 Assert.Equal("numeric argument is not valid", ex.Message);
-            }
-            finally
-            {
-                CultureInfo.CurrentCulture = original;
-            }
+            });
         }
 
         [Fact]

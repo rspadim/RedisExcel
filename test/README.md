@@ -101,7 +101,8 @@ subscribe/dispose churn, lock contention on every public entry point,
 `CLIENT KILL` storm, async queue/observable bursts, dedup re-join) and enforces
 the liveness bounds: a stall past **5 s** fails the run, delivery and the queue
 must resume within **30 s**, and the async backlog must drain within **20 s**.
-The suite is not wired into CI yet.
+CI runs the quick mode after the smoke tests (`--quick --skip-restart`); the
+fuller modes below are meant to be run manually.
 
 Container behavior: without `--container` the suite runs against whatever
 Redis answers on the host (the `CLIENT KILL` storm runs only on loopback hosts;
@@ -111,7 +112,11 @@ own disposable `redis:7-alpine` container - started mapped to the host's port
 phase C and removed at the end - which requires a loopback host and a working
 Docker CLI; when Docker is unavailable the container phase is skipped with a
 printed reason. `--skip-restart` skips only the restart sub-phase; `--quick`
-shortens the attack windows for a fast sanity run. Only run the layer against a
-disposable/local Redis: the kill storm and the restart are destructive.
+shortens the attack windows for a fast sanity run. `--matrix` runs a scripted
+failure matrix (stop/start, restart, pause, kill storms, `CLIENT PAUSE`,
+flapping, reload under traffic, writes during the fault) asserting recovery and
+resource stability after every fault; `--soak [minutes]` (default 5) keeps mixed
+traffic running and injects a random fault every 20-40 s. Only run the layer
+against a disposable/local Redis: the kill storm and the restart are destructive.
 
 > Pass the host only as a command-line argument; never commit it.

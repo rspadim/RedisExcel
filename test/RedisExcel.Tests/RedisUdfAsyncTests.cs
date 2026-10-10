@@ -21,24 +21,10 @@ namespace RedisExcel.Tests
     [Collection("write-mode-seam")]
     public class RedisUdfAsyncTests
     {
-        /// <summary>Runs the test with AsyncWrites forced to false.</summary>
-        private static void WithSyncMode(Action test)
+        /// <summary>Runs the test with AsyncWrites forced to <paramref name="enabled"/>.</summary>
+        private static void WithAsyncWrites(bool enabled, Action test)
         {
-            RedisUdfAsync.AsyncWritesOverrideForTests = false;
-            try
-            {
-                test();
-            }
-            finally
-            {
-                RedisUdfAsync.AsyncWritesOverrideForTests = null;
-            }
-        }
-
-        /// <summary>Runs the test with AsyncWrites forced to true.</summary>
-        private static void WithAsyncMode(Action test)
-        {
-            RedisUdfAsync.AsyncWritesOverrideForTests = true;
+            RedisUdfAsync.AsyncWritesOverrideForTests = enabled;
             try
             {
                 test();
@@ -78,7 +64,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_ReturnsWorkResult()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 object result = RedisUdfAsync.Run("RedisUDFSet", null, new object[] { "key", "value" }, () => (object)42);
 
@@ -89,7 +75,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_RunsWorkOnCallerThread()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 int callerThread = Thread.CurrentThread.ManagedThreadId;
                 int workThread = -1;
@@ -107,7 +93,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_RunsWorkExactlyOnce()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 int calls = 0;
 
@@ -120,7 +106,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_PropagatesExceptions()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 var ex = Assert.Throws<InvalidOperationException>(() =>
                 {
@@ -134,7 +120,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_PassesThroughReferenceResults()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 var matrix = new object[,] { { 1, 2 }, { 3, 4 } };
 
@@ -147,7 +133,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_IgnoresTheHostArgument()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 // The host is only used for queueing in async mode; the sync
                 // path must not resolve or validate it in any way.
@@ -160,7 +146,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_AcceptsNullIdentityArgs()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 // The sync path must not dereference the identity arguments.
                 object result = RedisUdfAsync.Run("RedisUDFSet", null, null, () => (object)"ok");
@@ -177,7 +163,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_AsyncMode_WithoutCaller_RefusesWork()
         {
-            WithAsyncMode(() =>
+            WithAsyncWrites(true, () =>
             {
                 int calls = 0;
 
@@ -198,7 +184,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_AsyncMode_InvalidHost_FallsBackToSync()
         {
-            WithAsyncMode(() =>
+            WithAsyncWrites(true, () =>
             {
                 // A non-text host argument is rejected by ResolveHost, so
                 // ResolveHostForDispatch yields null and Run must fall back to
@@ -222,7 +208,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Run_SyncMode_UsesTheCallingThread()
         {
-            WithSyncMode(() =>
+            WithAsyncWrites(false, () =>
             {
                 int threadId = -1;
                 int workThread = -1;
@@ -378,9 +364,7 @@ namespace RedisExcel.Tests
             await WaitCompleted(task);
 
             // The release continuation runs after the item completes.
-            Assert.True(
-                SpinWait.SpinUntil(() => !RedisUdfAsync.HasQueueForTests(host), 5000),
-                "The idle per-host queue was not removed.");
+            AsyncQueueAssert.Removed(host);
         }
 
         [Fact]

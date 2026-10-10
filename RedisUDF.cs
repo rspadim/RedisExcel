@@ -55,46 +55,20 @@ namespace RedisExcel
         // Striped locks: PublishIfChanged serializes its check -> publish -> store
         // sequence per host/channel key without a lock per key. The marker clears
         // in ChannelLatest/ChannelUnsubscribe take the same stripe.
-        private const int PublishLockStripeCount = 64;
-        private static readonly object[] _publishLocks = CreatePublishLocks();
+        private static readonly StripedLocks PublishLockStripes = new StripedLocks(64);
 
-        private static object[] CreatePublishLocks()
-        {
-            var locks = new object[PublishLockStripeCount];
-            for (int i = 0; i < locks.Length; i++)
-                locks[i] = new object();
-            return locks;
-        }
-
-        private static object PublishLock(string key)
-        {
-            int hash = key.GetHashCode() & 0x7FFFFFFF;
-            return _publishLocks[hash % _publishLocks.Length];
-        }
+        private static object PublishLock(string key) => PublishLockStripes.For(key);
 
         // Per-key stripes for the ChannelLatest lifecycle (subscribe install vs
         // unsubscribe/reset). Separate from PublishLock: the lifecycle lock is
         // NEVER held across the network Subscribe call, and the epoch count
         // (bumped by every unsubscribe/reset) lets an install detect that a
         // removal raced it and decline instead of resurrecting the listener.
-        private const int LifecycleLockStripeCount = 64;
-        private static readonly object[] _lifecycleLocks = CreateLifecycleLocks();
+        private static readonly StripedLocks LifecycleLockStripes = new StripedLocks(64);
         private static readonly ConcurrentDictionary<string, long> _channelEpochs =
             new ConcurrentDictionary<string, long>();
 
-        private static object[] CreateLifecycleLocks()
-        {
-            var locks = new object[LifecycleLockStripeCount];
-            for (int i = 0; i < locks.Length; i++)
-                locks[i] = new object();
-            return locks;
-        }
-
-        private static object LifecycleLock(string key)
-        {
-            int hash = key.GetHashCode() & 0x7FFFFFFF;
-            return _lifecycleLocks[hash % _lifecycleLocks.Length];
-        }
+        private static object LifecycleLock(string key) => LifecycleLockStripes.For(key);
 
         private static long ChannelEpoch(string key)
             => _channelEpochs.TryGetValue(key, out var epoch) ? epoch : 0;
@@ -142,6 +116,18 @@ namespace RedisExcel
             {
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Bounded wait for a pipelined task followed by its result: an
+        /// incomplete task surfaces as the shared timeout failure instead of
+        /// blocking forever (see <see cref="WaitBounded"/>).
+        /// </summary>
+        internal static T WaitBoundedResult<T>(Task<T> task, int timeoutMs)
+        {
+            if (!WaitBounded(task, timeoutMs))
+                throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
+            return task.GetAwaiter().GetResult();
         }
 
         /// <summary>Response wait bound: the configured timeout plus slack.</summary>
@@ -438,6 +424,17 @@ namespace RedisExcel
             return text;
         }
 
+        /// <summary>Validates and returns a required channel name: a blank
+        /// channel matches nothing and must be rejected instead of silently
+        /// claiming success, before any Redis I/O.</summary>
+        private static string RequireChannel(object channel)
+        {
+            string channelStr = ToRedisString(channel);
+            if (string.IsNullOrWhiteSpace(channelStr))
+                throw new ArgumentException("a channel is required");
+            return channelStr;
+        }
+
         private static string ResolveHost(object optionalHost)
         {
             // null / empty cell / omitted argument all mean "use the default host".
@@ -487,9 +484,9 @@ namespace RedisExcel
         {
             switch (SyncWriteOverrideForTests ?? AppConfig.SyncWrite)
             {
-                case "sync":
+                case SyncWriteModes.Sync:
                     return false;
-                case "fireforget-all":
+                case SyncWriteModes.FireForgetAll:
                     return true;
                 default: // "fireforget": reply-agnostic writes only
                     return !replyDependent;
@@ -505,6 +502,29 @@ namespace RedisExcel
         internal static string FireAndForgetMarker(bool replyDependent) =>
             replyDependent ? "OK-FireForgetAll" : "OK FireForget";
 
+        /// <summary>Publishes a literal channel message with the mode's fire-and-
+        /// forget flag; the reply is the reader count (meaningless when sent
+        /// fire-and-forget, like the direct calls it replaces).</summary>
+        private static long PublishLiteral(ISubscriber subscriber, string channel, string message, bool fireAndForget)
+        {
+            return subscriber.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), message,
+                fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
+        }
+
+        /// <summary>Converts a matrix to JSON and hands it to the publish body;
+        /// a null range and conversion errors are returned to Excel instead of
+        /// being published.</summary>
+        private static object PublishMatrixAsJSON(object channel, object[,] range, object optionalHost,
+            Func<object, object, object, object> publish)
+        {
+            if (range == null)
+                return "Error: a range is required";
+            string json = ExcelJson.RedisUDFMatrixToJSON(range);
+            if (json.StartsWith("Error:", StringComparison.Ordinal))
+                return json;
+            return publish(channel, json, optionalHost);
+        }
+
         private static IDatabase GetDb(string host) => RedisRuntime.Connections.GetDatabase(host, RedisPool.UdfData);
 
         private static string Fail(string function, Exception ex, string context)
@@ -515,8 +535,37 @@ namespace RedisExcel
 
         private static object[,] FailMatrix(string function, Exception ex, string context)
         {
-            logger.Error(ex, $"{function}: {context}");
-            return new object[,] { { "Error: " + ex.Message } };
+            return new object[,] { { Fail(function, ex, context) } };
+        }
+
+        /// <summary>
+        /// Shared error envelope for the UDF bodies: runs the body (which must
+        /// resolve the host first) and converts a failure into the standard
+        /// "Error: ..." cell, logging the exact context the call site used.
+        /// </summary>
+        private static object RunCore(string function, Func<string> context, Func<object> body)
+        {
+            try
+            {
+                return body();
+            }
+            catch (Exception ex)
+            {
+                return Fail(function, ex, context());
+            }
+        }
+
+        /// <summary>Matrix-returning counterpart of <see cref="RunCore"/>.</summary>
+        private static object[,] RunMatrixCore(string function, Func<string> context, Func<object[,]> body)
+        {
+            try
+            {
+                return body();
+            }
+            catch (Exception ex)
+            {
+                return FailMatrix(function, ex, context());
+            }
         }
 
         /// <summary>Flattens an Excel range row-major (the order Excel uses), so a
@@ -530,6 +579,63 @@ namespace RedisExcel
                 for (int c = 0; c < cols; c++)
                     cells.Add(range[r, c]);
             return cells;
+        }
+
+        /// <summary>Flattens a keys range row-major into the two-column echo
+        /// matrix (column 0 = echoed key, column 1 left for the caller's value)
+        /// and the RedisKey list to batch. Blank cells map to an empty Redis key
+        /// so row positions are preserved. An empty range returns null for both,
+        /// so the caller can return its empty sentinel.</summary>
+        private static List<RedisKey> FlattenKeysWithEcho(object[,] range, out object[,] result)
+        {
+            int rows = range.GetLength(0);
+            int cols = range.GetLength(1);
+            int count = rows * cols;
+            if (count == 0)
+            {
+                result = null;
+                return null;
+            }
+            result = new object[count, 2];
+            var keys = new List<RedisKey>(count);
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < cols; c++)
+                {
+                    string key = ToRedisString(range[r, c]) ?? "";
+                    int i = r * cols + c;
+                    result[i, 0] = key;
+                    keys.Add(key);
+                }
+            }
+            return keys;
+        }
+
+        /// <summary>Single-column matrix for a value array; an empty array
+        /// returns the empty-cell sentinel the callers used before.</summary>
+        private static object[,] ToSingleColumnMatrix(RedisValue[] values)
+        {
+            if (values.Length == 0)
+                return new object[,] { { "" } };
+            var result = new object[values.Length, 1];
+            for (int i = 0; i < values.Length; i++)
+                result[i, 0] = values[i].ToString();
+            return result;
+        }
+
+        /// <summary>Two-column (name, value) matrix for hash entries; an empty
+        /// hash returns the empty-cell sentinel the callers used before.</summary>
+        private static object[,] ToHashMatrix(HashEntry[] entries)
+        {
+            if (entries.Length == 0)
+                return new object[,] { { "" } };
+            var result = new object[entries.Length, 2];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                result[i, 0] = entries[i].Name.ToString();
+                result[i, 1] = entries[i].Value.ToString();
+            }
+            return result;
         }
 
         /// <summary>Returns key/value cells as pairs. A range with exactly two
@@ -574,6 +680,21 @@ namespace RedisExcel
                 entries.Add(new KeyValuePair<RedisKey, RedisValue>(key, ToRedisString(pair.Value) ?? ""));
             }
             return entries;
+        }
+
+        /// <summary>Shared MSET body for SetKV/SetKVPair: rejects an empty batch,
+        /// sends it with the mode's fire-and-forget flag and traces with the
+        /// caller's function name.</summary>
+        private static string WriteStringSetBatch(string host, List<KeyValuePair<RedisKey, RedisValue>> entries, string function)
+        {
+            if (entries.Count == 0)
+                throw new ArgumentException("no entries to write");
+            bool fireAndForget = ShouldFireAndForget(replyDependent: false);
+            GetDb(host).StringSet(entries.ToArray(), When.Always,
+                fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
+            if (logger.IsTraceEnabled)
+                logger.Trace($"{function}: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
+            return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
         }
 
         /// <summary>Same filtering contract as <see cref="CollectStringSetEntries"/>
@@ -709,17 +830,13 @@ namespace RedisExcel
 
         // Local listener bookkeeping only - never fire and forget: the caller
         // needs the outcome and the listeners must be removed deterministically.
-        private static string RedisUDFChannelUnsubscribeCore(object channel, object optionalHost)
+        private static object RedisUDFChannelUnsubscribeCore(object channel, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFChannelUnsubscribe", () => $"channel={channel}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                string channelStr = ToRedisString(channel);
-                // A blank channel matches nothing; report it instead of
-                // claiming success.
-                if (string.IsNullOrWhiteSpace(channelStr))
-                    throw new ArgumentException("a channel is required");
+                string channelStr = RequireChannel(channel);
                 // Only listeners registered for this host/channel pair are
                 // removed; the same channel on another host stays subscribed.
                 string key = ChannelKey(host, channelStr);
@@ -754,11 +871,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr}, host={host} unsubscribed");
                 return $"Channel '{channelStr}' unsubscribed successfully.";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFChannelUnsubscribe", ex, $"channel={channel}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns the number of active Redis connections", IsVolatile = true)]
@@ -789,9 +902,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                string channelStr = ToRedisString(channel);
-                if (string.IsNullOrWhiteSpace(channelStr))
-                    throw new ArgumentException("a channel is required");
+                string channelStr = RequireChannel(channel);
                 string key = ChannelKey(host, channelStr);
                 long epochBefore = 0;
                 bool needsSubscribe = false;
@@ -877,13 +988,7 @@ namespace RedisExcel
 
         private static object RedisUDFChannelPublishIfChangedJSONCore(object channel, object[,] range, object optionalHost)
         {
-            if (range == null)
-                return "Error: a range is required";
-            string json = ExcelJson.RedisUDFMatrixToJSON(range);
-            // Do not publish conversion errors; return them to Excel instead.
-            if (json.StartsWith("Error:", StringComparison.Ordinal))
-                return json;
-            return RedisUDFChannelPublishIfChangedCore(channel, json, optionalHost);
+            return PublishMatrixAsJSON(channel, range, optionalHost, RedisUDFChannelPublishIfChangedCore);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel unless it is unchanged since the last delivery", IsVolatile = true)]
@@ -908,15 +1013,13 @@ namespace RedisExcel
             return RedisUDFChannelPublishIfChanged(channel, message, optionalHost);
         }
 
-        private static string RedisUDFChannelPublishIfChangedCore(object channel, object message, object optionalHost)
+        private static object RedisUDFChannelPublishIfChangedCore(object channel, object message, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFChannelPublishIfChanged", () => $"channel={channel}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                string channelStr = ToRedisString(channel);
-                if (string.IsNullOrWhiteSpace(channelStr))
-                    throw new ArgumentException("a channel is required");
+                string channelStr = RequireChannel(channel);
                 string messageStr = ToRedisString(message) ?? "";
                 string key = ChannelKey(host, channelStr);
                 // Re-publishing an identical payload is a no-op; the last
@@ -935,8 +1038,7 @@ namespace RedisExcel
                     var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                     if (ShouldFireAndForget(replyDependent: false))
                     {
-                        subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr,
-                            CommandFlags.FireAndForget);
+                        PublishLiteral(subscriber, channelStr, messageStr, fireAndForget: true);
                         // Fire and forget yields no reader count; remember the
                         // payload as published anyway so repeated recalculations
                         // keep deduplicating. A listener that joins later clears
@@ -946,7 +1048,7 @@ namespace RedisExcel
                             logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, host={host}, fireAndForget=true");
                         return FireAndForgetMarker(replyDependent: false);
                     }
-                    long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr);
+                    long readers = PublishLiteral(subscriber, channelStr, messageStr, fireAndForget: false);
                     // Remember the payload only when it was actually delivered;
                     // with zero readers the marker is dropped, so the volatile
                     // formula recalculates and retries the publish and a late
@@ -959,11 +1061,7 @@ namespace RedisExcel
                         logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
                     return readers > 0 ? $"{readers} readers(s)" : "No Readers";
                 }
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFChannelPublishIfChanged", ex, $"channel={channel}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Publish an Excel matrix to a Redis channel as JSON", IsVolatile = true)]
@@ -988,13 +1086,7 @@ namespace RedisExcel
 
         private static object RedisUDFChannelPublishJSONCore(object channel, object[,] range, object optionalHost)
         {
-            if (range == null)
-                return "Error: a range is required";
-            string json = ExcelJson.RedisUDFMatrixToJSON(range);
-            // Do not publish conversion errors; return them to Excel instead.
-            if (json.StartsWith("Error:", StringComparison.Ordinal))
-                return json;
-            return RedisUDFChannelPublishCore(channel, json, optionalHost);
+            return PublishMatrixAsJSON(channel, range, optionalHost, RedisUDFChannelPublishCore);
         }
 
         [ExcelFunction(Description = "Publishes a message to a Redis channel", IsVolatile = true)]
@@ -1019,30 +1111,23 @@ namespace RedisExcel
             return RedisUDFChannelPublish(channel, message, optionalHost);
         }
 
-        private static string RedisUDFChannelPublishCore(object channel, object message, object optionalHost)
+        private static object RedisUDFChannelPublishCore(object channel, object message, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFChannelPublish", () => $"channel={channel}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                string channelStr = ToRedisString(channel);
-                if (string.IsNullOrWhiteSpace(channelStr))
-                    throw new ArgumentException("a channel is required");
+                string channelStr = RequireChannel(channel);
                 // Convert before touching the connection: an invalid message
                 // argument must not initialize a connection just to be rejected.
                 string messageStr = ToRedisString(message) ?? "";
                 var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
-                long readers = subscriber.Publish(new RedisChannel(channelStr, RedisChannel.PatternMode.Literal), messageStr,
-                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
+                long readers = PublishLiteral(subscriber, channelStr, messageStr, fireAndForget);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={host}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : readers + " readers(s)")}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : $"{readers} readers(s)";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFChannelPublish", ex, $"channel={channel}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns all active Pub/Sub channels and their subscriber counts from Redis", IsVolatile = true)]
@@ -1194,10 +1279,10 @@ namespace RedisExcel
             return RedisUDFRename(key, newKey, optionalHost);
         }
 
-        private static string RedisUDFRenameCore(object key, object newKey, object optionalHost)
+        private static object RedisUDFRenameCore(object key, object newKey, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFRename", () => $"key={key}, newKey={newKey}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1208,11 +1293,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFRename", ex, $"key={key}, newKey={newKey}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key with a Matrix using JSON", IsVolatile = true)]
@@ -1235,11 +1316,11 @@ namespace RedisExcel
             return RedisUDFSetJSON(key, values, optionalHost);
         }
 
-        private static string RedisUDFSetJSONCore(object key, object[,] values, object optionalHost)
+        private static object RedisUDFSetJSONCore(object key, object[,] values, object optionalHost)
         {
             string host = null;
             string json = null;
-            try
+            return RunCore("RedisUDFSetJSON", () => $"key={key}, value={json}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (values == null)
@@ -1255,11 +1336,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetJSON", ex, $"key={key}, value={json}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key", IsVolatile = true)]
@@ -1282,10 +1359,10 @@ namespace RedisExcel
             return RedisUDFSet(key, value, optionalHost);
         }
 
-        private static string RedisUDFSetCore(object key, object value, object optionalHost)
+        private static object RedisUDFSetCore(object key, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSet", () => $"key={key}, value={value}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1297,11 +1374,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSet", ex, $"key={key}, value={value}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets Redis key-value pairs", IsVolatile = true)]
@@ -1324,10 +1397,10 @@ namespace RedisExcel
             return RedisUDFSetKV(keys, values, optionalHost);
         }
 
-        private static string RedisUDFSetKVCore(object[,] keys, object[,] values, object optionalHost)
+        private static object RedisUDFSetKVCore(object[,] keys, object[,] values, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSetKV", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null || values == null)
@@ -1339,20 +1412,8 @@ namespace RedisExcel
                 var pairs = new List<KeyValuePair<object, object>>(keyCells.Count);
                 for (int i = 0; i < keyCells.Count; i++)
                     pairs.Add(new KeyValuePair<object, object>(keyCells[i], valueCells[i]));
-                var entries = CollectStringSetEntries(pairs);
-                if (entries.Count == 0)
-                    throw new ArgumentException("no entries to write");
-                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
-                GetDb(host).StringSet(entries.ToArray(), When.Always,
-                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
-                if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetKV: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
-                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetKV", ex, $"host={host}");
-            }
+                return WriteStringSetBatch(host, CollectStringSetEntries(pairs), "RedisUDFSetKV");
+            });
         }
 
         [ExcelFunction(Description = "Sets Redis key-value pairs", IsVolatile = true)]
@@ -1373,29 +1434,17 @@ namespace RedisExcel
             return RedisUDFSetKVPair(keyValuePairs, optionalHost);
         }
 
-        private static string RedisUDFSetKVPairCore(object[,] keyValuePairs, object optionalHost)
+        private static object RedisUDFSetKVPairCore(object[,] keyValuePairs, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSetKVPair", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keyValuePairs == null)
                     throw new ArgumentException("a range is required");
                 var pairs = FlattenPairRange(keyValuePairs);
-                var entries = CollectStringSetEntries(pairs);
-                if (entries.Count == 0)
-                    throw new ArgumentException("no entries to write");
-                bool fireAndForget = ShouldFireAndForget(replyDependent: false);
-                GetDb(host).StringSet(entries.ToArray(), When.Always,
-                    fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
-                if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetKVPair: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
-                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetKVPair", ex, $"host={host}");
-            }
+                return WriteStringSetBatch(host, CollectStringSetEntries(pairs), "RedisUDFSetKVPair");
+            });
         }
 
         [ExcelFunction(Description = "Gets the values of multiple Redis keys", IsVolatile = true)]
@@ -1406,7 +1455,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFGetMultiple", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null)
@@ -1435,19 +1484,14 @@ namespace RedisExcel
                 else
                     throw new ArgumentException("multipleColumns must be TRUE or FALSE");
 
-                int rows = keys.GetLength(0);
-                int cols = keys.GetLength(1);
-                var validKeys = new List<string>(rows * cols);
                 // Excel passes ranges row-major; flatten them in that order so the
-                // output rows follow the input order.
-                for (int r = 0; r < rows; r++)
+                // output rows follow the input order. Blank cells are skipped.
+                var validKeys = new List<string>();
+                foreach (var cell in FlattenRowMajor(keys))
                 {
-                    for (int c = 0; c < cols; c++)
-                    {
-                        var key = ToRedisString(keys[r, c]) ?? "";
-                        if (!string.IsNullOrWhiteSpace(key))
-                            validKeys.Add(key);
-                    }
+                    var key = ToRedisString(cell) ?? "";
+                    if (!string.IsNullOrWhiteSpace(key))
+                        validKeys.Add(key);
                 }
                 if (validKeys.Count == 0)
                     return FailMatrix("RedisUDFGetMultiple", new ArgumentException("No valid key"), "keys range contains no non-blank cells");
@@ -1466,11 +1510,7 @@ namespace RedisExcel
                     result[i, columns - 1] = values[i].HasValue ? values[i].ToString() : "(null)";
                 }
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFGetMultiple", ex, $"host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Lists Redis keys matching a pattern", IsVolatile = true)]
@@ -1481,7 +1521,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFKeys", () => $"pattern={pattern}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string patternStr = ToRedisString(pattern);
@@ -1528,11 +1568,7 @@ namespace RedisExcel
                 for (int i = 0; i < keys.Count; i++)
                     result[i, 0] = keys[i];
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFKeys", ex, $"pattern={pattern}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns the TTL of a Redis key in seconds", IsVolatile = true)]
@@ -1586,50 +1622,25 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFExistsMultiples", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null)
                     throw new ArgumentException("a range is required");
-                int rows = keys.GetLength(0);
-                int cols = keys.GetLength(1);
-                int count = rows * cols;
-                if (count == 0)
+                var keysList = FlattenKeysWithEcho(keys, out var result);
+                if (keysList == null)
                     return new object[,] { { "" } };
-                var result = new object[count, 2];
-                var keysList = new List<RedisKey>(count);
-                // Excel passes ranges row-major; flatten them in that order so the
-                // output rows follow the input order.
-                for (int r = 0; r < rows; r++)
-                {
-                    for (int c = 0; c < cols; c++)
-                    {
-                        // Blank cells map to an empty Redis key so row positions are preserved.
-                        var key = ToRedisString(keys[r, c]) ?? "";
-                        int i = r * cols + c;
-                        result[i, 0] = key;
-                        keysList.Add(key);
-                    }
-                }
                 // One round trip for all keys instead of one command per key.
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyExistsAsync(k)).ToArray();
                 batch.Execute();
                 int timeoutMs = ResponseTimeoutMs();
                 for (int i = 0; i < tasks.Length; i++)
-                {
-                    if (!WaitBounded(tasks[i], timeoutMs))
-                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
-                    result[i, 1] = tasks[i].GetAwaiter().GetResult() ? "1" : "0";
-                }
+                    result[i, 1] = WaitBoundedResult(tasks[i], timeoutMs) ? "1" : "0";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFExistsMultiples: {count} keys, host={host}");
+                    logger.Trace($"RedisUDFExistsMultiples: {keysList.Count} keys, host={host}");
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFExistsMultiples", ex, $"host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Checks if a Redis key exists", IsVolatile = true)]
@@ -1676,7 +1687,7 @@ namespace RedisExcel
         private static object RedisUDFDelCore(object key, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFDel", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1691,11 +1702,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFDel: key={keyStr}, deleted={deleted}, host={host}");
                 return deleted;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFDel", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets the value of a Redis key with an expiry in seconds", IsVolatile = true)]
@@ -1720,10 +1727,10 @@ namespace RedisExcel
             return RedisUDFSetEx(key, value, ttlSeconds, optionalHost);
         }
 
-        private static string RedisUDFSetExCore(object key, object value, object ttlSeconds, object optionalHost)
+        private static object RedisUDFSetExCore(object key, object value, object ttlSeconds, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSetEx", () => $"key={key}, value={value}, ttl={ttlSeconds}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
@@ -1740,11 +1747,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetEx", ex, $"key={key}, value={value}, ttl={ttlSeconds}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets a timeout on a Redis key in seconds", IsVolatile = true)]
@@ -1771,7 +1774,7 @@ namespace RedisExcel
         private static object RedisUDFExpireCore(object key, object ttlSeconds, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFExpire", () => $"key={key}, ttl={ttlSeconds}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
@@ -1792,11 +1795,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={host}");
                 return expired ? "1" : "0";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFExpire", ex, $"key={key}, ttl={ttlSeconds}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Increments the integer value of a Redis key by one", IsVolatile = true)]
@@ -1821,7 +1820,7 @@ namespace RedisExcel
         private static object RedisUDFIncrCore(object key, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFIncr", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1836,11 +1835,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncr: key={keyStr}, value={value}, host={host}");
                 return value;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFIncr", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Increments the integer value of a Redis key by a given amount", IsVolatile = true)]
@@ -1867,7 +1862,7 @@ namespace RedisExcel
         private static object RedisUDFIncrByCore(object key, object increment, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFIncrBy", () => $"key={key}, increment={increment}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long incr = ToInt64Invariant(increment);
@@ -1883,11 +1878,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, value={value}, host={host}");
                 return value;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFIncrBy", ex, $"key={key}, increment={increment}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns the TTL of multiple Redis keys in seconds", IsVolatile = true)]
@@ -1897,31 +1888,14 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFTTLMultiples", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null)
                     throw new ArgumentException("a range is required");
-                int rows = keys.GetLength(0);
-                int cols = keys.GetLength(1);
-                int count = rows * cols;
-                if (count == 0)
+                var keysList = FlattenKeysWithEcho(keys, out var result);
+                if (keysList == null)
                     return new object[,] { { "" } };
-                var result = new object[count, 2];
-                var keysList = new List<RedisKey>(count);
-                // Excel passes ranges row-major; flatten them in that order so the
-                // output rows follow the input order.
-                for (int r = 0; r < rows; r++)
-                {
-                    for (int c = 0; c < cols; c++)
-                    {
-                        // Blank cells map to an empty Redis key so row positions are preserved.
-                        var key = ToRedisString(keys[r, c]) ?? "";
-                        int i = r * cols + c;
-                        result[i, 0] = key;
-                        keysList.Add(key);
-                    }
-                }
                 // One round trip for all keys instead of one command per key.
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyTimeToLiveAsync(k)).ToArray();
@@ -1929,9 +1903,7 @@ namespace RedisExcel
                 int timeoutMs = ResponseTimeoutMs();
                 for (int i = 0; i < tasks.Length; i++)
                 {
-                    if (!WaitBounded(tasks[i], timeoutMs))
-                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
-                    var ttl = tasks[i].GetAwaiter().GetResult();
+                    var ttl = WaitBoundedResult(tasks[i], timeoutMs);
                     // Same representation as RedisUDFTTL: a NUMBER of seconds
                     // (the scalar function returns a double), -1 when the key is
                     // missing or has no expiry. Text here used to break
@@ -1939,13 +1911,9 @@ namespace RedisExcel
                     result[i, 1] = ttl.HasValue ? (object)ttl.Value.TotalSeconds : -1;
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFTTLMultiples: {count} keys, host={host}");
+                    logger.Trace($"RedisUDFTTLMultiples: {keysList.Count} keys, host={host}");
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFTTLMultiples", ex, $"host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets a field in a Redis hash", IsVolatile = true)]
@@ -1970,10 +1938,10 @@ namespace RedisExcel
             return RedisUDFHashSet(hashKey, field, value, optionalHost);
         }
 
-        private static string RedisUDFHashSetCore(object hashKey, object field, object value, object optionalHost)
+        private static object RedisUDFHashSetCore(object hashKey, object field, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFHashSet", () => $"{hashKey}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
@@ -1986,11 +1954,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFHashSet", ex, $"{hashKey}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Sets multiple fields in a Redis hash", IsVolatile = true)]
@@ -2015,10 +1979,10 @@ namespace RedisExcel
             return RedisUDFHashSetMultiple(hashKey, fieldValuePairs, optionalHost);
         }
 
-        private static string RedisUDFHashSetMultipleCore(object hashKey, object[,] fieldValuePairs, object optionalHost)
+        private static object RedisUDFHashSetMultipleCore(object hashKey, object[,] fieldValuePairs, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFHashSetMultiple", () => $"{hashKey}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 // Validate the hash key first: the same precedence as HashSet,
@@ -2037,11 +2001,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={host}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFHashSetMultiple", ex, $"{hashKey}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Gets a field from a Redis hash", IsVolatile = true)]
@@ -2075,27 +2035,15 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFHashGetAll", () => $"{hashKey}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
                 var all = GetDb(host).HashGetAll(hashKeyStr);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={host}");
-                if (all.Length == 0)
-                    return new object[,] { { "" } };
-                var result = new object[all.Length, 2];
-                for (int i = 0; i < all.Length; i++)
-                {
-                    result[i, 0] = all[i].Name.ToString();
-                    result[i, 1] = all[i].Value.ToString();
-                }
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFHashGetAll", ex, $"{hashKey}, host={host}");
-            }
+                return ToHashMatrix(all);
+            });
         }
 
         [ExcelFunction(Description = "Gets the same field from multiple Redis hashes", IsVolatile = true)]
@@ -2106,31 +2054,14 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFHashGetFieldMultipleKeys", () => $"field={field}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (hashKeys == null)
                     throw new ArgumentException("a range is required");
-                int rows = hashKeys.GetLength(0);
-                int cols = hashKeys.GetLength(1);
-                int count = rows * cols;
-                if (count == 0)
+                var keysList = FlattenKeysWithEcho(hashKeys, out var result);
+                if (keysList == null)
                     return new object[,] { { "" } };
-                var result = new object[count, 2];
-                var keysList = new List<RedisKey>(count);
-                // Excel passes ranges row-major; flatten them in that order so the
-                // output rows follow the input order.
-                for (int r = 0; r < rows; r++)
-                {
-                    for (int c = 0; c < cols; c++)
-                    {
-                        // Blank cells map to an empty Redis key so row positions are preserved.
-                        string key = ToRedisString(hashKeys[r, c]) ?? "";
-                        int i = r * cols + c;
-                        result[i, 0] = key;
-                        keysList.Add(key);
-                    }
-                }
                 // One round trip for all hashes instead of one command per key.
                 string fieldStr = RequireText(field, "field");
                 var batch = GetDb(host).CreateBatch();
@@ -2143,9 +2074,7 @@ namespace RedisExcel
                     // discard the whole matrix - the other rows still report.
                     try
                     {
-                        if (!WaitBounded(tasks[i], timeoutMs))
-                            throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
-                        result[i, 1] = (string)tasks[i].GetAwaiter().GetResult() ?? "";
+                        result[i, 1] = (string)WaitBoundedResult(tasks[i], timeoutMs) ?? "";
                     }
                     catch (Exception ex)
                     {
@@ -2153,13 +2082,9 @@ namespace RedisExcel
                     }
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={count}, host={host}");
+                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={keysList.Count}, host={host}");
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFHashGetFieldMultipleKeys", ex, $"field={field}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Deletes a field from a Redis hash", IsVolatile = true)]
@@ -2186,7 +2111,7 @@ namespace RedisExcel
         private static object RedisUDFHashDelCore(object hashKey, object field, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFHashDel", () => $"{hashKey}[{field}], host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
@@ -2202,11 +2127,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}] deleted={deleted}, host={host}");
                 return deleted;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFHashDel", ex, $"{hashKey}[{field}], host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Pushes a value onto the right end of a Redis list", IsVolatile = true)]
@@ -2232,7 +2153,7 @@ namespace RedisExcel
         private static object RedisUDFListPushRightCore(object key, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFListPushRight", () => $"key={key}, value={value}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2245,11 +2166,7 @@ namespace RedisExcel
                 if (fireAndForget)
                     return FireAndForgetMarker(replyDependent: false);
                 return length;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFListPushRight", ex, $"key={key}, value={value}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Pushes a value onto the left end of a Redis list", IsVolatile = true)]
@@ -2275,7 +2192,7 @@ namespace RedisExcel
         private static object RedisUDFListPushLeftCore(object key, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFListPushLeft", () => $"key={key}, value={value}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2288,11 +2205,7 @@ namespace RedisExcel
                 if (fireAndForget)
                     return FireAndForgetMarker(replyDependent: false);
                 return length;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFListPushLeft", ex, $"key={key}, value={value}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns a range of values from a Redis list", IsVolatile = true)]
@@ -2304,7 +2217,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFListRange", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2313,19 +2226,13 @@ namespace RedisExcel
                 {
                     if (logger.IsTraceEnabled)
                         logger.Trace($"RedisUDFListRange: key={keyStr}, empty, host={host}");
-                    return new object[,] { { "" } };
+                    return ToSingleColumnMatrix(values);
                 }
-                var result = new object[values.Length, 1];
-                for (int i = 0; i < values.Length; i++)
-                    result[i, 0] = values[i].ToString();
+                var result = ToSingleColumnMatrix(values);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListRange: key={keyStr}, values={values.Length}, host={host}");
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFListRange", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Removes and returns the last element of a Redis list", IsVolatile = true)]
@@ -2350,7 +2257,7 @@ namespace RedisExcel
         private static object RedisUDFListPopRightCore(object key, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFListPopRight", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2365,11 +2272,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopRight: key={keyStr}, value={value}, host={host}");
                 return value.HasValue ? value.ToString() : "";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFListPopRight", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Removes and returns the first element of a Redis list", IsVolatile = true)]
@@ -2394,7 +2297,7 @@ namespace RedisExcel
         private static object RedisUDFListPopLeftCore(object key, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFListPopLeft", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2409,11 +2312,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFListPopLeft: key={keyStr}, value={value}, host={host}");
                 return value.HasValue ? value.ToString() : "";
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFListPopLeft", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Adds a member to a Redis set", IsVolatile = true)]
@@ -2440,7 +2339,7 @@ namespace RedisExcel
         private static object RedisUDFSetAddCore(object key, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSetAdd", () => $"key={key}, value={value}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2456,11 +2355,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, added={added}, host={host}");
                 return added;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetAdd", ex, $"key={key}, value={value}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Removes a member from a Redis set", IsVolatile = true)]
@@ -2487,7 +2382,7 @@ namespace RedisExcel
         private static object RedisUDFSetRemoveCore(object key, object value, object optionalHost)
         {
             string host = null;
-            try
+            return RunCore("RedisUDFSetRemove", () => $"key={key}, value={value}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2503,11 +2398,7 @@ namespace RedisExcel
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, removed={removed}, host={host}");
                 return removed;
-            }
-            catch (Exception ex)
-            {
-                return Fail("RedisUDFSetRemove", ex, $"key={key}, value={value}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns all members of a Redis set", IsVolatile = true)]
@@ -2517,7 +2408,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            try
+            return RunMatrixCore("RedisUDFSetMembers", () => $"key={key}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2526,19 +2417,13 @@ namespace RedisExcel
                 {
                     if (logger.IsTraceEnabled)
                         logger.Trace($"RedisUDFSetMembers: key={keyStr}, empty, host={host}");
-                    return new object[,] { { "" } };
+                    return ToSingleColumnMatrix(members);
                 }
-                var result = new object[members.Length, 1];
-                for (int i = 0; i < members.Length; i++)
-                    result[i, 0] = members[i].ToString();
+                var result = ToSingleColumnMatrix(members);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFSetMembers: key={keyStr}, members={members.Length}, host={host}");
                 return result;
-            }
-            catch (Exception ex)
-            {
-                return FailMatrix("RedisUDFSetMembers", ex, $"key={key}, host={host}");
-            }
+            });
         }
 
         [ExcelFunction(Description = "Returns TRUE while a newer RedisExcel release is known to exist (background check, never blocks Excel).", IsVolatile = true)]

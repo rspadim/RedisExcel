@@ -430,22 +430,19 @@ namespace RedisExcel
         /// </summary>
         private static void DeliverAndComplete(IExcelObserver observer, object result)
         {
-            try
-            {
-                observer.OnNext(result);
-            }
-            catch (Exception ex)
-            {
-                logger.Error(ex, "RedisWriteObservable: delivering the async write result failed");
-            }
+            TryNotify(() => observer.OnNext(result), "RedisWriteObservable: delivering the async write result failed");
+            TryNotify(observer.OnCompleted, "RedisWriteObservable: completing the async write observer failed");
+        }
 
+        private static void TryNotify(Action action, string failure)
+        {
             try
             {
-                observer.OnCompleted();
+                action();
             }
             catch (Exception ex)
             {
-                logger.Error(ex, "RedisWriteObservable: completing the async write observer failed");
+                logger.Error(ex, failure);
             }
         }
     }

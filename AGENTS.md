@@ -355,9 +355,12 @@ With `--container <name>` the suite manages its own disposable
 phase C, removed at the end; loopback hosts and a working Docker CLI required).
 `--skip-restart` skips only the restart sub-phase (the kill storm still runs on
 loopback hosts) and `--quick` shortens the attack windows for a fast sanity
-run. The layer is **not wired into CI yet** — run it manually on a machine with
-Redis (and Docker when using `--container`), and only against a
-disposable/local server.
+run. `--matrix` runs a scripted failure matrix (stop/start, restart, pause,
+kill storms, `CLIENT PAUSE`, flapping, reload under traffic, writes during the
+fault) asserting recovery and resource stability after every fault;
+`--soak [minutes]` (default 5) keeps mixed traffic running and injects a random
+fault every 20-40 s. CI runs `--quick --skip-restart` after the smoke tests;
+run the fuller modes manually against a disposable/local server.
 
 ## Excel automation lessons (hard-won)
 

@@ -93,9 +93,7 @@ namespace RedisExcel
             // being disposed by Shutdown's walk or by the shutdown races in
             // GetConnection/Connect, so report zero instead of counting one
             // that is being torn down.
-            if (_shutdown)
-                return 0;
-            return CountCreated(_rtdData) + CountCreated(_rtdSub) + CountCreated(_udfData);
+            return _shutdown ? 0 : CountCreated(_rtdData) + CountCreated(_rtdSub) + CountCreated(_udfData);
         }
 
         /// <summary>
@@ -103,23 +101,13 @@ namespace RedisExcel
         /// value behind RedisRTDConnectionCount. Zero while the shutdown
         /// fence is set, like <see cref="LiveConnectionCount"/>.
         /// </summary>
-        public int LiveRtdConnectionCount()
-        {
-            if (_shutdown)
-                return 0;
-            return CountCreated(_rtdData) + CountCreated(_rtdSub);
-        }
+        public int LiveRtdConnectionCount() => _shutdown ? 0 : CountCreated(_rtdData) + CountCreated(_rtdSub);
 
         /// <summary>
         /// Live multiplexers for the UDF pool only (UdfData). Zero while the
         /// shutdown fence is set, like <see cref="LiveConnectionCount"/>.
         /// </summary>
-        public int LiveUdfConnectionCount()
-        {
-            if (_shutdown)
-                return 0;
-            return CountCreated(_udfData);
-        }
+        public int LiveUdfConnectionCount() => _shutdown ? 0 : CountCreated(_udfData);
 
         private static int CountCreated(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary)
         {
@@ -172,15 +160,9 @@ namespace RedisExcel
                 // concurrent caller just replaced with a fresh Lazy.
                 if (RemoveConnectionEntry(dictionary, kv.Key, kv.Value))
                 {
-                    try
-                    {
-                        mux.Close(false);
-                        mux.Dispose();
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.Debug(ex, $"GetConnection: error disposing evicted connection host={kv.Key}");
-                    }
+                    DisposeConnection(mux,
+                        $"GetConnection: error disposing evicted connection host={kv.Key}",
+                        closeFirst: true, allowCommandsToComplete: false);
                     // Invalidate the cached wrappers too: they are bound to the
                     // disposed multiplexer, and leaving them would make every
                     // later call on this host throw ObjectDisposedException
@@ -192,53 +174,68 @@ namespace RedisExcel
             }
         }
 
+        private void DisposeConnection(ConnectionMultiplexer connection, string logMessage, bool closeFirst, bool allowCommandsToComplete)
+        {
+            // Shared teardown: log a failure instead of surfacing it. The
+            // closeFirst/allowCommandsToComplete pair mirrors each call site's
+            // current sequence (eviction and the shutdown races close(false);
+            // the post-connect path disposes only).
+            try
+            {
+                if (closeFirst)
+                    connection.Close(allowCommandsToComplete);
+                connection.Dispose();
+            }
+            catch (Exception ex)
+            {
+                logger.Debug(ex, logMessage);
+            }
+        }
+
+        private static InvalidOperationException ShuttingDown()
+        {
+            return new InvalidOperationException("RedisConnectionManager is shutting down");
+        }
+
         private static bool RemoveConnectionEntry(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string host, Lazy<ConnectionMultiplexer> lazy)
         {
             return ((ICollection<KeyValuePair<string, Lazy<ConnectionMultiplexer>>>)dictionary)
                 .Remove(new KeyValuePair<string, Lazy<ConnectionMultiplexer>>(host, lazy));
         }
 
-        public IDatabase GetDatabase(string host, RedisPool pool)
-        {
-            // Cache the lightweight wrappers: volatile worksheet functions call this
-            // constantly, and ConnectionMultiplexer.GetDatabase() allocates per call.
-            // If the factory throws (connect failure), GetOrAdd does not insert the
-            // entry, so the next call retries instead of caching the failure.
-            //
-            // Shutdown fence: never hand out a wrapper bound to a multiplexer that
-            // Shutdown is closing. The flag is re-checked after GetOrAdd because a
-            // racing call could otherwise insert the entry after the caches were
-            // cleared; that entry is dropped instead of being left behind.
-            if (_shutdown)
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
-            string key = PoolKey(host, pool);
-            var database = _databases.GetOrAdd(key, _ => GetConnection(host, pool).GetDatabase());
-            if (_shutdown)
-            {
-                _databases.TryRemove(key, out _);
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
-            }
-            return database;
-        }
+        public IDatabase GetDatabase(string host, RedisPool pool) =>
+            GetCachedWrapper(_databases, host, pool, mux => mux.GetDatabase());
 
         public ISubscriber GetSubscriber(string host) => GetSubscriber(host, RedisPool.RtdSub);
 
-        public ISubscriber GetSubscriber(string host, RedisPool pool)
+        public ISubscriber GetSubscriber(string host, RedisPool pool) =>
+            GetCachedWrapper(_subscribers, host, pool, mux => mux.GetSubscriber());
+
+        /// <summary>
+        /// Reads/creates a cached lightweight wrapper (IDatabase or
+        /// ISubscriber): volatile worksheet functions call these constantly,
+        /// and ConnectionMultiplexer.GetDatabase()/GetSubscriber() allocate
+        /// per call. If the factory throws (connect failure), GetOrAdd does
+        /// not insert the entry, so the next call retries instead of caching
+        /// the failure.
+        /// Shutdown fence: never hand out a wrapper bound to a multiplexer
+        /// that Shutdown is closing. The flag is re-checked after GetOrAdd
+        /// because a racing call could otherwise insert the entry after the
+        /// caches were cleared; that entry is dropped instead of being left
+        /// behind.
+        /// </summary>
+        private T GetCachedWrapper<T>(ConcurrentDictionary<string, T> cache, string host, RedisPool pool, Func<ConnectionMultiplexer, T> wrapper)
         {
-            // Same GetOrAdd semantics as GetDatabase: a throwing factory leaves the
-            // cache empty, so transient connect failures are not cached. The same
-            // shutdown fence applies: no wrapper is handed out after Shutdown, and
-            // an entry that raced with the cache clear is removed again.
             if (_shutdown)
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                throw ShuttingDown();
             string key = PoolKey(host, pool);
-            var subscriber = _subscribers.GetOrAdd(key, _ => GetConnection(host, pool).GetSubscriber());
+            var value = cache.GetOrAdd(key, _ => wrapper(GetConnection(host, pool)));
             if (_shutdown)
             {
-                _subscribers.TryRemove(key, out _);
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                cache.TryRemove(key, out _);
+                throw ShuttingDown();
             }
-            return subscriber;
+            return value;
         }
 
         private static string PoolKey(string host, RedisPool pool)
@@ -251,7 +248,7 @@ namespace RedisExcel
             // Shutdown fence: a cached multiplexer is already being closed by
             // Shutdown, so never hand it out once the flag is set.
             if (_shutdown)
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                throw ShuttingDown();
 
             var dictionary = DictionaryFor(pool);
             // Lazy avoids creating duplicate connections when GetOrAdd is called concurrently.
@@ -306,17 +303,10 @@ namespace RedisExcel
                 // returning a dying connection. Also drop the entry so the
                 // pool never keeps a "host -> disposed mux" placeholder
                 // (mirrors the GetDatabase/GetSubscriber shutdown fences).
-                try
-                {
-                    connection.Close();
-                    connection.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    logger.Debug(ex, "GetConnection: error disposing connection created during shutdown");
-                }
+                DisposeConnection(connection, "GetConnection: error disposing connection created during shutdown",
+                    closeFirst: true, allowCommandsToComplete: true);
                 dictionary.TryRemove(host, out _);
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                throw ShuttingDown();
             }
             if (dictionary.Count > MaxCachedConnectionsPerPool)
                 EvictDisconnectedConnections(dictionary, host, pool);
@@ -336,7 +326,7 @@ namespace RedisExcel
         private ConnectionMultiplexer Connect(string host, RedisPool pool)
         {
             if (_shutdown)
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                throw ShuttingDown();
 
             string memoKey = PoolKey(host, pool);
             if (_recentConnectFailures.TryGetValue(memoKey, out var failedAtTicks))
@@ -380,15 +370,9 @@ namespace RedisExcel
                 // Shutdown started while this connect was in flight: dispose the
                 // fresh multiplexer immediately and fail the caller instead of
                 // leaving an un-disposed connection behind.
-                try
-                {
-                    mux.Dispose();
-                }
-                catch (Exception ex)
-                {
-                    logger.Debug(ex, "Connect: error disposing connection created during shutdown");
-                }
-                throw new InvalidOperationException("RedisConnectionManager is shutting down");
+                DisposeConnection(mux, "Connect: error disposing connection created during shutdown",
+                    closeFirst: false, allowCommandsToComplete: false);
+                throw ShuttingDown();
             }
 
             mux.ConnectionFailed += (sender, args) =>

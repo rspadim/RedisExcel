@@ -64,20 +64,11 @@ namespace RedisExcel
         // already being removed) and leave the channel permanently deaf - churn
         // stress reproduced misses with 10 s gaps. Serializing the handoff
         // closes that window.
-        private const int NetworkGateCount = 64;
-        private static readonly object[] NetworkGates = CreateNetworkGates();
-
-        private static object[] CreateNetworkGates()
-        {
-            var gates = new object[NetworkGateCount];
-            for (int i = 0; i < gates.Length; i++)
-                gates[i] = new object();
-            return gates;
-        }
+        private static readonly StripedLocks NetworkLockStripes = new StripedLocks(64);
 
         private static object NetworkGate(string key)
         {
-            return NetworkGates[(key.GetHashCode() & 0x7FFFFFFF) % NetworkGateCount];
+            return NetworkLockStripes.For(key);
         }
 
         public RedisSubscriptionManager(RedisConnectionManager connections)

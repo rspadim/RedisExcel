@@ -9,6 +9,7 @@ using System.Linq;
 using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using RedisExcel.TestSupport;
 
 namespace RedisExcel.LivenessTests
 {
@@ -41,8 +42,19 @@ namespace RedisExcel.LivenessTests
     ///
     /// Bounds: stuck 5s, resume 30s, queue drain 20s.
     ///
+    /// Modes: the default phases above, plus two 24x7-survival modes:
+    ///   --matrix: scripted failure matrix (8 faults) against a managed
+    ///             container under continuous traffic; per fault it asserts the
+    ///             heartbeat bound, delivery resume, re-subscription (PUBSUB
+    ///             NUMSUB) and monotonic counters, then resource stability.
+    ///   --soak [minutes]: mixed traffic with a random matrix fault every
+    ///             20-40s (default 5 minutes), same per-fault bounds, then
+    ///             resource stability + GC [SUMMARY] statistics.
+    ///
     /// Usage:
     ///   dotnet run --project test\LivenessTests -c Release -- "127.0.0.1:6399,abortConnect=False" [--container &lt;name&gt;] [--skip-restart] [--quick]
+    ///   dotnet run --project test\LivenessTests -c Release -- "127.0.0.1:6399,abortConnect=False" --container &lt;name&gt; --matrix
+    ///   dotnet run --project test\LivenessTests -c Release -- "127.0.0.1:6399,abortConnect=False" --container &lt;name&gt; --soak 5
     /// </summary>
     internal static class Program
     {
@@ -52,6 +64,20 @@ namespace RedisExcel.LivenessTests
         private static string ContainerSkipReason;
         private static bool SkipRestart;       // --skip-restart
         private static bool Quick;             // --quick
+        private static bool MatrixMode;        // --matrix
+        private static double SoakMinutes = -1; // --soak [minutes] (default 5)
+
+        private const string LiveChannel = "liveness:live";
+
+        // Matrix/soak bookkeeping: everything they must explicitly dispose or
+        // verify at the end (resource-stability checks).
+        private static ConnectionMultiplexer AdminMux; // short-timeout direct mux for CLIENT/PUBSUB
+        private static readonly List<string> TrackedChannels = new List<string>();
+        private static readonly List<IDisposable> TrackedTokens = new List<IDisposable>();
+        private static readonly List<string> TrackedQueueHosts = new List<string>();
+        private static readonly Random Rng = new Random();
+        private static long FaultsRun;
+        private static long FaultOutageCount; // delivery count at the fault's outage point
 
         private const double StuckBoundMs = 5000;        // "no thread stuck > 5 seconds"
         private const double ResumeBoundMs = 30000;      // kill storm / restart resume
@@ -73,6 +99,8 @@ namespace RedisExcel.LivenessTests
 
         private static int Main(string[] args)
         {
+            // Needed for the soak [SUMMARY] allocation/survival statistics.
+            try { AppDomain.MonitoringIsEnabled = true; } catch { }
             try
             {
                 ParseArgs(args);
@@ -88,11 +116,18 @@ namespace RedisExcel.LivenessTests
                 + " quick=" + Quick
                 + " skipRestart=" + SkipRestart
                 + " container=" + (ContainerName ?? "-"));
+            Console.WriteLine("[LIVENESS] mode=" + (MatrixMode ? "matrix" : (SoakMinutes > 0 ? "soak" : "phases"))
+                + (SoakMinutes > 0 ? " minutes=" + SoakMinutes.ToString("0.##", Inv) : ""));
             RedisSubscriptionManager.ListenerJoined += (h, c, p) => Interlocked.Increment(ref JoinedEvents);
             try
             {
                 StartContainerIfRequested();
-                RunAll();
+                if (MatrixMode)
+                    RunMatrix();
+                else if (SoakMinutes > 0)
+                    RunSoak();
+                else
+                    RunAll();
             }
             catch (Exception ex)
             {
@@ -125,7 +160,12 @@ namespace RedisExcel.LivenessTests
             "                    to the host port; phase C restarts it, the run removes it at the end\n" +
             "  --skip-restart    do not restart the server in phase C (the CLIENT KILL storm still\n" +
             "                    runs); the restart sub-phase prints SKIP\n" +
-            "  --quick           shortened attack windows for a fast sanity run";
+            "  --quick           shortened attack windows for a fast sanity run\n" +
+            "  --matrix          scripted failure matrix (continuous traffic + 8 faults +\n" +
+            "                    resource stability); docker faults require --container,\n" +
+            "                    destructive command faults require a loopback host\n" +
+            "  --soak [minutes]  mixed traffic with a random matrix fault every 20-40s,\n" +
+            "                    resource stability + GC summary at the end (default 5)";
 
         private static void ParseArgs(string[] args)
         {
@@ -143,6 +183,21 @@ namespace RedisExcel.LivenessTests
                         throw new ArgumentException("--container requires a container name");
                     ContainerName = args[++i];
                 }
+                else if (string.Equals(a, "--matrix", StringComparison.OrdinalIgnoreCase))
+                    MatrixMode = true;
+                else if (string.Equals(a, "--soak", StringComparison.OrdinalIgnoreCase))
+                {
+                    double minutes = 5;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        if (!double.TryParse(args[i + 1], NumberStyles.Float, Inv, out minutes))
+                            throw new ArgumentException("--soak expects a number of minutes");
+                        i++;
+                    }
+                    if (minutes <= 0)
+                        throw new ArgumentException("--soak minutes must be > 0");
+                    SoakMinutes = minutes;
+                }
                 else if (a.StartsWith("--", StringComparison.Ordinal))
                     throw new ArgumentException("unknown option '" + a + "'");
                 else
@@ -151,18 +206,13 @@ namespace RedisExcel.LivenessTests
             if (positional.Count > 0) Host = positional[0];
             if (positional.Count > 1)
                 throw new ArgumentException("unexpected extra argument '" + positional[1] + "'");
+            if (MatrixMode && SoakMinutes > 0)
+                throw new ArgumentException("--matrix and --soak are mutually exclusive");
         }
 
         private static void RunAll()
         {
-            Proc = new ProcessHeartbeat("proc-heartbeat", 20);
-            Proc.Start();
-            Pool = new PoolHeartbeat();
-            Pool.Start();
-            C = new RedisConnectionManager();
-            S = new RedisSubscriptionManager(C);
-            Wake = new WatchdogProbe(C, S);
-            Wake.Start();
+            StartProbes();
 
             Warmup();
             PhaseA0();
@@ -243,22 +293,14 @@ namespace RedisExcel.LivenessTests
         {
             long start = PhaseBanner("A", "ThreadPool starvation + subscribe/unsubscribe/publish churn + async backlog");
 
-            int minW, minIo, maxW, maxIo;
-            GetPool(out minW, out minIo, out maxW, out maxIo);
-            bool setMin = ThreadPool.SetMinThreads(4, 4);
-            bool setMax = ThreadPool.SetMaxThreads(4, 4);
+            var release = StarvePool(out int minW, out int minIo, out int maxW, out int maxIo, out bool setMin, out bool setMax, 400);
             Check("A.pool-guard-applied", setMin && setMax, "SetMin(4,4)=" + setMin + " SetMax(4,4)=" + setMax);
             if (!(setMin && setMax))
             {
-                ThreadPool.SetMaxThreads(maxW, maxIo);
-                ThreadPool.SetMinThreads(minW, minIo);
+                RestorePool(minW, minIo, maxW, maxIo, release);
                 return;
             }
 
-            var release = new ManualResetEventSlim(false);
-            for (int i = 0; i < 6; i++)
-                ThreadPool.QueueUserWorkItem(_ => release.Wait(120000));
-            Thread.Sleep(400); // let the starvation take hold
             long poolTicksAtStarveStart = Pool.Ticks;
 
             // Backlog enqueued while starved: its continuations need pool threads.
@@ -301,9 +343,7 @@ namespace RedisExcel.LivenessTests
             int queuePendingAtAttackEnd = drained.CurrentCount;
 
             // Release the pool: sleepers end, continuations and heartbeats resume.
-            release.Set();
-            ThreadPool.SetMaxThreads(maxW, maxIo);
-            ThreadPool.SetMinThreads(minW, minIo);
+            RestorePool(minW, minIo, maxW, maxIo, release);
             WaitUntil(() => Pool.Ticks > poolTicksAtStarveStart, 3000); // let the first post-release tick record the gap
             double poolGapAfterRelease = Pool.MaxGapMs;
 
@@ -552,17 +592,14 @@ namespace RedisExcel.LivenessTests
                     Thread.Sleep(300);
                 }
 
-                double killResume = Delivery.ResumeAfter(prevDeliveries, ResumeBoundMs);
-                long readers = Delivery.WaitForReaders("liveness:live", ResumeBoundMs);
                 Metric("C", "killRounds", rounds);
                 Metric("C", "clientsKilled", clientsKilled);
                 Metric("C", "killErrors", killErrors);
-                Metric("C", "killDeliveryResumeMs", killResume);
-                Metric("C", "killReadersAfterMs", readers);
+                double killResume = CheckDeliveryRecovered(prevDeliveries,
+                    "killDeliveryResumeMs", "killReadersAfterMs",
+                    "C.kill-storm-delivery-resumes", "C.kill-storm-resubscribed");
                 Metric("C", "deliveryGapMs", Delivery.MaxGapMs);
                 Metric("C", "procHeartbeatMs", Proc.MaxGapMs);
-                Check("C.kill-storm-delivery-resumes", killResume >= 0 && killResume <= ResumeBoundMs, "resumeMs=" + Fmt(killResume));
-                Check("C.kill-storm-resubscribed", readers > 0, "publish readers=" + readers);
                 Check("C.kill-heartbeat", Proc.MaxGapMs < StuckBoundMs, "proc max gap=" + Fmt(Proc.MaxGapMs) + "ms");
                 NoteWorst("deliveryGapMs", Delivery.MaxGapMs);
                 NoteWorst("deliveryResumeMs", killResume);
@@ -578,18 +615,15 @@ namespace RedisExcel.LivenessTests
                 long prevDeliveries2 = Delivery.Count;
                 double restartWallMs = RestartContainer();
                 long serverUpMs = WaitUntil(() => { try { db.Ping(); return true; } catch { return false; } }, ResumeBoundMs);
-                double restartResume = Delivery.ResumeAfter(prevDeliveries2, ResumeBoundMs);
-                long readers2 = Delivery.WaitForReaders("liveness:live", ResumeBoundMs);
 
                 Metric("C", "restartWallMs", restartWallMs);
                 Metric("C", "serverUpAfterMs", serverUpMs);
-                Metric("C", "restartDeliveryResumeMs", restartResume);
-                Metric("C", "restartReaders", readers2);
+                Check("C.restart-server-up", serverUpMs >= 0, "ping after restart ms=" + Fmt(serverUpMs));
+                double restartResume = CheckDeliveryRecovered(prevDeliveries2,
+                    "restartDeliveryResumeMs", "restartReaders",
+                    "C.restart-delivery-resumes", "C.restart-resubscribed");
                 Metric("C", "deliveryGapKillAndRestartMs", Delivery.MaxGapMs);
                 Metric("C", "publishErrorsTotal", Delivery.PublishErrors);
-                Check("C.restart-server-up", serverUpMs >= 0, "ping after restart ms=" + Fmt(serverUpMs));
-                Check("C.restart-delivery-resumes", restartResume >= 0 && restartResume <= ResumeBoundMs, "resumeMs=" + Fmt(restartResume));
-                Check("C.restart-resubscribed", readers2 > 0, "publish readers=" + readers2);
                 Check("C.restart-heartbeat", Proc.MaxGapMs < StuckBoundMs, "proc max gap=" + Fmt(Proc.MaxGapMs) + "ms");
                 Check("C.delivery-gap-across-kills-and-restart", Delivery.MaxGapMs < ResumeBoundMs,
                     "max inter-arrival gap=" + Fmt(Delivery.MaxGapMs) + "ms across the kills + restart");
@@ -692,15 +726,9 @@ namespace RedisExcel.LivenessTests
             int count = Quick ? 40 : 60;
 
             // Starve first, then subscribe: the queued work items can only run
-            // when the pool is released.
-            int minW, minIo, maxW, maxIo;
-            GetPool(out minW, out minIo, out maxW, out maxIo);
-            bool setMin = ThreadPool.SetMinThreads(4, 4);
-            bool setMax = ThreadPool.SetMaxThreads(4, 4);
-            var release = new ManualResetEventSlim(false);
-            for (int i = 0; i < 6; i++)
-                ThreadPool.QueueUserWorkItem(_ => release.Wait(120000));
-            Thread.Sleep(300);
+            // when the pool is released. Unlike phase A, D2 never bails out on
+            // a failed guard: the gate assertions below must still run.
+            var release = StarvePool(out int minW, out int minIo, out int maxW, out int maxIo, out bool setMin, out bool setMax, 300);
 
             var observers = new RecordingObserver[count];
             for (int i = 0; i < count; i++)
@@ -713,9 +741,7 @@ namespace RedisExcel.LivenessTests
             Thread.Sleep(Quick ? 800 : 1500);
             int completedWhileStarved = CountCompleted(observers);
             long starveTicks = Pool.Ticks;
-            release.Set();
-            ThreadPool.SetMaxThreads(maxW, maxIo);
-            ThreadPool.SetMinThreads(minW, minIo);
+            RestorePool(minW, minIo, maxW, maxIo, release);
             WaitUntil(() => Pool.Ticks > starveTicks, 3000);
 
             long drainT0 = Stopwatch.GetTimestamp();
@@ -782,7 +808,7 @@ namespace RedisExcel.LivenessTests
             Check("D3.duplicate-subscribe-once", raceFailures == 0, "failures=" + raceFailures + "/" + (races * 6));
 
             string hostF = Host + "|d3fail";
-            var throwing = new ThrowingObserver();
+            var throwing = new OnNextThrowingObserver();
             new RedisWriteObservable(hostF, () => (object)"first").Subscribe(throwing);
             bool throwingCompleted = throwing.WaitCompleted(5000);
             var after = new RecordingObserver();
@@ -820,6 +846,801 @@ namespace RedisExcel.LivenessTests
             tokenB.Dispose();
             tokenA.Dispose();
             DumpLatencies("E");
+        }
+
+        // ======================================================== matrix/soak
+
+        /// <summary>Starts the dedicated heartbeat threads and the real managers
+        /// (shared by the default phases and the matrix/soak modes).</summary>
+        private static void StartProbes()
+        {
+            Proc = new ProcessHeartbeat("proc-heartbeat", 20);
+            Proc.Start();
+            Pool = new PoolHeartbeat();
+            Pool.Start();
+            C = new RedisConnectionManager();
+            S = new RedisSubscriptionManager(C);
+            Wake = new WatchdogProbe(C, S);
+            Wake.Start();
+        }
+
+        private const int PauseHoldMs = 5000;   // "half-open, hold ~5s"
+        private const int FlapCycles = 3;       // "3x flapping stop/start loop"
+        private const int KillStormRounds = 3;  // "3x CLIENT KILL TYPE pubsub"
+
+        private static bool DockerFaultsEnabled { get { return ContainerManaged; } }
+        private static bool CommandFaultsEnabled { get { return IsLocalEndpoint(); } }
+
+        private static string DockerFaultSkipReason
+        {
+            get
+            {
+                if (ContainerSkipReason != null) return ContainerSkipReason;
+                return ContainerName == null
+                    ? "run with --container <name> to manage a disposable server"
+                    : "container not managed";
+            }
+        }
+
+        private static string CommandFaultSkipReason
+        {
+            get { return "destructive command faults require a loopback host (" + Host + ")"; }
+        }
+
+        /// <summary>
+        /// Scripted failure matrix: every fault runs under continuous traffic
+        /// (publisher + delivery counter + dedicated process heartbeat); after
+        /// each fault the run asserts a bounded process heartbeat, delivery
+        /// resume, automatic re-subscription (PUBSUB NUMSUB) and monotonic
+        /// counters, then finishes with resource-stability checks (zero runtime
+        /// listeners, NUMSUB back to 0, no idle queues).
+        /// </summary>
+        private static void RunMatrix()
+        {
+            StartProbes();
+            Warmup();
+            TrackChannel(LiveChannel);
+            long faultsBefore = Interlocked.Read(ref FaultsRun);
+            long matrixStart = PhaseBanner("M", "scripted failure matrix container=" + (ContainerManaged ? ContainerName : "-"));
+
+            if (DockerFaultsEnabled)
+                RunFault("M1", "docker stop + docker start", LiveChannel, () => InjectStopStart("M1"));
+            else
+                SkipFault("M1", "docker stop + docker start", DockerFaultSkipReason);
+
+            if (DockerFaultsEnabled)
+                RunFault("M2", "docker restart", LiveChannel, () => InjectRestart("M2"));
+            else
+                SkipFault("M2", "docker restart", DockerFaultSkipReason);
+
+            if (DockerFaultsEnabled)
+                RunFault("M3", "docker pause + unpause (half-open, hold " + PauseHoldMs + "ms)", LiveChannel, () => InjectPauseUnpause("M3"));
+            else
+                SkipFault("M3", "docker pause + unpause", DockerFaultSkipReason);
+
+            if (CommandFaultsEnabled)
+                RunFault("M4", KillStormRounds + "x CLIENT KILL TYPE pubsub", LiveChannel, () => InjectKillStorm("M4"));
+            else
+                SkipFault("M4", "CLIENT KILL storm", CommandFaultSkipReason);
+
+            if (CommandFaultsEnabled)
+                RunFault("M5", "CLIENT PAUSE 3000 + UNPAUSE", LiveChannel, () => InjectClientPause("M5"));
+            else
+                SkipFault("M5", "CLIENT PAUSE 3000 + UNPAUSE", CommandFaultSkipReason);
+
+            if (DockerFaultsEnabled)
+                RunFault("M6", FlapCycles + "x flapping stop/start", LiveChannel, () => InjectFlapping("M6"));
+            else
+                SkipFault("M6", "flapping stop/start", DockerFaultSkipReason);
+
+            RunFault("M7", "reload under traffic (Shutdown + ResetAfterAddInReload x2)", LiveChannel, () => InjectReload("M7"));
+
+            if (DockerFaultsEnabled || CommandFaultsEnabled)
+                RunFault("M8", "write path during fault (sync error + fire-and-forget + async backlog)", LiveChannel, () => InjectWritePath("M8"));
+            else
+                SkipFault("M8", "write path during fault", "needs a managed container or a loopback host");
+
+            Console.WriteLine("[SUMMARY] matrixFaultsRan=" + (Interlocked.Read(ref FaultsRun) - faultsBefore)
+                + " matrixSeconds=" + (MsSince(matrixStart) / 1000.0).ToString("0.0", Inv));
+            FinishMode("M9", "matrix");
+        }
+
+        /// <summary>
+        /// Soak mode: continuous mixed traffic (delivery publishes, UDF reads,
+        /// writes, channel publishes, async queue items) with a random fault
+        /// from the matrix every 20-40s. Every fault is asserted with the same
+        /// heartbeat/resume/monotonic bounds as --matrix; the run ends with
+        /// resource stability and GC statistics. Any failure exits 1.
+        /// </summary>
+        private static void RunSoak()
+        {
+            StartProbes();
+            Warmup();
+            TrackChannel(LiveChannel);
+            PhaseBanner("SOAK", "soak mixed traffic minutes=" + SoakMinutes.ToString("0.##", Inv));
+            string prevOverride = RedisUDF.SyncWriteOverrideForTests;
+            RedisUDF.SyncWriteOverrideForTests = "fireforget";
+            var choices = BuildFaultChoices();
+            if (choices.Count == 0)
+                Failures.Add("soak: no injectable fault available (needs --container or a loopback host)");
+
+            long readErrors = 0, writeErrors = 0, publishErrors = 0, enqueueTimeouts = 0;
+            // "Continuous" traffic is paced to an Excel-like rate (the reply-less
+            // paths would otherwise run flat-out and allocate tens of GB, which
+            // says nothing about fault survival and risks OOM on slower hosts).
+            var read = new Worker("SOAK-read", 2, (id, n) =>
+            {
+                string r = RedisUDF.RedisUDFGet("liveness:soak:key", Host);
+                if (r != null && r.StartsWith("Error:", StringComparison.Ordinal)) Interlocked.Increment(ref readErrors);
+                Thread.Sleep(2);
+            });
+            var write = new Worker("SOAK-write", 2, (id, n) =>
+            {
+                string r = Convert.ToString(RedisUDF.RedisUDFSet("liveness:soak:key", "soak-" + n, Host), Inv);
+                if (r != null && r.StartsWith("Error:", StringComparison.Ordinal)) Interlocked.Increment(ref writeErrors);
+                Thread.Sleep(5);
+            });
+            var publish = new Worker("SOAK-publish", 1, (id, n) =>
+            {
+                string r = Convert.ToString(RedisUDF.RedisUDFChannelPublish("liveness:soak:ch", "soak-" + n, Host), Inv);
+                if (r != null && r.StartsWith("Error:", StringComparison.Ordinal)) Interlocked.Increment(ref publishErrors);
+                Thread.Sleep(5);
+            });
+            string soakQueueHost = Host + "|soak";
+            TrackQueueHost(soakQueueHost);
+            var queue = new Worker("SOAK-enqueue", 1, (id, n) =>
+            {
+                Task<object> t = RedisUdfAsync.Enqueue(soakQueueHost, () => (object)RedisUDF.RedisUDFGet("liveness:soak:key", Host));
+                if (!t.Wait(10000)) Interlocked.Increment(ref enqueueTimeouts);
+            });
+            var workers = new List<Worker> { read, write, publish, queue };
+            foreach (var w in workers) w.Start();
+
+            long soakStart = Stopwatch.GetTimestamp();
+            double durationMs = SoakMinutes * 60000.0;
+            int faults = 0;
+            string lastFaultKey = null;
+            while (MsSince(soakStart) < durationMs)
+            {
+                double remaining = durationMs - MsSince(soakStart);
+                if (remaining <= 0) break;
+                int delayMs = Rng.Next(20000, 40001); // "random fault every 20-40s"
+                Thread.Sleep((int)Math.Min(delayMs, remaining));
+                if (MsSince(soakStart) >= durationMs) break;
+                FaultChoice choice = PickSoakFault(choices, lastFaultKey);
+                if (choice == null) break;
+                lastFaultKey = choice.Key;
+                string id = "SOAK-F" + (++faults);
+                RunFault(id, choice.Desc, LiveChannel, () => choice.Inject(id));
+            }
+
+            foreach (var w in workers) w.StopAndJoin();
+            Metric("SOAK", "faults", faults);
+            Metric("SOAK", "elapsedSec", MsSince(soakStart) / 1000.0);
+            Metric("SOAK", "readOps", read.Ops);
+            Metric("SOAK", "writeOps", write.Ops);
+            Metric("SOAK", "publishOps", publish.Ops);
+            Metric("SOAK", "enqueueOps", queue.Ops);
+            Metric("SOAK", "readErrorResults", readErrors);
+            Metric("SOAK", "writeErrorResults", writeErrors);
+            Metric("SOAK", "publishErrorResults", publishErrors);
+            Metric("SOAK", "enqueueTimeouts", enqueueTimeouts);
+            Check("SOAK.traffic-ran", read.Ops + write.Ops + publish.Ops + queue.Ops > 0,
+                "read=" + read.Ops + " write=" + write.Ops + " publish=" + publish.Ops + " enqueue=" + queue.Ops);
+
+            // Post-soak recovery: a sync write + read round-trip and a fresh
+            // runtime subscription end-to-end once the traffic stopped.
+            RedisUDF.SyncWriteOverrideForTests = "sync";
+            string finalKey = "liveness:soak:final:" + Guid.NewGuid().ToString("N");
+            long finalSet = WaitUntil(() => string.Equals(
+                Convert.ToString(RedisUDF.RedisUDFSet(finalKey, "final-ok", Host), Inv), "OK", StringComparison.Ordinal), 15000);
+            string finalGet = RedisUDF.RedisUDFGet(finalKey, Host);
+            RedisUDF.SyncWriteOverrideForTests = prevOverride;
+            Check("SOAK.final-write", finalSet >= 0, "sync RedisUDFSet returned OK ms=" + Fmt(finalSet));
+            Check("SOAK.final-read", finalGet == "final-ok", "RedisUDFGet=" + Shorten(finalGet ?? "", 160));
+
+            string chFresh = "liveness:soak:final:" + Guid.NewGuid().ToString("N");
+            TrackChannel(chFresh);
+            int fresh = 0;
+            IDisposable freshToken = RedisRuntime.Subscriptions.Subscribe(Host, chFresh, false,
+                _ => Interlocked.Increment(ref fresh), "SOAK");
+            TrackToken(freshToken);
+            long freshOk = WaitUntil(() =>
+            {
+                if (Volatile.Read(ref fresh) > 0) return true;
+                PublishDirect(chFresh, "final");
+                return Volatile.Read(ref fresh) > 0;
+            }, ResumeBoundMs);
+            Check("SOAK.final-subscription", freshOk >= 0, "fresh runtime subscription delivered within " + Fmt(ResumeBoundMs) + "ms");
+
+            Console.WriteLine("[SUMMARY] soakFaults=" + faults + " soakMinutes=" + SoakMinutes.ToString("0.##", Inv));
+            FinishMode("SOAK-end", "soak");
+        }
+
+        /// <summary>
+        /// Runs one fault: continuous traffic and heartbeats were started by the
+        /// mode; this resets the per-fault worst trackers, injects, then asserts
+        /// heartbeat bound, delivery resume, re-subscription and monotonic
+        /// counters. A fault never aborts the run: failures are collected and
+        /// exit 1 at the end.
+        /// </summary>
+        private static void RunFault(string id, string desc, string channel, Action inject)
+        {
+            Interlocked.Increment(ref FaultsRun);
+            long faultStart = PhaseBanner(id, desc);
+            int listenersBefore = S.ListenerCount;
+            int channelsBefore = S.ChannelCount;
+            long joinedBefore = Interlocked.Read(ref JoinedEvents);
+            long deliveriesBefore = Delivery.Count;
+            long publishedBefore = Delivery.Published;
+            Interlocked.Exchange(ref FaultOutageCount, deliveriesBefore);
+
+            try { inject(); }
+            catch (Exception ex)
+            {
+                Failures.Add(id + " :: fault injection threw " + ex.GetType().Name + ": " + ex.Message);
+            }
+            double injectMs = MsSince(faultStart);
+
+            // A delivery strictly after the outage mark proves the fault window
+            // really ended (never just pre-outage in-flight messages). The
+            // injectors mark the outage once it is fully in effect.
+            long resumePrev = Interlocked.Read(ref FaultOutageCount);
+            if (resumePrev < deliveriesBefore) resumePrev = deliveriesBefore;
+            double resume = Delivery.ResumeAfter(resumePrev, ResumeBoundMs);
+            long readersWait = WaitForNumSub(channel, 1, ResumeBoundMs, out long readers);
+            double heartbeat = Proc.MaxGapMs;
+            double gap = Delivery.MaxGapMs;
+            double watchdog = Wake.MaxIterMs;
+            bool monotonic = Delivery.Count >= deliveriesBefore
+                && Delivery.Published >= publishedBefore
+                && S.ListenerCount >= listenersBefore
+                && S.ChannelCount >= channelsBefore
+                && Interlocked.Read(ref JoinedEvents) >= joinedBefore;
+
+            Metric(id, "injectWallMs", injectMs);
+            Metric(id, "heartbeatMs", heartbeat);
+            Metric(id, "watchdogMaxMs", watchdog);
+            Metric(id, "deliveryGapMs", gap);
+            Metric(id, "deliveryResumeMs", resume);
+            Metric(id, "readersAfter", readers);
+            Metric(id, "readersWaitMs", readersWait);
+            Metric(id, "poolHeartbeatGapMs", Pool.MaxGapMs);
+            Metric(id, "deliveries", Delivery.Count);
+            Metric(id, "publishes", Delivery.Published);
+            Metric(id, "publishErrors", Delivery.PublishErrors);
+
+            Check(id + ".heartbeat", heartbeat < StuckBoundMs,
+                "proc heartbeat max gap=" + Fmt(heartbeat) + "ms (bound " + StuckBoundMs + "ms)");
+            Check(id + ".entrypoints-not-stuck", watchdog < StuckBoundMs,
+                "watchdog max iteration=" + Fmt(watchdog) + "ms");
+            Check(id + ".delivery-resumes", resume >= 0 && resume <= ResumeBoundMs,
+                "delivery resume after fault=" + Fmt(resume) + "ms (bound " + ResumeBoundMs + "ms)");
+            Check(id + ".resubscribed", readers >= 1,
+                "PUBSUB NUMSUB " + channel + "=" + readers + " (expected >= 1)");
+            Check(id + ".monotonic", monotonic,
+                "deliveries=" + Delivery.Count + " (>= " + deliveriesBefore + ") listeners=" + S.ListenerCount
+                + " (>= " + listenersBefore + ") channels=" + S.ChannelCount + " (>= " + channelsBefore + ")");
+
+            NoteWorst("procHeartbeatMs", heartbeat);
+            NoteWorst("watchdogMs", watchdog);
+            NoteWorst("deliveryGapMs", gap);
+            NoteWorst("deliveryResumeMs", resume);
+            NoteWorst("poolHeartbeatGapMs", Pool.MaxGapMs);
+        }
+
+        private static void SkipFault(string id, string desc, string reason)
+        {
+            Console.WriteLine("[SKIP] phase=" + id + " desc=" + desc + " reason=" + reason);
+        }
+
+        // ------------------------------------------------- fault injectors
+
+        /// <summary>docker CLI step that must succeed; a failure is recorded as an
+        /// assertion failure of the current fault instead of aborting the mode.</summary>
+        private static bool DockerStep(string checkName, string arguments, int timeoutMs)
+        {
+            DockerResult r = RunDocker(arguments, timeoutMs);
+            bool ok = r.ExitCode == 0;
+            Check(checkName, ok, "docker " + arguments
+                + (ok ? "" : " exit=" + r.ExitCode + " " + Shorten((r.StdErr ?? "").Trim(), 200)));
+            return ok;
+        }
+
+        private static bool PingServer()
+        {
+            try { AdminDb().Ping(); return true; }
+            catch { return false; }
+        }
+
+        private static void WaitServerDown(double timeoutMs)
+        {
+            WaitUntil(() => !PingServer(), timeoutMs);
+        }
+
+        private static void WaitServerUp(double timeoutMs)
+        {
+            WaitUntil(() => PingServer(), timeoutMs);
+        }
+
+        /// <summary>Records the delivery count at the moment the current fault's
+        /// outage is fully in effect; the runner only accepts a delivery after
+        /// this mark as proof of resume (pre-outage in-flight messages must not
+        /// satisfy the check).</summary>
+        private static void MarkOutage()
+        {
+            Interlocked.Exchange(ref FaultOutageCount, Delivery.Count);
+        }
+
+        // Fault 1: docker stop (dead server, full reconnect) then start.
+        private static void InjectStopStart(string id)
+        {
+            if (!DockerStep(id + ".docker-stop", "stop " + ContainerName, 120000)) return;
+            WaitServerDown(10000);
+            MarkOutage();
+            Thread.Sleep(1000); // keep the outage visible to the delivery probe
+            if (!DockerStep(id + ".docker-start", "start " + ContainerName, 120000)) return;
+            WaitServerUp(ResumeBoundMs);
+        }
+
+        // Fault 2: docker restart (stop + start in one command).
+        private static void InjectRestart(string id)
+        {
+            MarkOutage();
+            DockerStep(id + ".docker-restart", "restart " + ContainerName, 120000);
+            WaitServerUp(ResumeBoundMs);
+        }
+
+        // Fault 3: docker pause/unpause: half-open server (connections stay
+        // established, commands hang) held for ~5s.
+        private static void InjectPauseUnpause(string id)
+        {
+            if (!DockerStep(id + ".docker-pause", "pause " + ContainerName, 60000)) return;
+            MarkOutage();
+            Thread.Sleep(PauseHoldMs);
+            DockerStep(id + ".docker-unpause", "unpause " + ContainerName, 60000);
+            WaitServerUp(ResumeBoundMs);
+        }
+
+        // Fault 4: 3x CLIENT KILL TYPE pubsub (kills the subscriber connections).
+        private static void InjectKillStorm(string id)
+        {
+            long killed = 0;
+            int errors = 0;
+            for (int i = 0; i < KillStormRounds; i++)
+            {
+                try
+                {
+                    RedisResult r = AdminDb().Execute("CLIENT", "KILL", "TYPE", "pubsub");
+                    long n;
+                    if (long.TryParse(Convert.ToString(r, Inv), NumberStyles.Integer, Inv, out n)) killed += n;
+                }
+                catch { errors++; }
+                Thread.Sleep(500);
+            }
+            MarkOutage();
+            Metric(id, "clientsKilled", killed);
+            Metric(id, "killErrors", errors);
+        }
+
+        // Fault 5: CLIENT PAUSE 3000 (all commands delayed) + CLIENT UNPAUSE.
+        // The unpause is fire-and-forget: a fully paused server only processes
+        // it when the pause window expires anyway.
+        private static void InjectClientPause(string id)
+        {
+            bool issued = true;
+            try { AdminDb().Execute("CLIENT", "PAUSE", "3000"); }
+            catch (Exception ex) { issued = false; Failures.Add(id + " :: CLIENT PAUSE failed: " + ex.Message); }
+            Check(id + ".client-pause-issued", issued, "CLIENT PAUSE 3000");
+            MarkOutage();
+            Thread.Sleep(1000);
+            try { AdminDb().Execute("CLIENT", new object[] { "UNPAUSE" }, CommandFlags.FireAndForget); } catch { }
+            WaitServerUp(ResumeBoundMs);
+        }
+
+        // Fault 6: 3x flapping stop/start: repeated short outages under traffic.
+        private static void InjectFlapping(string id)
+        {
+            for (int i = 0; i < FlapCycles; i++)
+            {
+                if (!DockerStep(id + ".flap-stop-" + (i + 1), "stop " + ContainerName, 120000)) return;
+                WaitServerDown(10000);
+                MarkOutage();
+                Thread.Sleep(1000);
+                if (!DockerStep(id + ".flap-start-" + (i + 1), "start " + ContainerName, 120000)) return;
+                WaitServerUp(ResumeBoundMs);
+                Thread.Sleep(500);
+            }
+        }
+
+        // Fault 7: same-process add-in reload under traffic: RedisRuntime is
+        // shut down (the add-in unload), then ResetAfterAddInReload is called on
+        // both RedisRuntime and RedisUDF exactly like AddIn.AutoOpen does on a
+        // reload; new subscriptions and UDF entry points must work afterwards.
+        private static void InjectReload(string id)
+        {
+            string suffix = Guid.NewGuid().ToString("N");
+            string chOld = "liveness:matrix:reload:old:" + suffix;
+            string chNew = "liveness:matrix:reload:new:" + suffix;
+            string chUdf = "liveness:matrix:reload:udf:" + suffix;
+            TrackChannel(chOld);
+            TrackChannel(chNew);
+            TrackChannel(chUdf);
+
+            int oldGot = 0;
+            IDisposable oldToken = RedisRuntime.Subscriptions.Subscribe(Host, chOld, false,
+                _ => Interlocked.Increment(ref oldGot), "MATRIX");
+            TrackToken(oldToken);
+            PublishDirect(chOld, "pre-reload");
+            long pre = WaitUntil(() => Volatile.Read(ref oldGot) >= 1, 10000);
+            Check(id + ".pre-reload-subscription-live", pre >= 0, "pre-reload subscription delivered=" + (pre >= 0));
+
+            MarkOutage();
+            RedisRuntime.Shutdown();
+            RedisRuntime.ResetAfterAddInReload();
+            RedisUDF.ResetAfterAddInReload();
+            try { oldToken.Dispose(); } catch { }
+
+            int newGot = 0;
+            IDisposable newToken = RedisRuntime.Subscriptions.Subscribe(Host, chNew, false,
+                _ => Interlocked.Increment(ref newGot), "MATRIX");
+            TrackToken(newToken);
+            long newOk = WaitUntil(() =>
+            {
+                if (Volatile.Read(ref newGot) > 0) return true;
+                PublishDirect(chNew, "post-reload");
+                return Volatile.Read(ref newGot) > 0;
+            }, ResumeBoundMs);
+            Check(id + ".new-subscription-after-reload", newOk >= 0,
+                "fresh runtime subscription delivered after reload=" + (newOk >= 0) + " (wait=" + Fmt(newOk) + "ms)");
+
+            string reloadKey = "liveness:matrix:reload:key:" + suffix;
+            string setText = Convert.ToString(RedisUDF.RedisUDFSet(reloadKey, "reload-ok", Host), Inv) ?? "";
+            Check(id + ".udf-write-after-reload", !setText.StartsWith("Error:", StringComparison.Ordinal),
+                "RedisUDFSet=" + Shorten(setText, 160));
+            string getText = RedisUDF.RedisUDFGet(reloadKey, Host);
+            Check(id + ".udf-read-after-reload", getText == "reload-ok", "RedisUDFGet=" + Shorten(getText ?? "", 160));
+
+            RedisUDF.RedisUDFChannelLatest(chUdf, Host);
+            RedisUDF.RedisUDFChannelPublish(chUdf, "udf-payload", Host);
+            long udfOk = WaitUntil(() => RedisUDF.RedisUDFChannelLatest(chUdf, Host) == "udf-payload", 10000);
+            Check(id + ".udf-channel-after-reload", udfOk >= 0, "RedisUDFChannelLatest saw the publish=" + (udfOk >= 0));
+            try { RedisUDF.RedisUDFChannelUnsubscribe(chUdf, Host); } catch { }
+            try { newToken.Dispose(); } catch { }
+        }
+
+        // Fault 8: writes during an outage: the sync core write must return
+        // "Error:" within the configured timeout bound and succeed after
+        // recovery; the fire-and-forget write must never throw into the caller;
+        // the async queue backlog must complete every task.
+        private static void InjectWritePath(string id)
+        {
+            string prevOverride = RedisUDF.SyncWriteOverrideForTests;
+            bool dockerOutage = DockerFaultsEnabled;
+            string key = "liveness:matrix:wp:" + Guid.NewGuid().ToString("N").Substring(0, 12);
+            string qhost = Host + "|matrix-wp";
+            TrackQueueHost(qhost);
+            int backlog = 15;
+            var tasks = new Task<object>[backlog];
+            try
+            {
+                if (dockerOutage)
+                {
+                    if (!DockerStep(id + ".docker-stop", "stop " + ContainerName, 120000)) return;
+                    WaitServerDown(10000);
+                    MarkOutage();
+                }
+                else
+                {
+                    try { AdminDb().Execute("CLIENT", "PAUSE", "3000"); }
+                    catch (Exception ex) { Failures.Add(id + " :: CLIENT PAUSE failed: " + ex.Message); }
+                    MarkOutage();
+                    Thread.Sleep(250);
+                }
+
+                RedisUDF.SyncWriteOverrideForTests = "sync";
+                long t0 = Stopwatch.GetTimestamp();
+                string syncText = Convert.ToString(RedisUDF.RedisUDFSet(key, "during-fault", Host), Inv) ?? "";
+                double syncMs = MsSince(t0);
+                Check(id + ".sync-write-error-during-fault", syncText.StartsWith("Error:", StringComparison.Ordinal),
+                    "RedisUDFSet(sync)=" + Shorten(syncText, 160));
+                Check(id + ".sync-write-bounded", syncMs <= WriteOutageBoundMs(),
+                    "ms=" + Fmt(syncMs) + " bound=" + Fmt(WriteOutageBoundMs()) + "ms");
+                Metric(id, "syncWriteDuringFaultMs", syncMs);
+
+                RedisUDF.SyncWriteOverrideForTests = "fireforget";
+                bool ffThrew = false;
+                string ffText = null;
+                try { ffText = Convert.ToString(RedisUDF.RedisUDFSet(key, "ff-during-fault", Host), Inv); }
+                catch (Exception ex) { ffThrew = true; ffText = ex.GetType().Name + ": " + ex.Message; }
+                Check(id + ".fireforget-never-throws", !ffThrew, "result=" + Shorten(ffText ?? "", 160));
+
+                RedisUDF.SyncWriteOverrideForTests = "sync";
+                for (int i = 0; i < backlog; i++)
+                {
+                    int n = i;
+                    tasks[n] = RedisUdfAsync.Enqueue(qhost, () => RedisUDF.RedisUDFSet(key + ":" + n, "backlog-" + n, Host));
+                }
+            }
+            finally
+            {
+                if (dockerOutage)
+                {
+                    DockerStep(id + ".docker-start", "start " + ContainerName, 120000);
+                    WaitServerUp(ResumeBoundMs);
+                }
+                else
+                {
+                    try { AdminDb().Execute("CLIENT", new object[] { "UNPAUSE" }, CommandFlags.FireAndForget); } catch { }
+                    WaitServerUp(ResumeBoundMs);
+                }
+                RedisUDF.SyncWriteOverrideForTests = prevOverride;
+            }
+
+            int enqueued = 0;
+            foreach (var t in tasks) if (t != null) enqueued++;
+            long drainStart = Stopwatch.GetTimestamp();
+            bool drained = enqueued == backlog && Task.WaitAll(tasks, (int)QueueDrainBoundMs);
+            double drainMs = MsSince(drainStart);
+            int completed = 0;
+            foreach (var t in tasks) if (t != null && t.IsCompleted) completed++;
+            Metric(id, "queueDrainMs", drainMs);
+            Metric(id, "queueCompleted", completed);
+            Check(id + ".enqueue-backlog-completes", drained && completed == backlog,
+                "completed=" + completed + "/" + backlog + " drained=" + drained + " drainMs=" + Fmt(drainMs));
+            NoteWorst("queueDrainMs", drainMs);
+
+            RedisUDF.SyncWriteOverrideForTests = "sync";
+            try
+            {
+                string probeKey = key + ":after";
+                long ok = WaitUntil(() => string.Equals(
+                    Convert.ToString(RedisUDF.RedisUDFSet(probeKey, "after-recovery", Host), Inv), "OK", StringComparison.Ordinal), 15000);
+                Check(id + ".sync-write-succeeds-after-recovery", ok >= 0, "RedisUDFSet(sync)=OK ms=" + Fmt(ok));
+            }
+            finally
+            {
+                RedisUDF.SyncWriteOverrideForTests = prevOverride;
+            }
+        }
+
+        /// <summary>Time budget for a sync write during an outage: one connect
+        /// attempt (ConnectTimeout) plus the command sync timeout (both are the
+        /// configured pool timeout) plus slack.</summary>
+        private static double WriteOutageBoundMs()
+        {
+            return RedisUDF.ResponseTimeoutMs() + 4000;
+        }
+
+        // ------------------------------------------------- soak fault set
+
+        private sealed class FaultChoice
+        {
+            public string Key;
+            public string Desc;
+            public Action<string> Inject;
+        }
+
+        private static List<FaultChoice> BuildFaultChoices()
+        {
+            var choices = new List<FaultChoice>();
+            if (DockerFaultsEnabled)
+            {
+                choices.Add(new FaultChoice { Key = "stop-start", Desc = "docker stop + docker start", Inject = InjectStopStart });
+                choices.Add(new FaultChoice { Key = "restart", Desc = "docker restart", Inject = InjectRestart });
+                choices.Add(new FaultChoice { Key = "pause", Desc = "docker pause + unpause (half-open, hold " + PauseHoldMs + "ms)", Inject = InjectPauseUnpause });
+                choices.Add(new FaultChoice { Key = "flap", Desc = FlapCycles + "x flapping stop/start", Inject = InjectFlapping });
+            }
+            if (CommandFaultsEnabled)
+            {
+                choices.Add(new FaultChoice { Key = "kill", Desc = KillStormRounds + "x CLIENT KILL TYPE pubsub", Inject = InjectKillStorm });
+                choices.Add(new FaultChoice { Key = "client-pause", Desc = "CLIENT PAUSE 3000 + UNPAUSE", Inject = InjectClientPause });
+            }
+            choices.Add(new FaultChoice { Key = "reload", Desc = "reload under traffic (Shutdown + ResetAfterAddInReload x2)", Inject = InjectReload });
+            if (DockerFaultsEnabled || CommandFaultsEnabled)
+            {
+                choices.Add(new FaultChoice
+                {
+                    Key = "write-path",
+                    Desc = "write path during fault (sync error + fire-and-forget + async backlog)",
+                    Inject = InjectWritePath
+                });
+            }
+            return choices;
+        }
+
+        private static FaultChoice PickSoakFault(List<FaultChoice> choices, string lastKey)
+        {
+            if (choices.Count == 0) return null;
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                FaultChoice choice = choices[Rng.Next(choices.Count)];
+                if (choices.Count == 1 || choice.Key != lastKey) return choice;
+            }
+            return choices[0];
+        }
+
+        // ------------------------------------------------- end-of-mode checks
+
+        /// <summary>
+        /// Resource stability: all subscriber tokens are disposed by the caller
+        /// first; then zero runtime listeners, PUBSUB NUMSUB back to 0 for every
+        /// tracked channel and no idle async queues are required before the
+        /// managers are shut down.
+        /// </summary>
+        private static void FinishMode(string phase, string label)
+        {
+            Console.WriteLine();
+            Console.WriteLine("[PHASE] id=" + phase + " desc=resource stability (listeners, NUMSUB, queues, shutdown)");
+            try { Delivery.Dispose(); } catch { }
+            DisposeTrackedTokens();
+
+            long noLeaks = WaitUntil(() => S.ChannelCount == 0 && S.ListenerCount == 0, 10000);
+            Metric(phase, "channelCount", S.ChannelCount);
+            Metric(phase, "listenerCount", S.ListenerCount);
+            Check(phase + ".no-channel-leaks", noLeaks >= 0,
+                "ChannelCount=" + S.ChannelCount + " ListenerCount=" + S.ListenerCount);
+
+            ResourceStabilityChecks(phase);
+            DumpGcSummary();
+
+            Console.WriteLine("[SUMMARY] " + label + "Deliveries=" + Delivery.Count
+                + " " + label + "Publishes=" + Delivery.Published
+                + " publishErrors=" + Delivery.PublishErrors);
+            Console.WriteLine("[SUMMARY] listenerJoinedEvents=" + Interlocked.Read(ref JoinedEvents));
+
+            Wake.Stop();
+            Pool.Stop();
+            Proc.Stop();
+            C.Shutdown();
+            Metric(phase, "liveConnectionsAfterShutdown", C.LiveConnectionCount());
+            Check(phase + ".shutdown-pools", C.LiveConnectionCount() == 0,
+                "LiveConnectionCount after Shutdown=" + C.LiveConnectionCount());
+            try { RedisRuntime.Shutdown(); } catch { }
+            DisposeAdmin();
+            DumpLatencies(phase);
+        }
+
+        private static void ResourceStabilityChecks(string phase)
+        {
+            long runtimeZero = WaitUntil(() =>
+            {
+                try { return RedisRuntime.Subscriptions.ListenerCount == 0; } catch { return true; }
+            }, 10000);
+            int runtimeListeners = -1;
+            try { runtimeListeners = RedisRuntime.Subscriptions.ListenerCount; } catch { }
+            Check(phase + ".runtime-listeners-zero", runtimeZero >= 0,
+                "RedisRuntime.Subscriptions.ListenerCount=" + runtimeListeners);
+
+            foreach (string channel in TrackedChannels.ToArray())
+            {
+                long zero = WaitForNumSub(channel, 0, 10000, out long last);
+                Check(phase + ".numsub-zero[" + channel + "]", zero >= 0,
+                    "PUBSUB NUMSUB " + channel + "=" + last + " (expected 0)");
+            }
+
+            foreach (string queueHost in TrackedQueueHosts.ToArray())
+            {
+                long gone = WaitUntil(() => !RedisUdfAsync.HasQueueForTests(queueHost), 10000);
+                Check(phase + ".queue-idle[" + queueHost + "]", gone >= 0,
+                    "HasQueueForTests(" + queueHost + ")=" + RedisUdfAsync.HasQueueForTests(queueHost));
+            }
+        }
+
+        /// <summary>GC/resource statistics for the soak/end of the run.</summary>
+        private static void DumpGcSummary()
+        {
+            // Settle the heap first so the live/survived numbers are meaningful.
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            long allocated = 0, survived = 0;
+            try
+            {
+                allocated = AppDomain.CurrentDomain.MonitoringTotalAllocatedMemorySize;
+                survived = AppDomain.CurrentDomain.MonitoringSurvivedMemorySize;
+            }
+            catch { }
+            long workingSet = 0, peakWorkingSet = 0;
+            try
+            {
+                using (var p = Process.GetCurrentProcess())
+                {
+                    workingSet = p.WorkingSet64;
+                    peakWorkingSet = p.PeakWorkingSet64;
+                }
+            }
+            catch { }
+            Console.WriteLine("[SUMMARY] gcGen0=" + GC.CollectionCount(0)
+                + " gcGen1=" + GC.CollectionCount(1)
+                + " gcGen2=" + GC.CollectionCount(2));
+            Console.WriteLine("[SUMMARY] allocatedMB=" + (allocated / 1048576.0).ToString("0.0", Inv)
+                + " survivedMB=" + (survived / 1048576.0).ToString("0.0", Inv)
+                + " liveHeapMB=" + (GC.GetTotalMemory(false) / 1048576.0).ToString("0.0", Inv)
+                + " workingSetMB=" + (workingSet / 1048576.0).ToString("0.0", Inv)
+                + " peakWorkingSetMB=" + (peakWorkingSet / 1048576.0).ToString("0.0", Inv));
+        }
+
+        private static void TrackChannel(string channel)
+        {
+            if (!TrackedChannels.Contains(channel)) TrackedChannels.Add(channel);
+        }
+
+        private static void TrackToken(IDisposable token)
+        {
+            if (token != null) TrackedTokens.Add(token);
+        }
+
+        private static void TrackQueueHost(string host)
+        {
+            if (!TrackedQueueHosts.Contains(host)) TrackedQueueHosts.Add(host);
+        }
+
+        private static void DisposeTrackedTokens()
+        {
+            foreach (var token in TrackedTokens)
+            {
+                try { token.Dispose(); } catch { }
+            }
+            TrackedTokens.Clear();
+        }
+
+        private static void DisposeAdmin()
+        {
+            try { if (AdminMux != null) AdminMux.Dispose(); } catch { }
+            AdminMux = null;
+        }
+
+        /// <summary>Direct short-timeout multiplexer used only for admin commands
+        /// (CLIENT KILL/PAUSE, PUBSUB NUMSUB, PUBLISH probes). Kept separate from
+        /// the managers on purpose: faults must not depend on the code under
+        /// test to be injected or measured.</summary>
+        private static IDatabase AdminDb()
+        {
+            if (AdminMux == null)
+            {
+                ConfigurationOptions options = ConfigurationOptions.Parse(DirectConfig);
+                options.AbortOnConnectFail = false;
+                options.ConnectTimeout = 1000;
+                options.SyncTimeout = 1000;
+                options.ConnectRetry = 1;
+                AdminMux = ConnectionMultiplexer.Connect(options);
+            }
+            return AdminMux.GetDatabase();
+        }
+
+        private static void PublishDirect(string channel, string message)
+        {
+            try { AdminDb().Execute("PUBLISH", channel, message); } catch { }
+        }
+
+        /// <summary>PUBSUB NUMSUB for one channel (>= 0) or -1 when unreadable.</summary>
+        private static long NumSub(string channel)
+        {
+            RedisResult result = AdminDb().Execute("PUBSUB", "NUMSUB", channel);
+            if (result.IsNull) return -1;
+            var array = (RedisResult[])result;
+            if (array.Length < 2) return -1;
+            return (long)array[1];
+        }
+
+        /// <summary>Polls PUBSUB NUMSUB until the channel has at least
+        /// <paramref name="expected"/> subscribers (or exactly 0 when expected
+        /// is 0). Returns the elapsed ms or -1 on timeout; <paramref name="last"/>
+        /// receives the last observed count.</summary>
+        private static long WaitForNumSub(string channel, long expected, double timeoutMs, out long last)
+        {
+            long start = Stopwatch.GetTimestamp();
+            long deadline = start + MsToTicks(timeoutMs);
+            last = -1;
+            while (Stopwatch.GetTimestamp() < deadline)
+            {
+                try { last = NumSub(channel); } catch { last = -1; }
+                if (expected <= 0 ? last == 0 : last >= expected)
+                    return (long)MsSince(start);
+                Thread.Sleep(100);
+            }
+            return -1;
         }
 
         // ------------------------------------------------------------ cleanup
@@ -1146,6 +1967,53 @@ namespace RedisExcel.LivenessTests
             ThreadPool.GetMaxThreads(out maxW, out maxIo);
         }
 
+        /// <summary>
+        /// Starves the pool for an attack window: saves the current bounds,
+        /// clamps min/max to (4,4) and blocks six queued sleepers on the
+        /// returned event (released by <see cref="RestorePool"/>). The saved
+        /// bounds are returned for the restore.
+        /// </summary>
+        private static ManualResetEventSlim StarvePool(
+            out int minW, out int minIo, out int maxW, out int maxIo,
+            out bool setMin, out bool setMax, int settleMs)
+        {
+            GetPool(out minW, out minIo, out maxW, out maxIo);
+            setMin = ThreadPool.SetMinThreads(4, 4);
+            setMax = ThreadPool.SetMaxThreads(4, 4);
+            var release = new ManualResetEventSlim(false);
+            for (int i = 0; i < 6; i++)
+                ThreadPool.QueueUserWorkItem(_ => release.Wait(120000));
+            Thread.Sleep(settleMs);
+            return release;
+        }
+
+        /// <summary>Ends a <see cref="StarvePool"/> window: releases the sleepers
+        /// and restores the saved pool bounds.</summary>
+        private static void RestorePool(int minW, int minIo, int maxW, int maxIo, ManualResetEventSlim release)
+        {
+            release.Set();
+            ThreadPool.SetMaxThreads(maxW, maxIo);
+            ThreadPool.SetMinThreads(minW, minIo);
+        }
+
+        /// <summary>
+        /// Waits for the delivery probe to resume past the outage and for the
+        /// live channel to be re-subscribed, emitting the two metrics and the
+        /// two checks of a phase C recovery pair. Returns the resume time.
+        /// </summary>
+        private static double CheckDeliveryRecovered(
+            long prevDeliveries, string resumeMetric, string readersMetric,
+            string resumeCheck, string resubscribedCheck)
+        {
+            double resume = Delivery.ResumeAfter(prevDeliveries, ResumeBoundMs);
+            long readers = Delivery.WaitForReaders(LiveChannel, ResumeBoundMs);
+            Metric("C", resumeMetric, resume);
+            Metric("C", readersMetric, readers);
+            Check(resumeCheck, resume >= 0 && resume <= ResumeBoundMs, "resumeMs=" + Fmt(resume));
+            Check(resubscribedCheck, readers > 0, "publish readers=" + readers);
+            return resume;
+        }
+
         private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         private static double TicksToMs(long ticks) { return ticks * 1000.0 / Stopwatch.Frequency; }
@@ -1467,42 +2335,5 @@ namespace RedisExcel.LivenessTests
         }
 
         // ------------------------------------------------------------ observers
-
-        private sealed class RecordingObserver : IExcelObserver
-        {
-            private readonly object _gate = new object();
-            private readonly List<object> _values = new List<object>();
-            private readonly ManualResetEventSlim _completed = new ManualResetEventSlim(false);
-            private int _completedCount;
-
-            public void OnNext(object value) { lock (_gate) _values.Add(value); }
-            public void OnError(Exception exception) { }
-            public void OnCompleted()
-            {
-                lock (_gate) _completedCount++;
-                _completed.Set();
-            }
-
-            public object[] Values { get { lock (_gate) return _values.ToArray(); } }
-            public int CompletedCount { get { lock (_gate) return _completedCount; } }
-            public bool WaitCompleted(int timeoutMs) { return _completed.Wait(timeoutMs); }
-        }
-
-        private sealed class ThrowingObserver : IExcelObserver
-        {
-            private readonly ManualResetEventSlim _completed = new ManualResetEventSlim(false);
-            private int _completedCount;
-
-            public void OnNext(object value) { throw new InvalidOperationException("observer rejected the value"); }
-            public void OnError(Exception exception) { }
-            public void OnCompleted()
-            {
-                Interlocked.Increment(ref _completedCount);
-                _completed.Set();
-            }
-
-            public int CompletedCount { get { return Volatile.Read(ref _completedCount); } }
-            public bool WaitCompleted(int timeoutMs) { return _completed.Wait(timeoutMs); }
-        }
     }
 }

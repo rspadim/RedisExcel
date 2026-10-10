@@ -62,6 +62,9 @@ jobs:
       - name: Run smoke tests
         run: dotnet run --project test/SmokeTests -c Release -- "127.0.0.1:6379"
 
+      - name: Run liveness tests (quick)
+        run: dotnet run --project test/LivenessTests -c Release -- "127.0.0.1:6379" --quick --skip-restart
+
       - name: Build RedisExcel (.NET Framework 4.8)
         shell: pwsh
         run: |

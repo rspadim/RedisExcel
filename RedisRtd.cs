@@ -470,9 +470,7 @@ namespace RedisExcel
             // is already running, so only the Disconnected flags guarantee that such a
             // tick stops publishing and never touches the live registries after teardown
             // starts.
-            foreach (var td in _polledTopics.Values)
-                td.Disconnected = true;
-            foreach (var td in _subscribedTopics.Values)
+            foreach (var td in _polledTopics.Values.Concat(_subscribedTopics.Values))
                 td.Disconnected = true;
 
             DisposeTimer(ref _redisTimer);
@@ -591,7 +589,7 @@ namespace RedisExcel
                         // Documented arguments: key + optional host.
                         RejectExtraArguments(command, topicInfo, 3);
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
-                        ValidateHost(td.Host);
+                        RedisConnectionManager.ParseOptions(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "HGET":
@@ -602,7 +600,7 @@ namespace RedisExcel
                         // Documented arguments: key + field + optional host.
                         RejectExtraArguments(command, topicInfo, 4);
                         td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
-                        ValidateHost(td.Host);
+                        RedisConnectionManager.ParseOptions(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
                     case "SUB":
@@ -618,7 +616,7 @@ namespace RedisExcel
                         td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
                         // A malformed host can never subscribe successfully, so
                         // reject it up front instead of retrying it forever.
-                        ValidateHost(td.Host);
+                        RedisConnectionManager.ParseOptions(td.Host);
                         // Register BEFORE subscribing: a transient Subscribe failure
                         // keeps the topic (Subscription == null) so OnRedisTick
                         // retries it, and the cell starts with the #ERROR text
@@ -650,26 +648,6 @@ namespace RedisExcel
             {
                 logger.Error(ex, "ConnectData: error");
                 return $"#ERROR: ConnectData: {ex.Message}";
-            }
-        }
-
-        /// <summary>
-        /// Validates the resolved host with the StackExchange.Redis parser WITHOUT
-        /// connecting. ConnectData then fails fast for a malformed endpoint (for
-        /// example a port above 65535), so the cell shows the #ERROR text instead
-        /// of staying on "(ConnectData)" while every poll tick only logs the
-        /// failure. The "#ERROR: ConnectData: ..." prefix matches SUB/PSUB and the
-        /// UDF error behavior.
-        /// </summary>
-        private static void ValidateHost(string host)
-        {
-            try
-            {
-                ConfigurationOptions.Parse(host);
-            }
-            catch (Exception ex)
-            {
-                throw new Exception($"invalid Redis host '{host}'", ex);
             }
         }
 
@@ -734,10 +712,7 @@ namespace RedisExcel
                 Interlocked.Increment(ref _messageCount);
                 if (logger.IsTraceEnabled)
                     logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={message}");
-                if (_realTimeUpdates && !_coalesceRealtimeUpdates)
-                    td.UpdateAndSendToExcel(message);
-                else
-                    td.UpdateOnly(message);
+                DeliverToTopic(td, message);
             }, "RTD");
             logger.Info($"Subscribe: subscribed {td}");
             return subscription;
@@ -824,8 +799,9 @@ namespace RedisExcel
             {
                 if (retried >= PendingSubscribeRetriesPerTick)
                     break;
-                if (td.Disconnected || td.Subscription != null)
-                    continue;
+                // TrySubscribe re-checks Disconnected/Subscription itself and
+                // reports whether a real attempt happened, so only the backoff
+                // gate remains here.
                 if (td.NextSubscribeAttemptUtc > now)
                     continue;
                 TrySubscribe(td, out bool attempted);
@@ -841,14 +817,24 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>
+        /// Reentrancy prologue shared by the three timers: a tick that fires while
+        /// the previous one still runs is skipped (never queued), with the same log
+        /// text as before. Callers must release the gate in a finally.
+        /// </summary>
+        private static bool TryBeginTick(TickGate gate, string name)
+        {
+            if (gate.TryEnter())
+                return true;
+            if (logger.IsDebugEnabled)
+                logger.Debug($"{name}: previous tick still running, skipping");
+            return false;
+        }
+
         private void OnCounterTick()
         {
-            if (!_counterTickGate.TryEnter())
-            {
-                if (logger.IsDebugEnabled)
-                    logger.Debug("OnCounterTick: previous tick still running, skipping");
+            if (!TryBeginTick(_counterTickGate, "OnCounterTick"))
                 return;
-            }
             try
             {
                 UpdateRealtimeMode(allowReenable: true);
@@ -865,12 +851,8 @@ namespace RedisExcel
 
         private void OnExcelTick()
         {
-            if (!_excelTickGate.TryEnter())
-            {
-                if (logger.IsDebugEnabled)
-                    logger.Debug("OnExcelTick: previous tick still running, skipping");
+            if (!TryBeginTick(_excelTickGate, "OnExcelTick"))
                 return;
-            }
             try
             {
                 UpdateRealtimeMode(allowReenable: false);
@@ -882,9 +864,7 @@ namespace RedisExcel
                 // because updates are sent immediately; flushing every tick is
                 // cheap and guarantees delivery when Automatic style re-enables
                 // real-time after a burst.
-                foreach (var td in _polledTopics.Values)
-                    td.SendToExcelIfDirty();
-                foreach (var td in _subscribedTopics.Values)
+                foreach (var td in _polledTopics.Values.Concat(_subscribedTopics.Values))
                     td.SendToExcelIfDirty();
             }
             finally
@@ -917,12 +897,8 @@ namespace RedisExcel
 
         private void OnRedisTick()
         {
-            if (!_redisTickGate.TryEnter())
-            {
-                if (logger.IsDebugEnabled)
-                    logger.Debug("OnRedisTick: previous tick still running, skipping");
+            if (!TryBeginTick(_redisTickGate, "OnRedisTick"))
                 return;
-            }
             try
             {
                 // Failed SUB/PSUB registrations are retried even when this server
@@ -1051,42 +1027,44 @@ namespace RedisExcel
                 logger.Error(ex, $"PollHost: batch execute failed, host={host}");
             }
             int responseTimeoutMs = RedisUDF.ResponseTimeoutMs();
-            foreach (var pair in singleTasks)
+            DrainBatch(singleTasks, responseTimeoutMs, host,
+                // HGET and GET (UseGetMultiple=false): IsNull distinguishes a missing
+                // key/field from an existing one holding the empty string (same as MGET).
+                value => value.IsNull ? "(no value)" : value.ToString(),
+                (td, value) => td.HasChangedPolledValue(value),
+                (td, value) => td.CommitPolledValue(value));
+            DrainBatch(hashTasks, responseTimeoutMs, host,
+                RedisResultFormatter.FormatHash,
+                (td, entries) => td.HasChangedPolledHash(entries),
+                (td, entries) => td.CommitPolledHash(entries));
+        }
+
+        /// <summary>
+        /// Drains one pipelined batch with a hard response bound: an orphaned task
+        /// (multiplexer disposed mid-execute) surfaces as a timeout instead of
+        /// blocking the tick thread forever. The skip/publish/commit order and the
+        /// per-item error isolation are unchanged; the log line uses the topic type
+        /// (HGET/HGETALL/GET), matching the old per-loop texts.
+        /// </summary>
+        private void DrainBatch<T>(
+            List<KeyValuePair<TopicData, Task<T>>> tasks, int responseTimeoutMs, string host,
+            Func<T, string> format, Func<TopicData, T, bool> changed, Action<TopicData, T> commit)
+        {
+            foreach (var pair in tasks)
             {
                 try
                 {
-                    // Hard bound: an orphaned batch task (multiplexer disposed
-                    // mid-execute) must never block the tick thread forever.
                     if (!RedisUDF.WaitBounded(pair.Value, responseTimeoutMs))
                         throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
                     var value = pair.Value.GetAwaiter().GetResult();
-                    if (_skipRepeatedMessages && !pair.Key.HasChangedPolledValue(value))
+                    if (_skipRepeatedMessages && !changed(pair.Key, value))
                         continue;
-                    // HGET and GET (UseGetMultiple=false): IsNull distinguishes a missing
-                    // key/field from an existing one holding the empty string (same as MGET).
-                    Publish(pair.Key, value.IsNull ? "(no value)" : value.ToString());
-                    pair.Key.CommitPolledValue(value);
+                    Publish(pair.Key, format(value));
+                    commit(pair.Key, value);
                 }
                 catch (Exception ex)
                 {
                     logger.Error(ex, $"PollHost: {pair.Key.Type} key={pair.Key.KeyOrChannel}, host={host}");
-                }
-            }
-            foreach (var pair in hashTasks)
-            {
-                try
-                {
-                    if (!RedisUDF.WaitBounded(pair.Value, responseTimeoutMs))
-                        throw new TimeoutException("no reply within the response timeout (batch left incomplete after a dispose?)");
-                    var entries = pair.Value.GetAwaiter().GetResult();
-                    if (_skipRepeatedMessages && !pair.Key.HasChangedPolledHash(entries))
-                        continue;
-                    Publish(pair.Key, RedisResultFormatter.FormatHash(entries));
-                    pair.Key.CommitPolledHash(entries);
-                }
-                catch (Exception ex)
-                {
-                    logger.Error(ex, $"PollHost: HGETALL key={pair.Key.KeyOrChannel}, host={host}");
                 }
             }
         }
@@ -1098,6 +1076,16 @@ namespace RedisExcel
             Interlocked.Increment(ref _messageCount);
             if (logger.IsTraceEnabled)
                 logger.Trace($"Publish: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
+            DeliverToTopic(td, value);
+        }
+
+        /// <summary>
+        /// Single owner of the realtime-vs-coalesced delivery policy: a realtime
+        /// push only when coalescing is off, otherwise the value waits for the
+        /// Excel tick (dirty flag). Used by the subscription callback and Publish.
+        /// </summary>
+        private void DeliverToTopic(TopicData td, string value)
+        {
             if (_realTimeUpdates && !_coalesceRealtimeUpdates)
                 td.UpdateAndSendToExcel(value);
             else
@@ -1113,121 +1101,45 @@ namespace RedisExcel
         // cell during Excel teardown/reload. The public Excel surface (names
         // and signatures) is unchanged.
 
-        [ExcelFunction(Description = "Returns the number of active Redis connections.", IsVolatile = true)]
-        public static int RedisRTDConnectionCount()
+        /// <summary>Runs the status read, replacing a teardown/reload exception
+        /// with the neutral value the cell used to get from its own catch.</summary>
+        private static T Guarded<T>(Func<T> read, T fallback)
         {
             try
             {
-                return RedisRtd.RedisConnectionsCount();
+                return read();
             }
             catch
             {
-                return 0;
+                return fallback;
             }
         }
+
+        [ExcelFunction(Description = "Returns the number of active Redis connections.", IsVolatile = true)]
+        public static int RedisRTDConnectionCount() => Guarded(() => RedisRtd.RedisConnectionsCount(), 0);
 
         [ExcelFunction(Description = "Returns the number of active Redis subscriptions.", IsVolatile = true)]
-        public static int RedisRTDSubscriptionCount()
-        {
-            try
-            {
-                return RedisRtd.RedisSubscriptionsCount();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static int RedisRTDSubscriptionCount() => Guarded(() => RedisRtd.RedisSubscriptionsCount(), 0);
 
         [ExcelFunction(Description = "Returns the total number of active Excel RTD topics.", IsVolatile = true)]
-        public static int RedisRTDTopicCount()
-        {
-            try
-            {
-                return RedisRtd.TopicsCount();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static int RedisRTDTopicCount() => Guarded(() => RedisRtd.TopicsCount(), 0);
 
         [ExcelFunction(Description = "Returns the number of Redis channels with subscriptions.", IsVolatile = true)]
-        public static int RedisRTDChannelCount()
-        {
-            try
-            {
-                return RedisRtd.ChannelTopicsCount();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static int RedisRTDChannelCount() => Guarded(() => RedisRtd.ChannelTopicsCount(), 0);
 
         [ExcelFunction(Description = "Returns the default Redis host address used by the RTD server.", IsVolatile = true)]
-        public static string RedisRTDDefaultHost()
-        {
-            try
-            {
-                return RedisRtd.DefaultHost() ?? "";
-            }
-            catch
-            {
-                return "";
-            }
-        }
+        public static string RedisRTDDefaultHost() => Guarded(() => RedisRtd.DefaultHost() ?? "", "");
 
         [ExcelFunction(Description = "Returns the Excel update interval in milliseconds.", IsVolatile = true)]
-        public static double RedisRTDExcelUpdateInterval()
-        {
-            try
-            {
-                return RedisRtd.ExcelUpdateRate();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static double RedisRTDExcelUpdateInterval() => Guarded(() => RedisRtd.ExcelUpdateRate(), 0);
 
         [ExcelFunction(Description = "Returns the Redis polling interval in milliseconds.", IsVolatile = true)]
-        public static double RedisRTDRedisUpdateInterval()
-        {
-            try
-            {
-                return RedisRtd.RedisUpdateRate();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static double RedisRTDRedisUpdateInterval() => Guarded(() => RedisRtd.RedisUpdateRate(), 0);
 
         [ExcelFunction(Description = "Returns TRUE if real-time updates are enabled, FALSE otherwise.", IsVolatile = true)]
-        public static bool RedisRTDRealTimeUpdates()
-        {
-            try
-            {
-                return RedisRtd.IsRealTimeEnabled();
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        public static bool RedisRTDRealTimeUpdates() => Guarded(() => RedisRtd.IsRealTimeEnabled(), false);
 
         [ExcelFunction(Description = "Returns last messages/second counter", IsVolatile = true)]
-        public static long RedisRTDMessagesCounter()
-        {
-            try
-            {
-                return RedisRtd.CurrentMessagesCounter();
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+        public static long RedisRTDMessagesCounter() => Guarded(() => RedisRtd.CurrentMessagesCounter(), 0);
     }
 }

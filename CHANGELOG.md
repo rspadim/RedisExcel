@@ -181,6 +181,23 @@
 - The async documentation now states that a duplicate registration never
   re-enqueues the write and still receives the queued result; the coverage
   lists were refreshed.
+
+### Internal
+
+- Behavior-preserving cleanup (no public surface, message or timing change):
+  a single `StripedLocks` helper for the lock tables, `RunCore`/`RunMatrixCore`
+  envelopes for the write/read cores, `WaitBoundedResult`/`FlattenKeysWithEcho`
+  for the pipelined `...Multiples`, a `Guarded` status helper, `DrainBatch` for
+  the RTD poll loops, one owner for the realtime delivery policy and for the
+  `SyncWrite` vocabulary, plus deduplicated test-harness helpers and shared
+  observer doubles.
+- The liveness layer gained a scripted failure matrix (`--matrix`: stop/start,
+  restart, pause, kill storms, `CLIENT PAUSE`, flapping, reload under traffic,
+  writes during the fault) and a soak mode (`--soak <minutes>`); both assert
+  recovery and resource stability after every fault. CI runs the quick mode
+  after the smoke tests.
+- The E2E script gained a resilience scenario that kills its own hidden Excel
+  mid-stream and asserts the Redis side is left clean (`NUMSUB`/`NUMPAT` == 0).
 - The configuration reference now documents the JSON-only keys
   (`SkipRepeatedMessages`, `CoalesceRealtimeUpdates`, `MessageCounterThreshold`,
   `ExcelUpdateStyle`, `UseGetMultiple`), the no-config `ExcelUpdateRateMs`
