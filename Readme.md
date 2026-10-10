@@ -384,20 +384,21 @@ a confirmed delivery, so an external subscriber joining later may miss an
 unchanged payload until it changes). The markers mean the write was sent, not
 confirmed by Redis.
 
-`AsyncWrites: true` dispatches writes through Excel-DNA's async support
-instead of the Excel calculation thread: the cell first shows Excel's pending
-marker (`#N/A`) and then updates to the real value/error (or the
-fire-and-forget marker). Each formula writes exactly once - the recalculation
-that delivers the result returns the cached value (the call identity is the
-cell plus the resolved host plus the formula's arguments) instead of
-re-running the write. A write whose host cannot be resolved falls back to the
-synchronous path (no pending marker); a write with no worksheet caller (e.g.
-invoked from a macro) is refused with an `Error:` cell, and repeated
-evaluations with unchanged arguments keep the cached value. Same-host writes are
-serialized by a per-host FIFO queue (other hosts are not blocked); the order is
-the dispatch order. `SyncWrite` still decides whether that write waits for the
-reply - so `"sync"` + `AsyncWrites: true` returns real results and errors
-without blocking Excel.
+`AsyncWrites: true` dispatches writes through Excel-DNA's Observe-based async
+support instead of the Excel calculation thread (no thread-pool thread is held
+per pending write): the cell first shows Excel's pending marker (`#N/A`) and
+then updates to the real value/error (or the fire-and-forget marker). Each
+formula writes exactly once - the recalculation that delivers the result
+returns the cached value (the call identity is the cell plus the resolved host
+plus the formula's arguments) instead of re-running the write. A write whose
+host cannot be resolved falls back to the synchronous path (no pending
+marker); a write with no worksheet caller (e.g. invoked from a macro) is
+refused with an `Error:` cell, and repeated evaluations with unchanged
+arguments keep the cached value. Same-host writes are serialized by a per-host
+FIFO queue fed on the Excel thread (other hosts are not blocked), so the order
+is the formula evaluation order. `SyncWrite` still decides whether that write
+waits for the reply - so `"sync"` + `AsyncWrites: true` returns real results
+and errors without blocking Excel.
 
 ---
 
