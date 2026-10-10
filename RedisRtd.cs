@@ -84,6 +84,11 @@ namespace RedisExcel
         // _lastValue on the first Excel tick would blank the cell.
         private bool _dirty = false;
 
+        // Utc ticks of the last value pushed to Excel; with a conflation window
+        // this gates the next push so the latest value is delivered at most
+        // once per window (0 = never pushed yet, which always pushes).
+        private long _lastPushTicks;
+
         // A persistently failing Excel push stays dirty and is retried every
         // tick; log the first failure at Error and the rest at Debug so a stuck
         // topic cannot flood the log (cleared by a successful push).
@@ -284,6 +289,7 @@ namespace RedisExcel
                     // topic is active (UpdateValue is a no-op when unchanged),
                     // which reconciles that window; the tick clears the flag.
                     _dirty = true;
+                    _lastPushTicks = DateTime.UtcNow.Ticks;
                 }
                 catch
                 {
@@ -304,7 +310,12 @@ namespace RedisExcel
             }
         }
 
-        public void SendToExcelIfDirty()
+        /// <summary>
+        /// Flushes the latest value to Excel when the topic is dirty AND the
+        /// conflation window (if any) elapsed; otherwise it stays dirty and a
+        /// later tick pushes the then-current value (latest wins).
+        /// </summary>
+        public void SendToExcelIfDirty(int conflationMs)
         {
             if (Disconnected)
                 return;
@@ -317,6 +328,9 @@ namespace RedisExcel
                 // this tick waited for the lock.
                 if (Disconnected)
                     return;
+                long nowTicks = DateTime.UtcNow.Ticks;
+                if (!Conflation.IsDue(_lastPushTicks, nowTicks, conflationMs))
+                    return; // inside the window: keep the newest value pending
                 try
                 {
                     // Push while holding the lock: a concurrent state update
@@ -324,6 +338,7 @@ namespace RedisExcel
                     // failure stay dirty so the next Excel tick retries.
                     Topic.UpdateValue(_lastValue);
                     _dirty = false;
+                    _lastPushTicks = nowTicks;
                     _updateFailureLogged = false;
                 }
                 catch (Exception ex)
@@ -395,6 +410,7 @@ namespace RedisExcel
         private bool _useGetMultiple = true;
         private bool _skipRepeatedMessages = true;
         private bool _coalesceRealtimeUpdates = true;
+        private int _conflationMs;
         private string _defaultHost;
 
         private System.Timers.Timer _excelTimer;
@@ -463,13 +479,19 @@ namespace RedisExcel
             _useGetMultiple = config.UseGetMultiple;
             _skipRepeatedMessages = AppConfig.Current.SkipRepeatedMessages;
             _coalesceRealtimeUpdates = AppConfig.Current.CoalesceRealtimeUpdates;
+            // Explicit ConflationMs wins; absent falls back to the legacy
+            // CoalesceRealtimeUpdates boolean (true = the Excel tick window),
+            // so an unchanged config keeps its previous behaviour.
+            _conflationMs = Conflation.Resolve(
+                AppConfig.Current.ConflationMs, _coalesceRealtimeUpdates, (int)_excelUpdateRateMs);
             // in Realtime/Timer styles the mode is fixed; in Automatic it is recalculated from the message counter
             _realTimeUpdates = _excelUpdateStyle != ENUMExcelUpdateStyle.Timer;
 
             logger.Info(
                 "ServerStart: config " +
                 $"host={_defaultHost}, excelRate={_excelUpdateRateMs}ms, redisRate={_redisUpdateRateMs}ms, " +
-                $"style={_excelUpdateStyle}, threshold={_messageCounterThreshold}, useGetMultiple={_useGetMultiple}");
+                $"style={_excelUpdateStyle}, threshold={_messageCounterThreshold}, useGetMultiple={_useGetMultiple}, " +
+                $"conflationMs={_conflationMs}");
 
             _redisTimer = CreateTimer(_redisUpdateRateMs, "redis", OnRedisTick);
             _excelTimer = CreateTimer(_excelUpdateRateMs, "excel", OnExcelTick);
@@ -884,7 +906,7 @@ namespace RedisExcel
                 // cheap and guarantees delivery when Automatic style re-enables
                 // real-time after a burst.
                 foreach (var td in _polledTopics.Values.Concat(_subscribedTopics.Values))
-                    td.SendToExcelIfDirty();
+                    td.SendToExcelIfDirty(_conflationMs);
             }
             finally
             {

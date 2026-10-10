@@ -16,6 +16,7 @@
   <!-- Compiles the production sources directly: no Excel dependency for these files. -->
   <ItemGroup>
     <Compile Include="..\..\Config.cs" />
+    <Compile Include="..\..\Conflation.cs" />
     <Compile Include="..\..\RedisConnectionManager.cs" />
     <Compile Include="..\..\RedisSubscriptionManager.cs" />
     <Compile Include="..\..\RedisRuntime.cs" />

@@ -19,6 +19,7 @@
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
   "CoalesceRealtimeUpdates": true,
+  "ConflationMs": 200,
   "PublishDedupCacheSize": 10000,
   "SyncWrite": "fireforget",
   "AsyncWrites": false

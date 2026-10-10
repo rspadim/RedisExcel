@@ -29,6 +29,7 @@
   -->
   <ItemGroup>
     <Compile Include="..\..\Config.cs" Link="Production\Config.cs" />
+    <Compile Include="..\..\Conflation.cs" Link="Production\Conflation.cs" />
     <Compile Include="..\..\ExcelJson.cs" Link="Production\ExcelJson.cs" />
     <Compile Include="..\..\RedisConnectionManager.cs" Link="Production\RedisConnectionManager.cs" />
     <Compile Include="..\..\RedisResultFormatter.cs" Link="Production\RedisResultFormatter.cs" />

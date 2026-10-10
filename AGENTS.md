@@ -200,6 +200,14 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   disposed mid-execute) surfaces as a timeout instead of stalling a timer or
   the Excel thread forever. Covers RTD polled reads and the UDF batch
   `...Multiples` functions.
+- `CoalesceRealtimeUpdates`/`ConflationMs`: in real-time mode a topic that keeps
+  changing is pushed to Excel at most once per window with the latest value
+  (latest wins), instead of one push per message. The root `ConflationMs`
+  (ms, `0` = off, capped at 3600000) is the explicit window; when it is absent
+  the legacy boolean decides - `true` = the Excel tick interval (the pre-existing
+  behaviour), `false` = per-message. This is the main lever against screen
+  flicker and the recalculation cascade of dependent formulas on fast feeds; a
+  window below ~50-100 ms barely helps because the flush rides the Excel tick.
 - `RedisRuntime.ResetAfterAddInReload` supports a same-process add-in reload
   without reusing the previous managers.
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written

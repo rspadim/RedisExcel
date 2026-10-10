@@ -41,8 +41,15 @@ namespace RedisExcel
         public bool SkipRepeatedMessages { get; set; } = true;
         /// <summary>In real-time mode, send at most one update per topic per
         /// ExcelUpdateRateMs window instead of one per incoming message.
-        /// Default on (the more performant option).</summary>
+        /// Default on (the more performant option). Superseded by an explicit
+        /// <see cref="ConflationMs"/>.</summary>
         public bool CoalesceRealtimeUpdates { get; set; } = true;
+        /// <summary>Explicit real-time conflation window in milliseconds: the
+        /// latest value of a topic is pushed to Excel at most once per window
+        /// (0 = off, one push per message). When absent (null), the legacy
+        /// <see cref="CoalesceRealtimeUpdates"/> boolean decides. Sanitized to
+        /// [0, Conflation.MaxWindowMs].</summary>
+        public int? ConflationMs { get; set; }
         /// <summary>Maximum number of host/channel entries remembered by the
         /// PublishIfChanged deduplication cache (LRU). Default 10000.</summary>
         public int PublishDedupCacheSize { get; set; } = 10000;
@@ -166,6 +173,8 @@ namespace RedisExcel
             if (config.PublishDedupCacheSize <= 0) config.PublishDedupCacheSize = 10000;
             if (!Enum.IsDefined(typeof(ENUMExcelUpdateStyle), config.RTD.ExcelUpdateStyle))
                 config.RTD.ExcelUpdateStyle = ENUMExcelUpdateStyle.Automatic;
+            if (config.ConflationMs.HasValue)
+                config.ConflationMs = Conflation.Sanitize(config.ConflationMs.Value);
             config.SyncWrite = NormalizeSyncWrite(config.SyncWrite);
             return config;
         }

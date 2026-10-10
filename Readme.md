@@ -351,6 +351,7 @@ Functions to use directly in Excel cells:
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
   "CoalesceRealtimeUpdates": true,
+  "ConflationMs": 200,
   "PublishDedupCacheSize": 10000,
   "SyncWrite": "fireforget",
   "AsyncWrites": false
@@ -365,7 +366,10 @@ Functions to use directly in Excel cells:
 > `1000` ms (a loaded file uses `100` ms unless it sets the key explicitly).
 > `PublishDedupCacheSize` (default `10000`) caps the LRU cache used by
 > `RedisUDFChannelPublishIfChanged` to remember the last payload published per
-> host/channel.
+> host/channel. `ConflationMs` (unset by default) is the real-time delivery
+> window described in the table below; while a topic keeps changing Excel is
+> updated at most once per window with the latest value, which is the main
+> lever against screen flicker and the recalculation cascade on fast feeds.
 
 #### Other JSON keys
 
@@ -374,7 +378,8 @@ Keys that only appear in the sample above, with their code defaults:
 | Key | Default | Effect |
 | --- | ------- | ------ |
 | `SkipRepeatedMessages` | `true` | Skips identical consecutive payloads before decoding/delivering for literal `SUB` and `GET`/`HGET` polling (unchanged `HGETALL` hashes too). Patterns (`PSUB`) are never deduplicated because channels interleave. Set it to `false` for feeds that republish the same value as a liveness signal. |
-| `CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. |
+| `CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. Superseded by an explicit `ConflationMs`. |
+| `ConflationMs` | *(unset)* | Explicit real-time conflation window in milliseconds: while a topic keeps changing, Excel is updated at most once per window with the latest value (`0` = off, one push per message; capped at 3600000). When unset, `CoalesceRealtimeUpdates` decides as before, so existing files keep their behaviour. A window below ~50-100 ms barely helps because the flush rides the Excel tick. |
 | `MessageCounterThreshold` | `10000` | `Automatic` `ExcelUpdateStyle` burst threshold: above this many messages in the last second, real-time delivery is disabled and the Excel tick flushes dirty values; the 1s tick re-enables it when the rate drops. `<= 0` disables the switch. The sample's `1000` is just a choice - the code default is `10000`. |
 | `ExcelUpdateStyle` | `"Automatic"` | `Automatic`, `Timer` or `Realtime`. `Timer` never pushes per message (only the Excel tick flushes); `Realtime` always pushes; `Automatic` starts real-time and switches at the threshold. An undefined/unknown value falls back to `Automatic`. |
 | `UseGetMultiple` | `true` | Batches RTD `GET` topics of a host into a single `MGET` per polling tick. `false` polls each `GET` key in the per-host pipeline with `HGET`/`HGETALL` instead. |
