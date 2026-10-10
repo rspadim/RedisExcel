@@ -203,6 +203,26 @@ namespace RedisExcel
                 .Remove(new KeyValuePair<string, Lazy<ConnectionMultiplexer>>(host, lazy));
         }
 
+        /// <summary>
+        /// Drops memo entries whose window already elapsed, so the failure map
+        /// stays bounded by the hosts failing right now (a burst of distinct
+        /// dead hosts used to accumulate forever). Called when a failure is
+        /// recorded, which is exactly when the map can grow.
+        /// </summary>
+        private void PruneConnectFailures()
+        {
+            if (_recentConnectFailures.Count <= 64)
+                return; // small enough; a sweep per failure is not worth it
+            long now = DateTime.UtcNow.Ticks;
+            long maxAgeTicks = TimeSpan.FromMilliseconds(ConnectFailureMemoMs).Ticks;
+            foreach (var kv in _recentConnectFailures)
+            {
+                long age = now - kv.Value;
+                if (age < 0 || age >= maxAgeTicks)
+                    _recentConnectFailures.TryRemove(kv.Key, out _);
+            }
+        }
+
         public IDatabase GetDatabase(string host, RedisPool pool) =>
             GetCachedWrapper(_databases, host, pool, mux => mux.GetDatabase());
 
@@ -274,6 +294,7 @@ namespace RedisExcel
                 // Record the failure so a burst of calls within the memo window
                 // fails fast instead of repeating the connect stall.
                 _recentConnectFailures[PoolKey(host, pool)] = DateTime.UtcNow.Ticks;
+                PruneConnectFailures();
                 if (_shutdown)
                 {
                     // Shutdown won the race: Connect already refused/disposed the
@@ -324,8 +345,7 @@ namespace RedisExcel
         }
 
         private ConnectionMultiplexer Connect(string host, RedisPool pool)
-        {
-            if (_shutdown)
+        {            if (_shutdown)
                 throw ShuttingDown();
 
             string memoKey = PoolKey(host, pool);

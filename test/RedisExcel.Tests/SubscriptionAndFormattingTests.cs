@@ -1,5 +1,8 @@
 using Newtonsoft.Json.Linq;
 using StackExchange.Redis;
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using Xunit;
 
 namespace RedisExcel.Tests
@@ -228,6 +231,131 @@ namespace RedisExcel.Tests
             Assert.False(HasMarker(host, "c:c"));
             Assert.False(HasMarker(host, "c:d"));
             Assert.False(HasMarker(host, "c:a1"));
+        }
+    }
+
+    /// <summary>
+    /// Offline lifecycle tests for RedisSubscriptionManager's listener registry:
+    /// HasActiveSubscribers (the connection-manager eviction veto) and the
+    /// shared per-channel duplicate-suppression marker reset on a late join.
+    /// The registry is seeded through reflection with a real ChannelState whose
+    /// stored subscriber is a real (disconnected) ISubscriber, so Subscribe
+    /// takes its _subscriber fast path and returns without any Redis server.
+    /// The state's HandleMessage is driven through reflection, so no live
+    /// publish is needed either. No other test class touches these statics.
+    /// </summary>
+    public class RedisSubscriptionManagerLifecycleTests
+    {
+        // A refused local port: the connect fails fast and stays in-process,
+        // so the tests need no server.
+        private const string DeadHost = "127.0.0.1:1,abortConnect=False,connectTimeout=200,connectRetry=0";
+
+        private static readonly Type ManagerType = typeof(RedisSubscriptionManager);
+        private static readonly Type StateType =
+            ManagerType.GetNestedType("ChannelState", BindingFlags.NonPublic);
+        private static readonly ConstructorInfo StateCtor = StateType.GetConstructor(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            null, new[] { typeof(string), typeof(string), typeof(bool), typeof(bool) }, null);
+        private static readonly FieldInfo SubscriberField =
+            StateType.GetField("_subscriber", BindingFlags.Instance | BindingFlags.NonPublic);
+        private static readonly MethodInfo HandleMessageMethod =
+            StateType.GetMethod("HandleMessage", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        [Fact]
+        public void HasActiveSubscribers_TracksTheHostListeners()
+        {
+            var manager = new RedisSubscriptionManager(new RedisConnectionManager());
+            string host = "has-active-a";
+            string otherHost = "has-active-b";
+
+            var mux = ConnectionMultiplexer.Connect(DeadHost);
+            try
+            {
+                SeedState(manager, mux, host, "channel", pattern: false);
+                var token = manager.Subscribe(host, "channel", pattern: false, onMessage: _ => { });
+
+                // The veto the connection-manager eviction relies on: a host with
+                // a live listener must report true; another host false.
+                Assert.True(manager.HasActiveSubscribers(host));
+                Assert.False(manager.HasActiveSubscribers(otherHost));
+
+                token.Dispose();
+
+                Assert.False(manager.HasActiveSubscribers(host));
+                Assert.Equal(0, manager.ListenerCount);
+            }
+            finally
+            {
+                mux.Dispose();
+            }
+        }
+
+        [Fact]
+        public void LateJoin_ResetsSharedMarker_SoARejoiningListenerReceivesTheRepeat()
+        {
+            // (previously the marker suppressed it and the new cell stayed
+            // blank). The smoke suite covered this over the wire only; this
+            // drives the state directly and offline.
+            var manager = new RedisSubscriptionManager(new RedisConnectionManager());
+            string host = "late-join-a";
+            const string channel = "late-join-channel";
+            var receivedA = new List<string>();
+            var receivedB = new List<string>();
+
+            var mux = ConnectionMultiplexer.Connect(DeadHost);
+            try
+            {
+                object state = SeedState(manager, mux, host, channel, pattern: false);
+
+                var tokenA = manager.Subscribe(host, channel, pattern: false,
+                    onMessage: m => receivedA.Add(m));
+                Deliver(state, channel, "same");
+                Deliver(state, channel, "same"); // identical: suppressed
+                Assert.Single(receivedA);        // baseline: dedup is active
+
+                var tokenB = manager.Subscribe(host, channel, pattern: false,
+                    onMessage: m => receivedB.Add(m));
+                Deliver(state, channel, "same"); // the marker must have been reset by the join
+
+                // Without the reset-on-join this third deliverable is suppressed
+                // and the rejoining listener never receives the payload.
+                Assert.Equal(2, receivedA.Count);
+                Assert.Equal("same", receivedA[1]);
+                Assert.Single(receivedB);
+                Assert.Equal("same", receivedB[0]);
+
+                tokenA.Dispose();
+                tokenB.Dispose();
+            }
+            finally
+            {
+                mux.Dispose();
+            }
+        }
+
+        private static object Channels(RedisSubscriptionManager manager) =>
+            ManagerType.GetField("_channels", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(manager);
+
+        private static object SeedState(RedisSubscriptionManager manager, ConnectionMultiplexer mux,
+            string host, string channel, bool pattern)
+        {
+            object state = StateCtor.Invoke(new object[] { host, channel, pattern, true });
+            SubscriberField.SetValue(state, mux.GetSubscriber());
+            object channels = Channels(manager);
+            channels.GetType().GetMethod("TryAdd").Invoke(channels, new object[]
+            {
+                RedisSubscriptionManager.MakeKey(host, channel, pattern), state
+            });
+            return state;
+        }
+
+        private static void Deliver(object state, string channel, string payload)
+        {
+            HandleMessageMethod.Invoke(state, new object[]
+            {
+                new RedisChannel(channel, RedisChannel.PatternMode.Literal),
+                (RedisValue)payload
+            });
         }
     }
 }

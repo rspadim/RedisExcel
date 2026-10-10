@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using ExcelDna.Integration;
 using Xunit;
 
@@ -242,6 +243,61 @@ namespace RedisExcel.Tests
         {
             var result = RedisUDF.RedisUDFExpire("k", 3e18, ExcelMissing.Value);
             Assert.Equal("Error: ttl is out of range", result);
+        }
+
+        [Theory]
+        [InlineData(0)]
+        [InlineData(-1)]
+        public void Expire_NonPositiveTtl_ReturnsTtlMustBePositive(int ttl)
+        {
+            // Mirrors SetEx_NonPositiveTtl: the ttl <= 0 guard must reject 0 and
+            // negative values with the exact message before any Redis I/O (no
+            // server here). SetEx was pinned; RedisUDFExpire was not.
+            var result = RedisUDF.RedisUDFExpire("k", ttl, ExcelMissing.Value);
+            Assert.Equal("Error: ttl must be a positive number of seconds", result);
+        }
+
+        [Fact]
+        public void SetKVPair_ThreeByTwoRange_IsThreeVerticalPairs()
+        {
+            // A 3x2 range is three vertical pairs (key, value) per row. Only the
+            // error shapes (1x3) were pinned; this covers the row-by-row branch
+            // of FlattenPairRange for more than one pair.
+            var pairs = FlattenPairRange(new object[,]
+            {
+                { "k1", "v1" },
+                { "k2", "v2" },
+                { "k3", "v3" }
+            });
+
+            Assert.Equal(3, pairs.Count);
+            Assert.Equal("k1", pairs[0].Key);
+            Assert.Equal("v1", pairs[0].Value);
+            Assert.Equal("k2", pairs[1].Key);
+            Assert.Equal("v2", pairs[1].Value);
+            Assert.Equal("k3", pairs[2].Key);
+            Assert.Equal("v3", pairs[2].Value);
+        }
+
+        [Fact]
+        public void SetKVPair_OneByThreeRange_StillReturnsRangeShapeError()
+        {
+            // Keep the explicit 1x3 error case next to the 3x2 success case:
+            // neither 2 columns nor 2 rows.
+            var result = RedisUDF.RedisUDFSetKVPair(
+                new object[,] { { "k1", "v1", "extra" } },
+                ExcelMissing.Value);
+            Assert.Equal("Error: expected a range with 2 columns or 2 rows", result);
+        }
+
+        private static List<KeyValuePair<object, object>> FlattenPairRange(object[,] range)
+        {
+            // The pair-shape helper is private; drive the exact production code
+            // the SetKVPair/HashSetMultiple paths use.
+            var method = typeof(RedisUDF).GetMethod(
+                "FlattenPairRange", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(method);
+            return (List<KeyValuePair<object, object>>)method.Invoke(null, new object[] { range });
         }
 
         [Fact]

@@ -74,7 +74,23 @@ namespace RedisExcel
             => _channelEpochs.TryGetValue(key, out var epoch) ? epoch : 0;
 
         private static long BumpChannelEpoch(string key)
-            => _channelEpochs.AddOrUpdate(key, 1, (_, current) => current + 1);
+        {
+            var epochs = _channelEpochs;
+            long epoch = epochs.AddOrUpdate(key, 1, (_, current) => current + 1);
+            // Opportunistic prune: the epoch map is only read to detect "an
+            // unsubscribe/reset raced my install" while a listener exists, so an
+            // entry for a channel with no live listener is dead weight. Bounded
+            // (one sweep per 1024 bumps) and cheap.
+            if ((epoch & 1023) == 0)
+            {
+                foreach (var kv in epochs)
+                {
+                    if (!_channelListeners.ContainsKey(kv.Key))
+                        epochs.TryRemove(kv.Key, out _);
+                }
+            }
+            return epoch;
+        }
 
         static RedisUDF()
         {

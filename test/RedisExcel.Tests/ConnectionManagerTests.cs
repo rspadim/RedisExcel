@@ -86,6 +86,87 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void LiveConnectionCount_MaterializedPool_HonorsTheShutdownFence()
+        {
+            var manager = new RedisConnectionManager();
+
+            // A real (disconnected) multiplexer materialized in the UDF pool:
+            // AbortOnConnectFail=false keeps the connect from throwing, so the
+            // entry is created and counted.
+            manager.GetConnection(DeadLocalHost, RedisPool.UdfData);
+
+            Assert.Equal(1, manager.LiveConnectionCount());
+            Assert.Equal(1, manager.LiveUdfConnectionCount());
+            Assert.Equal(0, manager.LiveRtdConnectionCount());
+
+            SetShutdown(manager, true);
+
+            // The fence stands in for the per-entry IsDisposed check: while it is
+            // set the counters report zero even though the pool still holds the
+            // multiplexer. A suppressed `_shutdown ? 0 : ...` must go red here.
+            Assert.Equal(0, manager.LiveConnectionCount());
+            Assert.Equal(0, manager.LiveUdfConnectionCount());
+            Assert.Equal(0, manager.LiveRtdConnectionCount());
+
+            manager.Shutdown(); // close the materialized multiplexer (no leak)
+        }
+
+        // ---------------------------------------------------------------
+        // Post-create shutdown fence in Connect. The fence is only reachable
+        // on the private Connect method offline (the public path needs a real
+        // in-flight connect), so it is invoked through reflection.
+        // ---------------------------------------------------------------
+
+        [Fact]
+        public void Connect_ShutdownFence_PreSet_RefusesWithoutConnecting()
+        {
+            var manager = new RedisConnectionManager();
+            SetShutdown(manager, true);
+
+            var ex = Assert.Throws<TargetInvocationException>(
+                () => ConnectMethod.Invoke(manager, new object[] { DeadLocalHost, RedisPool.UdfData }));
+
+            var inner = Assert.IsType<InvalidOperationException>(ex.InnerException);
+            Assert.Equal("RedisConnectionManager is shutting down", inner.Message);
+        }
+
+        [Fact]
+        public void Connect_ShutdownSetWhileInFlight_ThrowsInsteadOfReturningTheConnection()
+        {
+            var manager = new RedisConnectionManager();
+            Exception thrown = null;
+            var started = new ManualResetEventSlim(false);
+            var thread = new Thread(() =>
+            {
+                started.Set();
+                try
+                {
+                    ConnectMethod.Invoke(manager, new object[] { UnreachableHost, RedisPool.UdfData });
+                }
+                catch (Exception ex)
+                {
+                    thrown = ex;
+                }
+            });
+
+            thread.Start();
+            Assert.True(started.Wait(5000));
+            // The connect is parked on ConnectionMultiplexer.Connect for the
+            // unreachable host (connectTimeout=1000ms): trip the post-create
+            // fence while it is in flight, so the in-flight connect must dispose
+            // its multiplexer and fail the caller.
+            Thread.Sleep(250);
+            SetShutdown(manager, true);
+            Assert.True(thread.Join(15000), "the in-flight connect never completed after the shutdown fence was set");
+
+            Assert.NotNull(thrown); // a deleted fence returns the connection instead of throwing
+            var inner = Assert.IsType<InvalidOperationException>(
+                ((TargetInvocationException)thrown).InnerException);
+            Assert.Equal("RedisConnectionManager is shutting down", inner.Message);
+            Assert.Equal(0, manager.UdfConnectionCount); // no entry published by the refused connect
+        }
+
+        [Fact]
         public void ParseOptions_MalformedPort_ThrowsInvalidHost()
         {
             var ex = Assert.Throws<ArgumentException>(
@@ -274,6 +355,21 @@ namespace RedisExcel.Tests
             (int)typeof(RedisConnectionManager)
                 .GetField("MaxCachedConnectionsPerPool", BindingFlags.Static | BindingFlags.NonPublic)
                 .GetRawConstantValue();
+
+        // A refused local port: the connect fails fast without leaving the
+        // process, so no server is needed for the materialized-pool tests.
+        private const string DeadLocalHost = "127.0.0.1:1,connectTimeout=500,connectRetry=0";
+        // RFC 5737 TEST-NET-1 address: connect parks until the 1000ms timeout.
+        private const string UnreachableHost = "10.255.255.1:6379,connectTimeout=1000,connectRetry=1";
+
+        private static MethodInfo ConnectMethod =>
+            typeof(RedisConnectionManager)
+                .GetMethod("Connect", BindingFlags.Instance | BindingFlags.NonPublic);
+
+        private static void SetShutdown(RedisConnectionManager manager, bool value)
+            => typeof(RedisConnectionManager)
+                .GetField("_shutdown", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(manager, value);
 
         private static ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> UdfPool(RedisConnectionManager manager)
             => (ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>>)ReadField(manager, "_udfData");
