@@ -404,7 +404,22 @@ namespace RedisExcel
             {
                 logger.Info($"RedisConnect: connection restored ({pool}) host={host}");
             };
-            _recentConnectFailures.TryRemove(memoKey, out _);
+            // Dead-host fast-fail memo. With AbortOnConnectFail=false the connect
+            // returns a DISCONNECTED multiplexer instead of throwing, so the
+            // GetConnection failure-catch (where the memo used to be recorded)
+            // never ran and every later call paid the full SyncTimeout again - K
+            // dead-host cells stalled the Excel thread for K x timeout. Record the
+            // failure here, where the health of the fresh multiplexer is known.
+            if (mux.IsConnected)
+            {
+                _recentConnectFailures.TryRemove(memoKey, out _);
+            }
+            else
+            {
+                _recentConnectFailures[memoKey] = DateTime.UtcNow.Ticks;
+                PruneConnectFailures();
+                logger.Info($"RedisConnect: {pool} connection to {host} is not connected; failing fast for {ConnectFailureMemoMs}ms");
+            }
             return mux;
         }
 
