@@ -50,6 +50,23 @@ namespace RedisExcel
         // are evicted and disposed; connected multiplexers are never evicted.
         private const int MaxCachedConnectionsPerPool = 512;
 
+        // Idle-down TTL: a multiplexer that stays DISCONNECTED for this long is
+        // closed and dropped from the cache, so a session full of mistyped or
+        // gone-away hosts cannot keep growing memory (each entry keeps reconnect
+        // tasks, buffers and sockets). Connected entries are never touched: they
+        // cost only the tiny wrapper. Reuse/refreshes are cheap, so a
+        // still-wanted host simply reconnects on its next call.
+        private const int DownHostTtlMs = 300000; // 5 minutes
+
+        // Per (pool|host) last time the entry was observed DISCONNECTED (Utc
+        // ticks). Cleared whenever the multiplexer connects (call or reconnect).
+        private readonly ConcurrentDictionary<string, long> _downSinceTicks =
+            new ConcurrentDictionary<string, long>();
+
+        // How often a full down-host sweep may run (observed from the call path).
+        private const int DownHostSweepIntervalMs = 60000;
+        private long _lastDownSweepTicks;
+
         // Short negative cache of connect failures per (host, pool): a burst of
         // N SUB topics / volatile UDF reads against a dead host used to pay
         // N x ConnectTimeout on the Excel thread; the first failure now makes
@@ -331,6 +348,9 @@ namespace RedisExcel
             }
             if (dictionary.Count > MaxCachedConnectionsPerPool)
                 EvictDisconnectedConnections(dictionary, host, pool);
+            if (connection.IsConnected)
+                _downSinceTicks.TryRemove(PoolKey(host, pool), out _); // healthy: clear the down clock
+            SweepDownHostsIfDue();
             return connection;
         }
 
@@ -341,6 +361,70 @@ namespace RedisExcel
                 case RedisPool.RtdData: return _rtdData;
                 case RedisPool.RtdSub: return _rtdSub;
                 default: return _udfData;
+            }
+        }
+
+        /// <summary>
+        /// Closes and drops multiplexers that have stayed disconnected for
+        /// <see cref="DownHostTtlMs"/>. Runs at most once per
+        /// <see cref="DownHostSweepIntervalMs"/> (driven by the call path, never a
+        /// timer), and never touches a connected entry or a host with live
+        /// subscribers (the same veto as eviction).
+        /// </summary>
+        private void SweepDownHostsIfDue()
+        {
+            long now = DateTime.UtcNow.Ticks;
+            long last = Interlocked.Read(ref _lastDownSweepTicks);
+            if (last != 0 && now - last < DownHostSweepIntervalMs * TimeSpan.TicksPerMillisecond)
+                return;
+            if (Interlocked.CompareExchange(ref _lastDownSweepTicks, now, last) != last)
+                return; // another caller is already sweeping
+            if (_shutdown)
+                return;
+            long ttlTicks = DownHostTtlMs * TimeSpan.TicksPerMillisecond;
+
+            foreach (var pool in new[] { RedisPool.RtdData, RedisPool.RtdSub, RedisPool.UdfData })
+            {
+                var dictionary = DictionaryFor(pool);
+                foreach (var kv in dictionary)
+                {
+                    if (_shutdown)
+                        return;
+                    string memoKey = PoolKey(kv.Key, pool);
+                    if (!kv.Value.IsValueCreated)
+                        continue; // nothing materialized; the eviction path reclaims those
+                    ConnectionMultiplexer mux;
+                    try
+                    {
+                        mux = kv.Value.Value; // IsValueCreated: cannot block on a connect
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+                    if (mux.IsConnected)
+                    {
+                        _downSinceTicks.TryRemove(memoKey, out _); // healthy again
+                        continue;
+                    }
+                    var protection = _hostProtection;
+                    if (protection != null && protection(kv.Key))
+                        continue; // live subscribers: never orphan a channel
+                    long since = _downSinceTicks.GetOrAdd(memoKey, now);
+                    if (now - since < ttlTicks)
+                        continue; // down, but not for long enough yet
+                    if (RemoveConnectionEntry(dictionary, kv.Key, kv.Value))
+                    {
+                        DisposeConnection(mux,
+                            $"GetConnection: error disposing idle-down connection host={kv.Key}",
+                            closeFirst: true, allowCommandsToComplete: false);
+                        _databases.TryRemove(memoKey, out _);
+                        _subscribers.TryRemove(memoKey, out _);
+                        _downSinceTicks.TryRemove(memoKey, out _);
+                        _recentConnectFailures.TryRemove(memoKey, out _);
+                        logger.Info($"GetConnection: dropped idle-down connection host={kv.Key} (down for over {DownHostTtlMs / 1000}s)");
+                    }
+                }
             }
         }
 
@@ -462,6 +546,7 @@ namespace RedisExcel
             _databases.Clear();
             _subscribers.Clear();
             _recentConnectFailures.Clear();
+            _downSinceTicks.Clear();
             foreach (var dictionary in new[] { _rtdData, _rtdSub, _udfData })
             {
                 foreach (var kv in dictionary)
