@@ -7,8 +7,12 @@ namespace RedisExcel.Tests
 {
     /// <summary>
     /// UDF argument guards that must reject invalid input before any Redis I/O;
-    /// these tests run offline, with no Redis server involved.
+    /// these tests run offline, with no Redis server involved. Shares the
+    /// write-mode collection with RedisUdfAsyncTests: its test seam flips the
+    /// process-wide AsyncWrites override, and these wrappers go through the
+    /// same dispatch, so the two classes must never run in parallel.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class UdfArgumentValidationTests
     {
         [Fact]

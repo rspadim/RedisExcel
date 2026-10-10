@@ -15,9 +15,10 @@ Coverage includes the JSON conversions, config load/sanitize, the
 connection/subscription managers, the publish-dedup LRU cache, `TickGate`, the
 update-check helpers, the `...NonVolatile` signature-parity reflection test,
 the write-mode dispatch (`SyncWrite`/`AsyncWrites` parsing, per-host
-serialization, no host overlap and the synchronous path) and the offline
-`RedisWriteObservable` tests (single delivery, error text, one-shot
-subscribe, no-op dispose, synchronous enqueue).
+serialization, no host overlap, the synchronous path and the caller
+refusal/fallback) and the offline `RedisWriteObservable` tests (single
+delivery, error text, OnNext-throw still completed, one-shot subscribe with
+duplicate delivery, no-op dispose while queued, synchronous enqueue).
 
 ## 2. Smoke tests (requires Redis, no Excel)
 

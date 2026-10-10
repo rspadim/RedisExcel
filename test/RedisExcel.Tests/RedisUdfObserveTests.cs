@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using ExcelDna.Integration;
 using Xunit;
 
@@ -269,19 +270,69 @@ namespace RedisExcel.Tests
             }
 
             // The one-shot guard: a duplicate Subscribe returns a disposable
-            // (Excel-DNA always expects one) but must never enqueue again.
+            // (Excel-DNA always expects one) and never enqueues again, but the
+            // second observer still receives the queued result exactly once.
             IDisposable duplicate = observable.Subscribe(second);
             Assert.NotNull(duplicate);
             duplicate.Dispose();
+
+            Assert.True(second.WaitCompleted(), "The duplicate subscription never completed.");
 
             Assert.True(
                 SpinWait.SpinUntil(() => !RedisUdfAsync.HasQueueForTests(host), 5000),
                 "The idle per-host queue was not removed.");
 
             Assert.Equal(1, Volatile.Read(ref runs));
-            Assert.Equal(0, second.CompletedCount);
-            Assert.Empty(second.Values);
+            Assert.Equal(1, second.CompletedCount);
+            Assert.Equal(new object[] { 1 }, second.Values);
             Assert.Empty(second.Errors);
+        }
+
+        [Fact]
+        public async Task Subscribe_ConcurrentDuplicates_EnqueueOnceAndDeliverToAll()
+        {
+            string host = UniqueHost();
+            int runs = 0;
+            var observable = new RedisWriteObservable(host, () =>
+            {
+                Interlocked.Increment(ref runs);
+                return (object)7;
+            });
+
+            const int subscribers = 8;
+            var observers = new RecordingObserver[subscribers];
+            var ready = new ManualResetEventSlim(false);
+            var tasks = new List<Task>();
+
+            for (int i = 0; i < subscribers; i++)
+            {
+                int index = i;
+                observers[index] = new RecordingObserver();
+                tasks.Add(Task.Run(() =>
+                {
+                    ready.Wait();
+                    observable.Subscribe(observers[index]).Dispose();
+                }));
+            }
+
+            ready.Set();
+            await Task.WhenAll(tasks);
+
+            // The Interlocked guard must admit exactly one enqueue; every
+            // racing subscriber still receives the same single result.
+            Assert.True(
+                SpinWait.SpinUntil(() => !RedisUdfAsync.HasQueueForTests(host), 5000),
+                "The idle per-host queue was not removed.");
+
+            foreach (RecordingObserver observer in observers)
+            {
+                Assert.True(observer.WaitCompleted(), "A racing subscription never completed.");
+                Assert.Equal(1, observer.CompletedCount);
+                Assert.Equal(new object[] { 7 }, observer.Values);
+                Assert.Empty(observer.Errors);
+            }
+
+            Assert.Equal(1, Volatile.Read(ref runs));
         }
 
         [Fact]

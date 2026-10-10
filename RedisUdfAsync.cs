@@ -63,7 +63,8 @@ namespace RedisExcel
         /// <summary>
         /// Test-only override of <see cref="AppConfig.AsyncWrites"/> (null =
         /// use the process configuration). The offline unit tests pin this to
-        /// false so they exercise the sync path without touching Excel async.
+        /// false (sync-path tests) or true (the offline async cases: caller
+        /// refusal and invalid-host fallback) without touching Excel async.
         /// </summary>
 #pragma warning disable 0649 // assigned only by the linked unit test sources
         internal static bool? AsyncWritesOverrideForTests;
@@ -278,7 +279,8 @@ namespace RedisExcel
     /// the topic only disposes this subscription; the returned disposable is a
     /// no-op, so a queued or executing write still runs to completion in
     /// per-host order (same semantics as the previous thread-pool delegate).
-    /// A second Subscribe on the same instance is ignored (defensive guard;
+    /// A duplicate Subscribe on the same instance never enqueues the write
+    /// again and is still delivered the same queued result (defensive path;
     /// Excel-DNA registers one observable per call).
     /// </summary>
     internal sealed class RedisWriteObservable : IExcelObservable
@@ -299,10 +301,13 @@ namespace RedisExcel
         private readonly string _host;
         private readonly Func<object> _work;
 
-        // One-shot guard: Excel-DNA never subscribes twice for one registered
-        // call, but a duplicate Subscribe must never enqueue the write again
-        // (its own ThreadPoolDelegateObservable threw in that case).
+        // One-shot enqueue guard: Excel-DNA never subscribes twice for one
+        // registered call, but a duplicate Subscribe must never enqueue the
+        // write again (its own ThreadPoolDelegateObservable threw in that
+        // case). _queued publishes the single queued item so a duplicate
+        // Subscribe is still delivered the same result instead of starving.
         private int _subscribed;
+        private Task<object> _queued;
 
         internal RedisWriteObservable(string host, Func<object> work)
         {
@@ -312,34 +317,59 @@ namespace RedisExcel
 
         public IDisposable Subscribe(IExcelObserver observer)
         {
-            if (Interlocked.CompareExchange(ref _subscribed, 1, 0) != 0)
+            Task<object> queued = Volatile.Read(ref _queued);
+            if (queued == null)
             {
-                logger.Trace("RedisWriteObservable: duplicate Subscribe ignored (single subscription only)");
-                return NoOpDisposable;
+                if (Interlocked.CompareExchange(ref _subscribed, 1, 0) == 0)
+                {
+                    try
+                    {
+                        // Enqueue synchronously HERE: Excel-DNA calls Subscribe
+                        // during the RTD ConnectData on the Excel thread, so
+                        // same-host writes enter the FIFO in formula evaluation
+                        // order. The delivery runs only when the item reaches
+                        // the head of the queue.
+                        queued = RedisUdfAsync.Enqueue(_host, _work);
+                        Volatile.Write(ref _queued, queued);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Enqueue converts work failures to "Error: ..." task
+                        // results and never throws once it schedules the item;
+                        // this guards truly unexpected failures, so reporting
+                        // the failure cannot duplicate a write.
+                        logger.Error(ex, "RedisWriteObservable: enqueue failed");
+                        DeliverAndComplete(observer, "Error: " + ex.Message);
+                        return NoOpDisposable;
+                    }
+                }
+                else
+                {
+                    // The first Subscribe is still publishing the queued item;
+                    // wait briefly (this duplicate path is already exotic).
+                    SpinWait.SpinUntil(() => Volatile.Read(ref _queued) != null, 2000);
+                    queued = Volatile.Read(ref _queued);
+                    if (queued == null)
+                    {
+                        logger.Warn("RedisWriteObservable: duplicate Subscribe before the write was queued");
+                        DeliverAndComplete(observer, "Error: duplicate async registration");
+                        return NoOpDisposable;
+                    }
+                }
+            }
+            else
+            {
+                // Duplicate Subscribe for an already-registered call: never
+                // enqueue again, but still deliver the same queued result once.
+                logger.Warn("RedisWriteObservable: duplicate Subscribe; delivering the same queued result");
             }
 
-            try
-            {
-                // Enqueue synchronously HERE: Excel-DNA calls Subscribe during
-                // the RTD ConnectData on the Excel thread, so same-host writes
-                // enter the FIFO in formula evaluation order. The continuation
-                // runs only when the item reaches the head of the queue.
-                RedisUdfAsync.Enqueue(_host, _work).ContinueWith(
-                    OnQueuedCompleted,
-                    observer,
-                    CancellationToken.None,
-                    TaskContinuationOptions.None,
-                    TaskScheduler.Default);
-            }
-            catch (Exception ex)
-            {
-                // Enqueue converts work failures to "Error: ..." task results
-                // and never throws once it schedules the item; this guards
-                // truly unexpected failures, so reporting the failure cannot
-                // duplicate a write.
-                logger.Error(ex, "RedisWriteObservable: enqueue failed");
-                DeliverAndComplete(observer, "Error: " + ex.Message);
-            }
+            queued.ContinueWith(
+                OnQueuedCompleted,
+                observer,
+                CancellationToken.None,
+                TaskContinuationOptions.RunContinuationsAsynchronously,
+                TaskScheduler.Default);
 
             // No-op: a queued/executing write completes even if Excel detaches
             // the topic before the result arrives.

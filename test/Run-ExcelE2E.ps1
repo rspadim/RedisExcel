@@ -8,8 +8,9 @@ server, including the v1.1.0 Pub/Sub regression scenario:
 
   1. Loads the packed XLL into Excel (RegisterXLL).
   2. Creates the UDF/RTD test sheets and saves test\RedisExcel.Test.xlsx
-     (only for local hosts; remote hosts are saved to %TEMP% so the host is
-     never committed to the repository).
+     (only for local hosts without -AsyncWrites; remote hosts and async runs
+     are saved to %TEMP% so the host never lands in the repository and the
+     async scratch cells stay out of the committed sample).
   3. Asserts values (SET/GET/EXISTS/TTL/JSON/HASH, RTD GET/HGET/HGETALL/SUB/PSUB).
   4. Opens a COPY of the workbook, publishes messages, closes the copy and
      verifies the original workbook keeps receiving (the reported bug).
@@ -100,6 +101,7 @@ $script:RedisPrefix = @()
 $script:RedisArgs = @()
 $script:Excel = $null
 $script:Workbook = $null
+$script:ExcelPidsBefore = @()
 
 # ------------------------------------------------------------- write mode ----
 # v1.3.0 SyncWrite/AsyncWrites (written to RedisExcel.json before Excel starts;
@@ -173,15 +175,51 @@ function Resolve-RedisCli {
 
 function Test-ComBusyError($ErrorRecord) {
     $hr = $ErrorRecord.Exception.HResult
-    return ($hr -eq -2147418111 -or $hr -eq -2147417846)
+    # RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER and the generic Excel
+    # rejection 0x800A03EC (seen from CalculateFull/CalculateBeforeSave while
+    # Excel is busy with pending async work) are all transient here.
+    return ($hr -eq -2147418111 -or $hr -eq -2147417846 -or $hr -eq -2146827284)
 }
 
 # Some security products intermittently break Excel COM property sets with a
-# bogus InvalidCastException (e.g. "cannot convert Int32 to String"). Those
-# failures are transient; retry them like a busy Excel.
+# bogus InvalidCastException (e.g. "cannot convert Int32 to String"), and under
+# load an interop call can come back null mid-expression ("You cannot call a
+# method on a null-valued expression"). Those failures are transient; retry
+# them like a busy Excel (a persistent null still surfaces after the retries).
 function Test-RetryableError($ErrorRecord) {
     if ($ErrorRecord.Exception -is [System.InvalidCastException]) { return $true }
+    if ($ErrorRecord.FullyQualifiedErrorId -like 'InvokeMethodOnNull*') { return $true }
     return (Test-ComBusyError $ErrorRecord)
+}
+
+# Reports the registered antivirus products through the Windows Security
+# Center. Security software is the top cause of intermittent Excel COM
+# failures (see AGENTS.md), so the status is printed before Excel starts: a
+# failed or flaky run is then explained immediately. Best effort - where
+# SecurityCenter2 is unavailable (some domain policies) that is reported too,
+# never fatal.
+function Get-AntivirusStatus {
+    try {
+        return @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | ForEach-Object {
+            $state = [int]$_.productState
+            # The vendor-specific enabled/snoozed code lives in the 0x?000
+            # nibble (0 = off; 1..3 = on/snoozed variants; e.g. Kaspersky
+            # reports 0x42000 while active). The raw state is printed too.
+            $level = ($state -shr 12) -band 0xF
+            [pscustomobject]@{
+                Name = [string]$_.displayName
+                Active = ($level -ge 1)
+                StateHex = ('0x{0:X}' -f $state)
+            }
+        })
+    }
+    catch {
+        return @([pscustomobject]@{
+            Name = "unavailable (" + $_.Exception.Message + ")"
+            Active = $false
+            StateHex = ''
+        })
+    }
 }
 
 function Invoke-ExcelAction([scriptblock]$Action, [int]$Retries = 40) {
@@ -439,10 +477,29 @@ $configJson = '{"SyncWrite":"' + $SyncWrite + '","AsyncWrites":' + $asyncJson + 
 Write-Host ("Sync write: {0} (AsyncWrites: {1})" -f $SyncWrite, $AsyncWrites.IsPresent)
 Write-Host ("Config    : {0} -> {1}" -f $configPath, $configJson) -ForegroundColor DarkGray
 
+# AV/EDR visibility: report the registered antivirus products before touching
+# Excel, so a flaky run in a protected environment is identified immediately.
+$avProducts = Get-AntivirusStatus
+if ($avProducts.Count -eq 0) {
+    Write-Host 'ENV antivirus: none reported by Windows Security Center' -ForegroundColor DarkGray
+}
+foreach ($av in $avProducts) {
+    if ($av.Active) {
+        Write-Host ("WARNING antivirus: {0} appears active ({1}) - Excel COM automation may fail intermittently; add an EXCEL.EXE exception when possible." -f $av.Name, $av.StateHex) -ForegroundColor Yellow
+    }
+    else {
+        Write-Host ("ENV antivirus: {0} is not active ({1})" -f $av.Name, $av.StateHex) -ForegroundColor DarkGray
+    }
+}
+
 $udf = $null
 $rtd = $null
 
 try {
+    # Remember which EXCEL.EXE processes already existed so the cleanup waits
+    # only for THIS run's hidden instance (never the user's own Excel).
+    $script:ExcelPidsBefore = @(Get-Process EXCEL -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })
+
     $script:Excel = New-Object -ComObject Excel.Application
     $script:Excel.Visible = $false
     $script:Excel.DisplayAlerts = $false
@@ -711,8 +768,10 @@ try {
             # top-down, so a future check reaching this block would silently
             # overwrite these labels/formulas.
             $asyncBlockEmpty = $true
-            foreach ($addr in @('A50', 'B50', 'A51', 'B51', 'A52', 'B52', 'A53', 'B53', 'F53')) {
-                if (-not [string]::IsNullOrWhiteSpace((Get-CellText $udf $addr))) { $asyncBlockEmpty = $false }
+            foreach ($row in 50..53) {
+                foreach ($col in 'A', 'B', 'C', 'D', 'E', 'F') {
+                    if (-not [string]::IsNullOrWhiteSpace((Get-CellText $udf "$col$row"))) { $asyncBlockEmpty = $false }
+                }
             }
             Check $asyncBlockEmpty 'async-mode check block (rows 50-53) is unused'
 
@@ -755,15 +814,20 @@ try {
             Set-Formula $udf 'B51' $dupFormula
             Set-Formula $udf 'B52' $dupFormula
             $dupOk = Wait-RedisValue @('LLEN', "$KeyPrefix.asyncdup") '2' 10
-            # Re-read after settling: a late duplicate write would drift the
-            # final length from 2.
+            # Re-read twice after settling: a late duplicate write would drift
+            # the final length from 2 (two equal reads one second apart).
             Start-Sleep -Milliseconds 300
             $dupLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
-            $dupOk = $dupOk -and ($dupLen -eq '2')
+            $dupLen2 = $dupLen
+            if ($dupLen -eq '2') {
+                Start-Sleep -Milliseconds 1000
+                $dupLen2 = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
+            }
+            $dupOk = $dupOk -and ($dupLen -eq '2') -and ($dupLen2 -eq '2')
             if (-not $dupOk) {
                 Write-Host ("      DIAG asyncdup: B51='" + (Get-CellText $udf 'B51') + "' B52='" + (Get-CellText $udf 'B52') + "'") -ForegroundColor DarkGray
             }
-            Check $dupOk ("Two cells with the identical async formula both wrote (LLEN='" + $dupLen + "')")
+            Check $dupOk ("Two cells with the identical async formula both wrote (LLEN='" + $dupLen + "/" + $dupLen2 + "')")
 
             # (C) Argument change dispatches a new write (row 53), back in
             # normal (automatic) calculation mode: the F53 edit must
@@ -854,7 +918,7 @@ try {
         # sample: keep both in %TEMP%.
         Write-Host "The workbook will not be saved into the repository (remote host or -AsyncWrites)." -ForegroundColor DarkGray
     }
-    Remove-Item $tempOut -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tempOut -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveAs($tempOut, 51) } | Out-Null
     if ($tempOut -ne $outPath) {
         # Stage next to the target and replace with Move-Item, so the committed
@@ -875,7 +939,7 @@ try {
     # The reported bug: copying/closing a workbook silently killed the Pub/Sub
     # subscriptions of the other workbook using the same channel.
     $copyPath = Join-Path $env:TEMP 'RedisExcel.Test.Copy.xlsx'
-    Remove-Item $copyPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $copyPath -Force -ErrorAction SilentlyContinue
     Invoke-ExcelAction { $script:Workbook.SaveCopyAs($copyPath) } | Out-Null
     # Workbooks.Open can return null transiently right after SaveCopyAs (the
     # file may still be scanned/locked); retry before giving up and report the
@@ -893,7 +957,26 @@ try {
         $copyInfo = Get-Item $copyPath -ErrorAction SilentlyContinue
         throw ("copy workbook did not open: exists=" + (Test-Path $copyPath) + " size=" + $(if ($copyInfo) { $copyInfo.Length } else { 'n/a' }))
     }
-    $copyRtd = $copy.Worksheets.Item('RTD')
+    # The workbook object can come back before its object model answers, and a
+    # busy Excel can reject the call (RPC_E_CALL_REJECTED); keep asking until
+    # the RTD sheet resolves instead of aborting the whole run.
+    $copyRtd = $null
+    $copyRtdTries = 0
+    $copyRtdDeadline = (Get-Date).AddSeconds(30)
+    while (-not $copyRtd -and (Get-Date) -lt $copyRtdDeadline) {
+        $copyRtdTries++
+        try { $copyRtd = Invoke-ExcelAction { $copy.Worksheets.Item('RTD') } }
+        catch { $copyRtd = $null }
+        if (-not $copyRtd) {
+            if ($copyRtdTries -eq 1) {
+                Write-Host '      DIAG copy RTD sheet not ready; retrying...' -ForegroundColor DarkGray
+            }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+    if (-not $copyRtd) {
+        throw "copy workbook has no usable RTD sheet (Worksheets.Item('RTD') never answered)"
+    }
 
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-1' $rtd 'B7' 'copy-1')        'original received copy-1'
     Check (Publish-Until-Cell "$KeyPrefix.rtd" 'copy-1' $copyRtd 'B7' 'copy-1')    'copy received copy-1'
@@ -945,6 +1028,25 @@ finally {
             [System.Runtime.InteropServices.Marshal]::ReleaseComObject($script:Excel) | Out-Null
             [GC]::Collect(); [GC]::WaitForPendingFinalizers()
         }
+
+        # Wait for this run's hidden Excel to actually exit before returning: a
+        # lingering instance (plus antivirus scanning its teardown) makes a
+        # back-to-back run slow enough to trip the COM retries. Never kill
+        # EXCEL.EXE blindly; wait bounded and report leftovers.
+        $pending = @()
+        $exitDeadline = (Get-Date).AddSeconds(30)
+        while ((Get-Date) -lt $exitDeadline) {
+            $pending = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
+                Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
+            if ($pending.Count -eq 0) { break }
+            Start-Sleep -Milliseconds 250
+        }
+        if ($pending.Count -gt 0) {
+            Write-Host ("WARNING: a hidden Excel instance did not exit within 30s (PIDs: " + (($pending | ForEach-Object { $_.Id }) -join ',') + "); back-to-back runs may be slow.") -ForegroundColor Yellow
+        }
+        # Short cooldown so security software can finish scanning the files
+        # this run created/removed before the next run starts.
+        Start-Sleep -Seconds 2
     }
     # Restore the user's own RedisExcel.json (or remove the one written for this
     # run). The running Excel already read the config once at XLL load.
@@ -970,9 +1072,9 @@ finally {
         Write-Host ("Temporary workbooks kept: {0} ; {1}" -f $tempSavePath, $tempCopyPath) -ForegroundColor DarkYellow
     }
     else {
-        Remove-Item $tempSavePath -Force -ErrorAction SilentlyContinue
-        Remove-Item $tempCopyPath -Force -ErrorAction SilentlyContinue
-        Remove-Item (Join-Path (Join-Path $RepoRoot 'test') 'RedisExcel.Test.xlsx.tmp') -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tempSavePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $tempCopyPath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path (Join-Path $RepoRoot 'test') 'RedisExcel.Test.xlsx.tmp') -Force -ErrorAction SilentlyContinue
     }
 }
 

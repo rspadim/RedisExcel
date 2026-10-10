@@ -1,5 +1,37 @@
 # Changelog
 
+## v1.4.1 (unreleased)
+
+### Fixed
+
+- A duplicate `Subscribe` on the same async registration no longer starves
+  the second observer: the write is still enqueued once, but every subscriber
+  now receives the queued result (delivered asynchronously). Duplicates log a
+  warning. The Excel-DNA one-shot contract is unchanged.
+
+### Tests
+
+- New concurrent-subscribe test: 8 racing duplicate Subscribes enqueue exactly
+  one write and every observer is delivered once - 235 unit tests total.
+  `WaitCompleted` now returns the real work result, and the async tests share
+  a collection with the argument-validation tests so the process-wide
+  write-mode test seam cannot leak across parallel test classes.
+- E2E: the temp workbook cleanup uses `-LiteralPath`; the duplicate-LLEN check
+  re-reads twice one second apart; the async block guard scans the full
+  A50:F53 range; the copy-workbook RTD sheet resolution retries (a busy Excel
+  rejecting the call, `RPC_E_CALL_REJECTED`, or answering with a not-yet-ready
+  workbook no longer aborts the run); the startup prints the registered
+  antivirus status (Windows Security Center) so AV-induced COM flakes are
+  identified immediately; after quitting, the script waits (bounded) for its
+  hidden Excel to exit and reports leftovers, so back-to-back runs do not
+  overlap a teardown under antivirus scan.
+
+### Docs
+
+- The async documentation now states that a duplicate registration never
+  re-enqueues the write and still receives the queued result; the coverage
+  lists were refreshed.
+
 ## v1.4.0
 
 ### Changed
@@ -22,15 +54,19 @@
 ### Tests
 
 - Offline unit tests for `RedisWriteObservable`: single result delivery plus
-  completion, work exception mapped to the `Error: ...` text, per-host serial
-  order in submission order, different hosts running independently, the
-  no-op dispose still completing a detached write (including while queued),
-  the one-shot subscribe guard and the synchronous enqueue.
+  completion, work exception mapped to the `Error: ...` text, an observer
+  whose `OnNext` throws is still completed, per-host serial order in
+  submission order, different hosts running independently, the no-op dispose
+  still completing a detached write (including while queued), the one-shot
+  subscribe guard and the synchronous enqueue.
+- Write-dispatch unit tests: caller-less refusal, invalid-host sync fallback,
+  sync on the calling thread and same-host items never overlapping - 234
+  tests total.
 - E2E async mode checks the pending marker (`WorksheetFunction.IsNA`, so the
   check is locale-independent), single delivery (the write reaches Redis while
   the cell is pending; settling does not re-run it), two identical formulas in
   different cells both writing, and an argument change dispatching the new
-  write.
+  write; a failed `Application.Calculation` restore counts as a failure.
 
 ## v1.3.0
 

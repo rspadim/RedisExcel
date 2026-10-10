@@ -127,7 +127,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   runs synchronously on the Excel thread during the internal RTD `ConnectData`,
   and the recalculation that delivers the result returns the cached value for
   the same identity (Excel-DNA state lookup) without re-subscribing; a
-  duplicate `Subscribe` on the same observable is ignored (one-shot guard). No
+  duplicate `Subscribe` on the same observable never re-enqueues the write and
+  still receives the queued result (one-shot guard). No
   thread-pool thread is held per pending write: the queue continuation delivers
   `OnNext`/`OnCompleted`, so a large same-host burst no longer throttles the
   pool (the old classic `ExcelAsyncUtil.Run` dispatch blocked one pool thread
@@ -203,9 +204,11 @@ formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
 (`IsNewer`/`NormalizeTag`), `RedisValueLocaleTests` (de-DE culture), the
 `...NonVolatile` signature-parity reflection test, the write-mode
 (`SyncWrite`/`AsyncWrites`) parsing plus async write dispatch (per-host serial
-order, no host overlap, the synchronous path and the caller refusal), and the
-offline `RedisWriteObservable` tests (single delivery + completion, error
-text, one-shot subscribe, no-op dispose while queued, synchronous enqueue).
+order, no host overlap, the synchronous path, the caller refusal and the
+invalid-host fallback), and the offline `RedisWriteObservable` tests (single
+delivery + completion, error text, an observer whose `OnNext` throws is still
+completed, one-shot subscribe with duplicate delivery, no-op dispose while
+queued, synchronous enqueue).
 
 The unit, smoke and load test projects compile the production sources directly
 (linked `Compile` items), so a new production `.cs` needed by tests must be
@@ -284,7 +287,10 @@ These cost real debugging time — read before writing automation.
    are misleading errors (`InvalidCastException: cannot convert Int32 to
    String`, `RPC_E_CALL_REJECTED`, COM calls hanging or aborting). The E2E
    script retries with backoff and has a warm-up phase; if a run fails this
-   way, just run it again. Add an exception for `EXCEL.EXE` and the script to
+   way, just run it again. The script prints the registered antivirus
+   products (Windows Security Center) before creating Excel, so an
+   AV-enabled environment is visible immediately. Add an exception for
+   `EXCEL.EXE` and the script to
    the security product when possible. Never assume such an error means the
    add-in is broken.
 2. **Elevated processes ignore per-user COM classes.** The add-in registers

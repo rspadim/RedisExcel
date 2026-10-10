@@ -391,7 +391,10 @@ then updates to the real value/error (or the fire-and-forget marker). While
 the internal RTD topic stays connected, each formula writes exactly once - the
 recalculation that delivers the result returns the cached value (the call
 identity is the cell plus the resolved host plus the formula's arguments)
-instead of re-running the write. When Excel instead detaches the topic (for
+instead of re-running the write. A duplicate async registration (a defensive
+path; Excel-DNA normally registers once per call) never re-enqueues the write
+and still receives the queued result. When Excel instead detaches the topic
+(for
 example an unchanged recalculation), the next evaluation re-registers the call
 and a volatile write is issued again: the dedup is best-effort, not
 exactly-once across the sheet lifetime. A write whose host cannot be resolved

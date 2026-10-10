@@ -11,12 +11,14 @@ namespace RedisExcel.Tests
     /// <summary>
     /// Unit tests for <see cref="RedisUdfAsync"/>.
     ///
-    /// The Run tests cover the synchronous path only (AsyncWrites = false) and
-    /// pin the mode through the test seam, so the result cannot depend on a
-    /// RedisExcel.json found on the machine. The queue tests drive the
-    /// dispatcher's per-host FIFO queue directly; they never call
-    /// ExcelAsyncUtil (which needs an Excel host) and are fully offline.
+    /// The Run tests pin the write mode through the test seam (sync path plus
+    /// the offline async cases: caller refusal and invalid-host fallback), so
+    /// the result cannot depend on a RedisExcel.json found on the machine. The
+    /// queue tests drive the dispatcher's per-host FIFO queue directly; they
+    /// never call ExcelAsyncUtil (which needs an Excel host) and are fully
+    /// offline.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class RedisUdfAsyncTests
     {
         /// <summary>Runs the test with AsyncWrites forced to false.</summary>
@@ -53,7 +55,7 @@ namespace RedisExcel.Tests
         {
             Task completed = await Task.WhenAny(task, Task.Delay(timeoutMs));
             Assert.True(completed == task, "Queued work item did not complete in time.");
-            return task;
+            return await task;
         }
 
         /// <summary>Raises <paramref name="stored"/> to <paramref name="candidate"/> when larger.</summary>
