@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.4.0 (unreleased)
+
+### Changed
+
+- Async writes (`AsyncWrites`) now dispatch through Excel-DNA's Observe-based
+  async support (`ExcelAsyncUtil.Observe` with a custom `RedisWriteObservable`)
+  instead of the classic `ExcelAsyncUtil.Run` delegate. `Subscribe` runs
+  synchronously on the Excel thread during the internal RTD `ConnectData`, so
+  the write is enqueued there and the per-host FIFO follows the formula
+  evaluation order again; `OnNext`/`OnCompleted` are delivered from the queue
+  continuation, so no thread-pool thread is held per pending write (a large
+  same-host burst no longer throttles the pool). Cell behavior is unchanged:
+  pending `#N/A`, exactly one write per registered call, cached result on the
+  delivery re-call, and the usual `Error: ...` text for failures.
+
+### Tests
+
+- Offline unit tests for `RedisWriteObservable`: single result delivery plus
+  completion, work exception mapped to the `Error: ...` text, per-host serial
+  order in submission order, different hosts running independently, and the
+  no-op dispose still completing a detached write.
+- E2E async mode checks the pending marker and single delivery (the write
+  reaches Redis while the cell is pending; settling does not re-run it).
+
 ## v1.3.0
 
 ### Added

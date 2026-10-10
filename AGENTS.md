@@ -48,7 +48,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
 | `RedisRtd.cs` | RTD server lifecycle, topic registries, timers, polling; `RedisRtdStatus` functions. |
 | `RedisUDF.cs` | `[ExcelFunction]` implementations; thin wrappers over the managers; 24 `...NonVolatile` write twins. |
-| `RedisUdfAsync.cs` | Optional async write dispatch (`AsyncWrites`, default off): per-host FIFO queue + Excel-DNA `ExcelAsyncUtil.Run`; pure sync passthrough when disabled. |
+| `RedisUdfAsync.cs` | Optional async write dispatch (`AsyncWrites`, default off): per-host FIFO queue + Excel-DNA `ExcelAsyncUtil.Observe` (`RedisWriteObservable`); pure sync passthrough when disabled. |
 | `ExcelJson.cs` | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix`. |
 | `RedisResultFormatter.cs` | Value formatting sent to Excel (HGETALL as valid JSON). |
 | `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks. |
@@ -118,26 +118,31 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   (the cell keeps the marker) while validation/config failures before the
   dispatch still surface as `Error:`, and publishes return the marker instead
   of the readers count.
-- `AsyncWrites` (default false) dispatches writes through Excel-DNA's async
-  support (`ExcelAsyncUtil.Run`, RTD-based) so the Excel thread never blocks:
-  the cell shows the pending marker (`#N/A`) and then the real value/error (or
-  the fire-and-forget marker). The write is enqueued exactly once per
-  registered call - the enqueue lives inside Excel-DNA's single-shot delegate,
+- `AsyncWrites` (default false) dispatches writes through Excel-DNA's
+  Observe-based async support (`ExcelAsyncUtil.Observe` with a custom
+  `RedisWriteObservable`, RTD-based) so the Excel thread never blocks: the cell
+  shows the pending marker (`#N/A`) and then the real value/error (or the
+  fire-and-forget marker). The write is enqueued exactly once per registered
+  call - Excel-DNA creates the observable at registration and its `Subscribe`
+  runs synchronously on the Excel thread during the internal RTD `ConnectData`,
   and the recalculation that delivers the result returns the cached value for
-  the same identity instead of re-running the write. The async identity is the
-  calling cell + resolved host + the UDF's own arguments (the cell reference is
-  structurally equal across the completed re-call), so different cells never
-  share one call and an argument change dispatches a new write. Repeated
-  evaluations with unchanged arguments return the cached value while the
-  internal topic stays connected (a volatile write is not re-sent by
-  AsyncWrites); inserting/moving rows or columns changes the cell reference
-  and re-issues the write; a call without a worksheet caller is refused with
-  an Error cell (the identity would be shared or unstable). Same-host
-  writes are serialized by a per-host FIFO queue; the order is the dispatch
-  order (strict formula order is not guaranteed). `AsyncWrites` decides where a
-  write blocks (Excel thread vs worker) and `SyncWrite` decides whether the
-  reply is awaited on that thread, so `sync` + async yields real replies
-  without blocking Excel.
+  the same identity (Excel-DNA state lookup) without re-subscribing. No
+  thread-pool thread is held per pending write: the queue continuation delivers
+  `OnNext`/`OnCompleted`, so a large same-host burst no longer throttles the
+  pool (the old classic `ExcelAsyncUtil.Run` dispatch blocked one pool thread
+  per queued item). The async identity is the calling cell + resolved host +
+  the UDF's own arguments (the cell reference is structurally equal across the
+  completed re-call), so different cells never share one call and an argument
+  change dispatches a new write. Repeated evaluations with unchanged arguments
+  return the cached value while the internal topic stays connected (a volatile
+  write is not re-sent by AsyncWrites); inserting/moving rows or columns
+  changes the cell reference and re-issues the write; a call without a
+  worksheet caller is refused with an Error cell (the identity would be shared
+  or unstable). Same-host writes are serialized by a per-host FIFO queue fed on
+  the Excel thread during `Subscribe`, so the order is the formula evaluation
+  order again. `AsyncWrites` decides where a write blocks (Excel thread vs
+  worker) and `SyncWrite` decides whether the reply is awaited on that thread,
+  so `sync` + async yields real replies without blocking Excel.
 - Connection counters report live multiplexers per pool only (closed/failed
   entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
   only), and shutdown no longer blocks on closing connections.

@@ -34,9 +34,10 @@ namespace RedisExcel.Tests
 
         private static string UniqueHost() => "test.host:" + Guid.NewGuid().ToString("N");
 
-        private static Task<object> WaitCompleted(Task<object> task, int timeoutMs = 5000)
+        private static async Task<object> WaitCompleted(Task<object> task, int timeoutMs = 5000)
         {
-            Assert.True(task.Wait(timeoutMs), "Queued work item did not complete in time.");
+            Task completed = await Task.WhenAny(task, Task.Delay(timeoutMs));
+            Assert.True(completed == task, "Queued work item did not complete in time.");
             return task;
         }
 
@@ -144,7 +145,7 @@ namespace RedisExcel.Tests
         // ---------------------------------------------------------------
 
         [Fact]
-        public void Enqueue_SameHost_PreservesFifoOrder()
+        public async Task Enqueue_SameHost_PreservesFifoOrder()
         {
             string host = UniqueHost();
             var order = new List<int>();
@@ -162,13 +163,13 @@ namespace RedisExcel.Tests
             }
 
             foreach (var task in tasks)
-                WaitCompleted(task);
+                await WaitCompleted(task);
 
             Assert.Equal(Enumerable.Range(0, 32), order);
         }
 
         [Fact]
-        public void Enqueue_SameHost_SerializesItems()
+        public async Task Enqueue_SameHost_SerializesItems()
         {
             string host = UniqueHost();
             using (var firstStarted = new ManualResetEventSlim(false))
@@ -193,17 +194,17 @@ namespace RedisExcel.Tests
                 Assert.False(secondStarted.Wait(200), "The second item started while the first was still running.");
 
                 releaseFirst.Set();
-                WaitCompleted(first);
-                WaitCompleted(second);
+                await WaitCompleted(first);
+                await WaitCompleted(second);
 
-                Assert.Equal("first", first.Result);
-                Assert.Equal("second", second.Result);
+                Assert.Equal("first", await first);
+                Assert.Equal("second", await second);
                 Assert.True(secondStarted.IsSet);
             }
         }
 
         [Fact]
-        public void Enqueue_DifferentHosts_RunConcurrently()
+        public async Task Enqueue_DifferentHosts_RunConcurrently()
         {
             using (var firstStarted = new ManualResetEventSlim(false))
             using (var releaseFirst = new ManualResetEventSlim(false))
@@ -218,50 +219,50 @@ namespace RedisExcel.Tests
 
                 // A different host is not blocked by the first host's queue.
                 Task<object> second = RedisUdfAsync.Enqueue(UniqueHost(), () => (object)"second");
-                WaitCompleted(second);
+                await WaitCompleted(second);
 
                 releaseFirst.Set();
-                WaitCompleted(first);
+                await WaitCompleted(first);
 
-                Assert.Equal("first", first.Result);
-                Assert.Equal("second", second.Result);
+                Assert.Equal("first", await first);
+                Assert.Equal("second", await second);
             }
         }
 
         [Fact]
-        public void Enqueue_WrapsExceptionsAsErrorText()
+        public async Task Enqueue_WrapsExceptionsAsErrorText()
         {
             Task<object> task = RedisUdfAsync.Enqueue(
                 UniqueHost(),
                 () => throw new InvalidOperationException("boom"));
 
-            WaitCompleted(task);
+            await WaitCompleted(task);
 
-            Assert.Equal("Error: boom", task.Result);
+            Assert.Equal("Error: boom", await task);
         }
 
         [Fact]
-        public void Enqueue_FailedItemDoesNotBlockFollowers()
+        public async Task Enqueue_FailedItemDoesNotBlockFollowers()
         {
             string host = UniqueHost();
 
             Task<object> failed = RedisUdfAsync.Enqueue(host, () => throw new InvalidOperationException("first"));
             Task<object> follower = RedisUdfAsync.Enqueue(host, () => (object)"second");
 
-            WaitCompleted(failed);
-            WaitCompleted(follower);
+            await WaitCompleted(failed);
+            await WaitCompleted(follower);
 
-            Assert.Equal("Error: first", failed.Result);
-            Assert.Equal("second", follower.Result);
+            Assert.Equal("Error: first", await failed);
+            Assert.Equal("second", await follower);
         }
 
         [Fact]
-        public void Enqueue_RemovesIdleQueue()
+        public async Task Enqueue_RemovesIdleQueue()
         {
             string host = UniqueHost();
 
             Task<object> task = RedisUdfAsync.Enqueue(host, () => (object)1);
-            WaitCompleted(task);
+            await WaitCompleted(task);
 
             // The release continuation runs after the item completes.
             Assert.True(

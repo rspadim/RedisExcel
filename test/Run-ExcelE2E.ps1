@@ -312,6 +312,20 @@ function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$Timeou
     return $false
 }
 
+# Polls a Redis command reply (e.g. GET/LLEN) until it equals the expected
+# text; prints the last observed reply on timeout so failures are diagnosable.
+function Wait-RedisValue([string[]]$Arguments, [string]$Expected, [int]$TimeoutSeconds = 5) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $value = ''
+    while ((Get-Date) -lt $deadline) {
+        $value = (Invoke-RedisCli $Arguments | Out-String).Trim()
+        if ($value -eq $Expected) { return $true }
+        Start-Sleep -Milliseconds 120
+    }
+    Write-Host ("      Redis {0} = '{1}' (expected '{2}')" -f ($Arguments -join ' '), $value, $Expected) -ForegroundColor DarkGray
+    return $false
+}
+
 # A workbook may (re)register its RTD topics asynchronously; a single publish
 # can be lost before that happens, so repeat it until the cell shows the value.
 function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 30) {
@@ -653,6 +667,88 @@ try {
     $nvCounter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()
     $nvKeyAfter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()
     Check ($nvCounter -eq '1') ("UDF IncrNonVolatile evaluated once only (recalcs do not increment; nvcounter='" + $nvCounter + "', nvkey='" + $nvKeyAfter + "')")
+
+    # ------------------------------ v1.4.0 async-mode checks (rows 50-53) ----
+    # Gated on -AsyncWrites (audit-4 A/B/C): (A) the pending marker and exactly
+    # one delivery per registered call, (B) the calling cell is part of the
+    # async identity (two identical formulas must both write), (C) an argument
+    # change dispatches a new write (last value wins).
+    if ($AsyncWrites) {
+        # Manual calculation keeps the pending state observable and makes the
+        # delivery recalculation explicit; the previous mode is restored in the
+        # finally even when a check fails. Check C runs in normal (automatic)
+        # calculation mode.
+        $previousCalculation = Invoke-ExcelAction { $script:Excel.Calculation }
+        try {
+            Invoke-ExcelAction { $script:Excel.Calculation = -4135 } | Out-Null
+
+            # (A) Pending marker + single delivery (row 50).
+            Invoke-RedisCli @('DEL', "$KeyPrefix.asyncmarker") | Out-Null
+            Set-Cell $udf 50 1 'Incr (async pending/single delivery)'
+            Set-Formula $udf 'B50' ('=RedisUDFIncr("{1}.asyncmarker","{0}")' -f $h, $kp)
+            # The pending result is Excel's N/A error; Range.Text localizes it
+            # (#N/D on a pt-BR Excel), so match the error prefix instead of
+            # comparing the full text.
+            $pendingOk = Wait-CellRegex $udf 'B50' '^#(N/A|N/D)' 5
+            Check $pendingOk ("Async pending marker shown for the queued Incr (B50='" + (Get-CellText $udf 'B50') + "')")
+            # The queued write must reach Redis while the cell still shows the
+            # pending marker (manual mode suppresses the delivery recalculation).
+            $markerOk = Wait-RedisValue @('GET', "$KeyPrefix.asyncmarker") '1' 5
+            $markerCell = Get-CellText $udf 'B50'
+            $markerRedis = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncmarker") | Out-String).Trim()
+            Check ($markerOk -and ($markerCell -match '^#(N/A|N/D)')) ("Async Incr reached Redis while the cell was still pending (redis='" + $markerRedis + "', cell='" + $markerCell + "')")
+            # Force the delivery recalculation: it must return the cached result
+            # (the mode-appropriate reply, not a fresh write); the single retry
+            # only covers the completion notification racing this Calculate.
+            $asyncIncrReply = if ($script:IsFireForgetAll) { 'OK-FireForgetAll' } else { '1' }
+            Invoke-ExcelAction { $udf.Range('B50').Calculate() } | Out-Null
+            $settledOk = Wait-CellText $udf 'B50' $asyncIncrReply 10
+            if (-not $settledOk) {
+                Invoke-ExcelAction { $udf.Range('B50').Calculate() } | Out-Null
+                $settledOk = Wait-CellText $udf 'B50' $asyncIncrReply 10
+            }
+            $markerAfter = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncmarker") | Out-String).Trim()
+            Check ($settledOk -and $markerAfter -eq '1') ("Async delivery recalculation settles the cell to '" + $asyncIncrReply + "' without re-running the write (cell='" + (Get-CellText $udf 'B50') + "', redis='" + $markerAfter + "')")
+
+            # (B) Two cells, IDENTICAL formula, both must write (rows 51/52):
+            # the calling cell is part of the async identity, so a collapsed
+            # identity would leave only one ListPushRight (LLEN=1).
+            Invoke-RedisCli @('DEL', "$KeyPrefix.asyncdup") | Out-Null
+            Set-Cell $udf 51 1 'ListPushRight A (async identity)'
+            Set-Cell $udf 52 1 'ListPushRight B (async identity)'
+            $dupFormula = '=RedisUDFListPushRight("{1}.asyncdup","x","{0}")' -f $h, $kp
+            Set-Formula $udf 'B51' $dupFormula
+            Set-Formula $udf 'B52' $dupFormula
+            $dupOk = Wait-RedisValue @('LLEN', "$KeyPrefix.asyncdup") '2' 10
+            $dupLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
+            if (-not $dupOk) {
+                Write-Host ("      DIAG asyncdup: B51='" + (Get-CellText $udf 'B51') + "' B52='" + (Get-CellText $udf 'B52') + "'") -ForegroundColor DarkGray
+            }
+            Check $dupOk ("Two cells with the identical async formula both wrote (LLEN='" + $dupLen + "')")
+
+            # (C) Argument change dispatches a new write (row 53), back in
+            # normal (automatic) calculation mode: the F53 edit must
+            # recalculate B53 and dispatch with the new argument value.
+            Invoke-ExcelAction { $script:Excel.Calculation = -4105 } | Out-Null
+            Invoke-RedisCli @('DEL', "$KeyPrefix.asyncarg") | Out-Null
+            Set-Cell $udf 53 1 'Set (async argument change)'
+            Set-Cell $udf 53 6 'v1'
+            Set-Formula $udf 'B53' ('=RedisUDFSet("{1}.asyncarg",$F$53,"{0}")' -f $h, $kp)
+            $argV1Ok = Wait-RedisValue @('GET', "$KeyPrefix.asyncarg") 'v1' 10
+            Set-Cell $udf 53 6 'v2'
+            $argV2Ok = Wait-RedisValue @('GET', "$KeyPrefix.asyncarg") 'v2' 10
+            $argFinal = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncarg") | Out-String).Trim()
+            Check ($argV1Ok -and $argV2Ok -and $argFinal -eq 'v2') ("Async argument change dispatches a new write and the last value wins (v1=" + $argV1Ok + ", v2=" + $argV2Ok + ", final='" + $argFinal + "')")
+        }
+        finally {
+            try {
+                Invoke-ExcelAction { $script:Excel.Calculation = $previousCalculation } | Out-Null
+            }
+            catch {
+                Write-Host ("WARNING: could not restore Application.Calculation: " + $_.Exception.Message) -ForegroundColor Red
+            }
+        }
+    }
 
     Check (Wait-CellText $rtd 'B4' 'hello_from_udf')         'RTD GET returns the value'
     Check (Wait-CellText $rtd 'B5' 'valor1')                 'RTD HGET returns the value'

@@ -19,11 +19,12 @@ namespace RedisExcel
     ///
     /// Ordering: every work item submitted for a host is appended to that
     /// host's FIFO queue, so writes to one host execute in submission order.
-    /// Submission happens inside Excel-DNA's delegate (a thread-pool thread),
-    /// so that order is the dispatch order, not strictly the formula
-    /// evaluation order. Different hosts use different queues and can run
-    /// concurrently. Idle queues are removed from the registry as soon as their
-    /// last item completes.
+    /// Submission happens in RedisWriteObservable.Subscribe, which Excel-DNA
+    /// invokes synchronously on the Excel thread during the internal RTD
+    /// ConnectData of the Observe registration, so the queue order is the
+    /// formula evaluation order. Different hosts use different queues and can
+    /// run concurrently. Idle queues are removed from the registry as soon as
+    /// their last item completes.
     ///
     /// Identity caveats: the calling cell reference is part of the identity, so
     /// inserting/moving rows or columns (coordinates change) makes the next
@@ -117,22 +118,23 @@ namespace RedisExcel
                 object parameters = new object[] { caller, host, identityArgs ?? new object[0] };
                 string asyncName = AsyncNamePrefix + (functionName ?? string.Empty);
 
-                // Classic ExcelFunc overload: the delegate runs on a
-                // thread-pool thread. The enqueue lives INSIDE the delegate
-                // (RunQueued): Excel re-evaluates the formula to deliver the
-                // result, so the body must stay side-effect free or the write
-                // would run twice. The ExcelAsyncHandle overload (deferred
+                // Observe overload with a custom one-shot observable: Excel-DNA
+                // creates the observable at registration and invokes its
+                // Subscribe synchronously on the Excel thread during the
+                // internal RTD ConnectData, so the enqueue there is the single
+                // side effect per registered call (the delivery re-call returns
+                // the cached value from Excel-DNA's state lookup and never
+                // re-subscribes). The queue continuation delivers
+                // OnNext/OnCompleted, so no thread-pool thread waits while an
+                // item is queued. The ExcelAsyncHandle overload (deferred
                 // SetResult) crashed Excel (0xc0000409) under COM automation,
-                // so the battle-tested overload is used instead. One pool
-                // thread waits per pending write, so a large same-host burst
-                // (slow host + "sync") holds one thread per queued item until
-                // its turn.
-                object asyncResult = ExcelAsyncUtil.Run(asyncName, parameters, () => RunQueued(host, work));
+                // so it stays unused.
+                object asyncResult = ExcelAsyncUtil.Observe(asyncName, parameters, () => new RedisWriteObservable(host, work));
                 if (asyncResult == null)
                 {
                     // Excel-DNA returns null when its internal RTD registration
-                    // failed; the delegate was not subscribed, so failing here
-                    // cannot duplicate the write.
+                    // failed; Subscribe was not called, so failing here cannot
+                    // duplicate the write.
                     logger.Error($"RedisUdfAsync.Run: async RTD registration failed for {functionName}");
                     return "Error: async dispatch failed (RTD registration)";
                 }
@@ -140,9 +142,9 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                // The work has not started (the delegate owns the enqueue), so
-                // this cannot duplicate a write; surface the failure instead of
-                // silently retrying on the Excel thread.
+                // The work has not started (RedisWriteObservable.Subscribe owns
+                // the enqueue), so this cannot duplicate a write; surface the
+                // failure instead of silently retrying on the Excel thread.
                 logger.Error(ex, $"RedisUdfAsync.Run: async dispatch failed for {functionName}");
                 return "Error: async dispatch failed: " + ex.Message;
             }
@@ -169,46 +171,6 @@ namespace RedisExcel
                 // xlfCaller is a live C API call and can transiently fail.
             }
             return null;
-        }
-
-        /// <summary>
-        /// ExcelFunc body: invoked by Excel-DNA exactly once per registered
-        /// async call (single-subscription guard). The enqueue is HERE, not in
-        /// Run: Excel re-evaluates the formula to deliver the result and only
-        /// the identity lookup in Run is deduplicated, so a body-level enqueue
-        /// would run the write a second time on that re-call. Excel cancelling
-        /// a calculation only detaches the cell from the call; the queued write
-        /// itself is not aborted - like an already-running synchronous write it
-        /// runs to completion in per-host order.
-        /// </summary>
-        private static object RunQueued(string host, Func<object> work)
-        {
-            try
-            {
-                return WaitQueued(Enqueue(host, work));
-            }
-            catch (Exception ex)
-            {
-                logger.Error(ex, "RedisUdfAsync: queued work failed");
-                return "Error: " + ex.Message;
-            }
-        }
-
-        /// <summary>
-        /// Waits for a queued item and returns its result (or the usual
-        /// "Error: ..." text) for Excel-DNA to deliver to the cell.
-        /// </summary>
-        private static object WaitQueued(Task<object> queued)
-        {
-            try
-            {
-                return queued.GetAwaiter().GetResult();
-            }
-            catch (Exception ex)
-            {
-                logger.Error(ex, "RedisUdfAsync: queued work failed");
-                return "Error: " + ex.Message;
-            }
         }
 
         /// <summary>
@@ -285,5 +247,120 @@ namespace RedisExcel
 
         /// <summary>Whether a queue currently exists for the host; test-only.</summary>
         internal static bool HasQueueForTests(string host) => _queues.ContainsKey(host);
+    }
+
+    /// <summary>
+    /// One-shot Excel-DNA observable for an async write. Subscribe runs
+    /// synchronously on the Excel thread during the internal RTD ConnectData
+    /// (inside the ExcelAsyncUtil.Observe registration), so the per-host
+    /// enqueue happens there and the per-host FIFO order is the formula
+    /// evaluation order. The queue continuation delivers the result (or the
+    /// usual "Error: ..." text) and completion, so no thread-pool thread waits
+    /// while the item is queued. Excel cancelling a calculation or detaching
+    /// the topic only disposes this subscription; the returned disposable is a
+    /// no-op, so a queued or executing write still runs to completion in
+    /// per-host order (same semantics as the previous thread-pool delegate).
+    /// </summary>
+    internal sealed class RedisWriteObservable : IExcelObservable
+    {
+        private static readonly Logger logger = LogManager.GetCurrentClassLogger();
+
+        // Every Subscribe returns this shared instance: Dispose must be a no-op
+        // and the object carries no per-subscription state.
+        private static readonly IDisposable NoOpDisposable = new NoOpDisposableImpl();
+
+        private sealed class NoOpDisposableImpl : IDisposable
+        {
+            public void Dispose()
+            {
+            }
+        }
+
+        private readonly string _host;
+        private readonly Func<object> _work;
+
+        internal RedisWriteObservable(string host, Func<object> work)
+        {
+            _host = host;
+            _work = work;
+        }
+
+        public IDisposable Subscribe(IExcelObserver observer)
+        {
+            try
+            {
+                // Enqueue synchronously HERE: Excel-DNA calls Subscribe during
+                // the RTD ConnectData on the Excel thread, so same-host writes
+                // enter the FIFO in formula evaluation order. The continuation
+                // runs only when the item reaches the head of the queue.
+                RedisUdfAsync.Enqueue(_host, _work).ContinueWith(
+                    OnQueuedCompleted,
+                    observer,
+                    CancellationToken.None,
+                    TaskContinuationOptions.None,
+                    TaskScheduler.Default);
+            }
+            catch (Exception ex)
+            {
+                // Enqueue converts work failures to "Error: ..." task results;
+                // this guards truly unexpected failures. The write did not
+                // start, so reporting the failure cannot duplicate it.
+                logger.Error(ex, "RedisWriteObservable: enqueue failed");
+                DeliverAndComplete(observer, "Error: " + ex.Message);
+            }
+
+            // No-op: a queued/executing write completes even if Excel detaches
+            // the topic before the result arrives.
+            return NoOpDisposable;
+        }
+
+        private static void OnQueuedCompleted(Task<object> queued, object state)
+        {
+            DeliverAndComplete((IExcelObserver)state, ResultForExcel(queued));
+        }
+
+        /// <summary>
+        /// Maps the queued task's outcome to the value Excel should show.
+        /// ExecuteSafely already converts a work failure into "Error: ..."
+        /// text; cancelled/faulted tasks are handled defensively.
+        /// </summary>
+        private static object ResultForExcel(Task<object> queued)
+        {
+            if (queued.Status == TaskStatus.RanToCompletion)
+                return queued.Result;
+
+            if (queued.IsCanceled)
+                return "Error: async write was cancelled";
+
+            Exception error = queued.Exception != null ? queued.Exception.GetBaseException() : null;
+            return "Error: " + (error != null ? error.Message : "async write failed");
+        }
+
+        /// <summary>
+        /// Delivers one value and then completes, never throwing into the queue
+        /// continuation: Excel may already have detached the topic, and the
+        /// continuation must still clear the queue slot. Failures are logged;
+        /// completion is attempted even when the delivery failed.
+        /// </summary>
+        private static void DeliverAndComplete(IExcelObserver observer, object result)
+        {
+            try
+            {
+                observer.OnNext(result);
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, "RedisWriteObservable: delivering the async write result failed");
+            }
+
+            try
+            {
+                observer.OnCompleted();
+            }
+            catch (Exception ex)
+            {
+                logger.Error(ex, "RedisWriteObservable: completing the async write observer failed");
+            }
+        }
     }
 }
