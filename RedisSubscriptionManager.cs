@@ -276,7 +276,7 @@ namespace RedisExcel
 
                 break;
             }
-            logger.Debug($"Subscribe: host={host}, channel={channel}, pattern={pattern}, origin={origin ?? "<null>"}, listeners={state.Listeners.Count}");
+            logger.Debug($"Subscribe: host={AppConfig.MaskHost(host)}, channel={channel}, pattern={pattern}, origin={origin ?? "<null>"}, listeners={state.Listeners.Count}");
             RaiseListenerJoined(host, channel, pattern);
             return new Registration(this, state, id);
         }
@@ -298,7 +298,7 @@ namespace RedisExcel
                 }
                 catch (Exception ex)
                 {
-                    logger.Error(ex, $"ListenerJoined handler failed: host={host}, channel={channel}, pattern={pattern}");
+                    logger.Error(ex, $"ListenerJoined handler failed: host={AppConfig.MaskHost(host)}, channel={channel}, pattern={pattern}");
                 }
             }
         }
@@ -396,7 +396,7 @@ namespace RedisExcel
                 return;
 
             ReleaseChannelState(state);
-            logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
+            logger.Debug($"Remove: host={AppConfig.MaskHost(state.Host)}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
 
         /// <summary>
@@ -542,7 +542,7 @@ namespace RedisExcel
                             // never be trusted again. Poison it and drop the registry
                             // mapping; the next Subscribe builds a fresh state
                             // instead of risking a duplicate handler registration.
-                            logger.Error(ex, $"TryEnsureSubscribed rollback: host={Host}, channel={Name}");
+                            logger.Error(ex, $"TryEnsureSubscribed rollback: host={AppConfig.MaskHost(Host)}, channel={Name}");
                             Disposed = true;
                             manager.RemoveChannelEntry(MakeKey(Host, Name, Pattern), this);
                         }
@@ -576,7 +576,7 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
-                        logger.Debug(ex, $"ReleaseSubscription: host={Host}, channel={Name}");
+                        logger.Debug(ex, $"ReleaseSubscription: host={AppConfig.MaskHost(Host)}, channel={Name}");
                     }
                 }
             }
@@ -616,7 +616,7 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(ex, $"HandleMessage: listener error host={Host}, channel={Name}");
+                        logger.Error(ex, $"HandleMessage: listener error host={AppConfig.MaskHost(Host)}, channel={Name}");
                     }
                 }
             }

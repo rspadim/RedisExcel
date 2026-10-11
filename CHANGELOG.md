@@ -4,6 +4,10 @@
 
 ### Changed
 
+- **No credentials in cells or logs:** a `host` argument that is a connection
+  string carries a `password=...`, so every error cell, RTD `#ERROR` text and
+  log line now masks it (`password=****`) while keeping host/port/options
+  readable (`AppConfig.MaskHost`).
 - Verbose runtime errors in cells: a connection/command failure now names the
   operation and the identifiers it acted on, the underlying cause and a short
   hint (`Error: key=k, host=h: <cause> | <hint>`), instead of a bare

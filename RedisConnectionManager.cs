@@ -186,10 +186,10 @@ namespace RedisExcel
                 if (RemoveConnectionEntry(dictionary, kv.Key, kv.Value))
                 {
                     DisposeConnection(mux,
-                        $"GetConnection: error disposing evicted connection host={kv.Key}",
+                        $"GetConnection: error disposing evicted connection host={AppConfig.MaskHost(kv.Key)}",
                         closeFirst: true, allowCommandsToComplete: false);
                     InvalidateWrappers(PoolKey(kv.Key, pool));
-                    logger.Info($"GetConnection: evicted disconnected connection host={kv.Key} (pool over {MaxCachedConnectionsPerPool} entries)");
+                    logger.Info($"GetConnection: evicted disconnected connection host={AppConfig.MaskHost(kv.Key)} (pool over {MaxCachedConnectionsPerPool} entries)");
                 }
             }
         }
@@ -432,12 +432,12 @@ namespace RedisExcel
                     if (RemoveConnectionEntry(dictionary, kv.Key, kv.Value))
                     {
                         DisposeConnection(mux,
-                            $"GetConnection: error disposing idle-down connection host={kv.Key}",
+                            $"GetConnection: error disposing idle-down connection host={AppConfig.MaskHost(kv.Key)}",
                             closeFirst: true, allowCommandsToComplete: false);
                         InvalidateWrappers(memoKey);
                         _downSinceTicks.TryRemove(memoKey, out _);
                         _recentConnectFailures.TryRemove(memoKey, out _);
-                        logger.Info($"GetConnection: dropped idle-down connection host={kv.Key} (down for over {DownHostTtlMs / 1000}s)");
+                        logger.Info($"GetConnection: dropped idle-down connection host={AppConfig.MaskHost(kv.Key)} (down for over {DownHostTtlMs / 1000}s)");
                     }
                 }
             }
@@ -471,7 +471,7 @@ namespace RedisExcel
                 $"{ClientNamePrefix(pool)} :: {BuildInfo.Tag} :: " +
                 $"{Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
 
-            logger.Info($"RedisConnect: opening {pool} connection to {host} (timeout={timeoutMs}ms, client={options.ClientName})");
+            logger.Info($"RedisConnect: opening {pool} connection to {AppConfig.MaskHost(host)} (timeout={timeoutMs}ms, client={options.ClientName})");
             ConnectionMultiplexer mux;
             try
             {
@@ -497,12 +497,12 @@ namespace RedisExcel
 
             mux.ConnectionFailed += (sender, args) =>
             {
-                logger.Info($"RedisConnect: connection lost ({pool}) host={host}, endpoint={args.EndPoint}, " +
+                logger.Info($"RedisConnect: connection lost ({pool}) host={AppConfig.MaskHost(host)}, endpoint={args.EndPoint}, " +
                             $"failure={args.FailureType}, error={args.Exception?.Message}");
             };
             mux.ConnectionRestored += (sender, args) =>
             {
-                logger.Info($"RedisConnect: connection restored ({pool}) host={host}");
+                logger.Info($"RedisConnect: connection restored ({pool}) host={AppConfig.MaskHost(host)}");
             };
             // Dead-host fast-fail memo. With AbortOnConnectFail=false the connect
             // returns a DISCONNECTED multiplexer instead of throwing, so the
@@ -518,7 +518,7 @@ namespace RedisExcel
             {
                 _recentConnectFailures[memoKey] = DateTime.UtcNow.Ticks;
                 PruneConnectFailures();
-                logger.Info($"RedisConnect: {pool} connection to {host} is not connected; failing fast for {ConnectFailureMemoMs}ms");
+                logger.Info($"RedisConnect: {pool} connection to {AppConfig.MaskHost(host)} is not connected; failing fast for {ConnectFailureMemoMs}ms");
             }
             return mux;
         }

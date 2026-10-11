@@ -1,4 +1,4 @@
-﻿using ExcelDna.ComInterop;
+using ExcelDna.ComInterop;
 using ExcelDna.Integration;
 using ExcelDna.Integration.Rtd;
 using NLog;
@@ -367,7 +367,7 @@ namespace RedisExcel
 
         public override string ToString()
         {
-            return $"TopicId={Topic.TopicId}, Type={Type}, KeyOrChannel={KeyOrChannel}, Field={Field}, Host={Host}, LastValue={TruncateForLog(LastValue)}, Dirty={Dirty}";
+            return $"TopicId={Topic.TopicId}, Type={Type}, KeyOrChannel={KeyOrChannel}, Field={Field}, host={AppConfig.MaskHost(Host)}, LastValue={TruncateForLog(LastValue)}, Dirty={Dirty}";
         }
 
         /// <summary>
@@ -613,7 +613,7 @@ namespace RedisExcel
                 string param2 = topicInfo.Count > 1 ? topicInfo[1] : null;
                 string param3 = topicInfo.Count > 2 ? topicInfo[2] : null;
                 string param4 = topicInfo.Count > 3 ? topicInfo[3] : null;
-                logger.Info($"ConnectData: command={command}, param2={param2}, param3={param3}, param4={param4}, TopicId={topic.TopicId}");
+                logger.Info($"ConnectData: command={command}, param2={param2}, param3={AppConfig.MaskHost(param3)}, param4={AppConfig.MaskHost(param4)}, TopicId={topic.TopicId}");
 
                 // Redis keys/fields may be empty or whitespace; only a missing
                 // (null) argument is invalid for them (StackExchange.Redis
@@ -665,7 +665,7 @@ namespace RedisExcel
                         _subscribedTopics[topic.TopicId] = td;
                         var subscribeError = TrySubscribe(td, out _);
                         if (subscribeError != null)
-                            return $"#ERROR: ConnectData: {subscribeError}";
+                            return $"#ERROR: ConnectData: {AppConfig.MaskHost(subscribeError)}";
                         break;
                     default:
                         throw new Exception($"unknown command '{command}', expected one of [GET, HGET, HGETALL, SUB, PSUB]");
@@ -688,7 +688,7 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 logger.Error(ex, "ConnectData: error");
-                return $"#ERROR: ConnectData: {ex.Message}";
+                return $"#ERROR: ConnectData: {AppConfig.MaskHost(ex.Message)}";
             }
         }
 
@@ -962,7 +962,7 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(ex, $"OnRedisTick: host={group.Key}");
+                        logger.Error(ex, $"OnRedisTick: host={AppConfig.MaskHost(group.Key)}");
                     }
                 });
             }
@@ -985,7 +985,7 @@ namespace RedisExcel
                 if (td.KeyOrChannel == null ||
                     (td.Type == "HGET" && td.Field == null))
                 {
-                    logger.Warn($"PollHost: skipping malformed topic, TopicId={td.Topic.TopicId}, Type={td.Type}, host={host}");
+                    logger.Warn($"PollHost: skipping malformed topic, TopicId={td.Topic.TopicId}, Type={td.Type}, host={AppConfig.MaskHost(host)}");
                     return true;
                 }
                 return false;
@@ -1002,7 +1002,7 @@ namespace RedisExcel
                     {
                         var keys = gets.Select(t => (RedisKey)t.KeyOrChannel).ToArray();
                         if (logger.IsTraceEnabled)
-                            logger.Trace($"PollHost: GETMULTI host={host}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
+                            logger.Trace($"PollHost: GETMULTI host={AppConfig.MaskHost(host)}, keys=[{string.Join(", ", gets.Select(t => t.KeyOrChannel))}]");
                         var values = db.StringGet(keys);
                         for (int i = 0; i < gets.Count; i++)
                         {
@@ -1021,14 +1021,14 @@ namespace RedisExcel
                             }
                             catch (Exception ex)
                             {
-                                logger.Error(ex, $"PollHost: GET key={td.KeyOrChannel}, host={host}");
+                                logger.Error(ex, $"PollHost: GET key={td.KeyOrChannel}, host={AppConfig.MaskHost(host)}");
                             }
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    logger.Error(ex, $"PollHost: GETMULTI host={host}");
+                    logger.Error(ex, $"PollHost: GETMULTI host={AppConfig.MaskHost(host)}");
                 }
                 finally
                 {
@@ -1065,7 +1065,7 @@ namespace RedisExcel
                 // report it for this host and fall through so the per-item loops
                 // below still observe/drain each task and nothing is lost
                 // silently (their per-item try/catch logs the individual faults).
-                logger.Error(ex, $"PollHost: batch execute failed, host={host}");
+                logger.Error(ex, $"PollHost: batch execute failed, host={AppConfig.MaskHost(host)}");
             }
             int responseTimeoutMs = RedisUDF.ResponseTimeoutMs();
             DrainBatch(singleTasks, responseTimeoutMs, host,
@@ -1105,7 +1105,7 @@ namespace RedisExcel
                 }
                 catch (Exception ex)
                 {
-                    logger.Error(ex, $"PollHost: {pair.Key.Type} key={pair.Key.KeyOrChannel}, host={host}");
+                    logger.Error(ex, $"PollHost: {pair.Key.Type} key={pair.Key.KeyOrChannel}, host={AppConfig.MaskHost(host)}");
                 }
             }
         }
@@ -1116,7 +1116,7 @@ namespace RedisExcel
                 return;
             Interlocked.Increment(ref _messageCount);
             if (logger.IsTraceEnabled)
-                logger.Trace($"Publish: {td.Type} host={td.Host}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
+                logger.Trace($"Publish: {td.Type} host={AppConfig.MaskHost(td.Host)}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
             DeliverToTopic(td, value);
         }
 

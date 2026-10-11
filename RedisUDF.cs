@@ -1,4 +1,4 @@
-﻿using ExcelDna.Integration;
+using ExcelDna.Integration;
 using NLog;
 using StackExchange.Redis;
 using System;
@@ -212,7 +212,7 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                logger.Error(ex, $"HandleListenerJoined: host={host}, channel={channel}, pattern={pattern}");
+                logger.Error(ex, $"HandleListenerJoined: host={AppConfig.MaskHost(host)}, channel={channel}, pattern={pattern}");
             }
         }
 
@@ -417,6 +417,8 @@ namespace RedisExcel
             string cause = ex == null || string.IsNullOrWhiteSpace(ex.Message)
                 ? "unknown error"
                 : ex.Message.Trim();
+            // A connection string can embed a password; never leak it into a cell.
+            cause = AppConfig.MaskHost(cause);
             if (cause.Length > ErrorCauseMax)
                 cause = cause.Substring(0, ErrorCauseMax) + "...";
             if (string.IsNullOrWhiteSpace(context))
@@ -666,7 +668,7 @@ namespace RedisExcel
             GetDb(host).StringSet(entries.ToArray(), When.Always,
                 fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
             if (logger.IsTraceEnabled)
-                logger.Trace($"{function}: {entries.Count} pairs sent, host={host}, fireAndForget={fireAndForget}");
+                logger.Trace($"{function}: {entries.Count} pairs sent, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
             return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
         }
 
@@ -806,7 +808,7 @@ namespace RedisExcel
         private static object RedisUDFChannelUnsubscribeCore(object channel, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFChannelUnsubscribe", () => $"channel={channel}, host={host}", () =>
+            return RunCore("RedisUDFChannelUnsubscribe", () => $"channel={channel}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = RequireChannel(channel);
@@ -842,7 +844,7 @@ namespace RedisExcel
                         _lastPublishedMessages.Remove(key);
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr}, host={host} unsubscribed");
+                    logger.Trace($"RedisUDFChannelUnsubscribe: channel={channelStr}, host={AppConfig.MaskHost(host)} unsubscribed");
                 return $"Channel '{channelStr}' unsubscribed successfully.";
             });
         }
@@ -930,12 +932,12 @@ namespace RedisExcel
                 }
                 var response = _latestMessages.TryGetValue(key, out var latest) ? latest : "(null)";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelLatest: channel={channelStr}, msg={response}, host={host}");
+                    logger.Trace($"RedisUDFChannelLatest: channel={channelStr}, msg={response}, host={AppConfig.MaskHost(host)}");
                 return response;
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFChannelLatest", ex, $"channel={channel}, host={host}");
+                return Fail("RedisUDFChannelLatest", ex, $"channel={channel}, host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -989,7 +991,7 @@ namespace RedisExcel
         private static object RedisUDFChannelPublishIfChangedCore(object channel, object message, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFChannelPublishIfChanged", () => $"channel={channel}, host={host}", () =>
+            return RunCore("RedisUDFChannelPublishIfChanged", () => $"channel={channel}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = RequireChannel(channel);
@@ -1005,7 +1007,7 @@ namespace RedisExcel
                         string.Equals(previous, messageStr, StringComparison.Ordinal))
                     {
                         if (logger.IsTraceEnabled)
-                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, host={host}, unchanged");
+                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, host={AppConfig.MaskHost(host)}, unchanged");
                         return "No change";
                     }
                     var subscriber = RedisRuntime.Connections.GetSubscriber(host, RedisPool.UdfData);
@@ -1018,7 +1020,7 @@ namespace RedisExcel
                         // the marker (ListenerJoined handling).
                         _lastPublishedMessages.Set(key, messageStr);
                         if (logger.IsTraceEnabled)
-                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, host={host}, fireAndForget=true");
+                            logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                         return FireAndForgetMarker(replyDependent: false);
                     }
                     long readers = PublishLiteral(subscriber, channelStr, messageStr, fireAndForget: false);
@@ -1031,7 +1033,7 @@ namespace RedisExcel
                     else
                         _lastPublishedMessages.Remove(key);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
+                        logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={AppConfig.MaskHost(host)}");
                     return readers > 0 ? ReaderCountText(readers) : "No Readers";
                 }
             });
@@ -1093,7 +1095,7 @@ namespace RedisExcel
         private static object RedisUDFChannelPublishCore(object channel, object message, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFChannelPublish", () => $"channel={channel}, host={host}", () =>
+            return RunCore("RedisUDFChannelPublish", () => $"channel={channel}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string channelStr = RequireChannel(channel);
@@ -1104,7 +1106,7 @@ namespace RedisExcel
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 long readers = PublishLiteral(subscriber, channelStr, messageStr, fireAndForget);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={host}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : ReaderCountText(readers))}");
+                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : ReaderCountText(readers))}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : ReaderCountText(readers);
             });
         }
@@ -1124,7 +1126,7 @@ namespace RedisExcel
                 if (channelsResult.Resp2Type != ResultType.Array)
                 {
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels=0");
+                        logger.Trace($"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, channels=0");
                     return new object[,] { { "Channel", "Subscribers" } };
                 }
 
@@ -1133,7 +1135,7 @@ namespace RedisExcel
                 result[0, 0] = "Channel";
                 result[0, 1] = "Subscribers";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFPubSubChannelsInfo: host={host}, channels={channels.Length}");
+                    logger.Trace($"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, channels={channels.Length}");
 
                 var channelNames = new string[channels.Length];
                 for (int i = 0; i < channels.Length; i++)
@@ -1168,7 +1170,7 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={host}, PUBSUB NUMSUB batch");
+                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, PUBSUB NUMSUB batch");
                         for (int i = 0; i < channelNames.Length; i++)
                             result[i + 1, 1] = $"Error: {ex.Message}";
                     }
@@ -1177,7 +1179,7 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={host}");
+                logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}");
                 return new object[,] { { "Error", ex.Message } }; // legacy 2-column shape
             }
         }
@@ -1195,12 +1197,12 @@ namespace RedisExcel
                 string keyStr = RequireText(key, "key");
                 var value = GetDb(host).StringGet(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFGet: key={keyStr}, value={value}, host={host}");
+                    logger.Trace($"RedisUDFGet: key={keyStr}, value={value}, host={AppConfig.MaskHost(host)}");
                 return value.HasValue ? value.ToString() : "";
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFGet", ex, $"key={key}, host={host}");
+                return Fail("RedisUDFGet", ex, $"key={key}, host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -1217,7 +1219,7 @@ namespace RedisExcel
                 string keyStr = RequireText(key, "key");
                 var type = GetDb(host).KeyType(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFType: key={keyStr}, type={type}, host={host}");
+                    logger.Trace($"RedisUDFType: key={keyStr}, type={type}, host={AppConfig.MaskHost(host)}");
                 switch (type)
                 {
                     case RedisType.String: return "string";
@@ -1233,7 +1235,7 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFType", ex, $"key={key}, host={host}");
+                return Fail("RedisUDFType", ex, $"key={key}, host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -1260,7 +1262,7 @@ namespace RedisExcel
         private static object RedisUDFRenameCore(object key, object newKey, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFRename", () => $"key={key}, newKey={newKey}, host={host}", () =>
+            return RunCore("RedisUDFRename", () => $"key={key}, newKey={newKey}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1269,7 +1271,7 @@ namespace RedisExcel
                 GetDb(host).KeyRename(keyStr, newKeyStr, When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFRename: key={keyStr}, newKey={newKeyStr}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1298,7 +1300,7 @@ namespace RedisExcel
         {
             string host = null;
             string json = null;
-            return RunCore("RedisUDFSetJSON", () => $"key={key}, value={json}, host={host}", () =>
+            return RunCore("RedisUDFSetJSON", () => $"key={key}, value={json}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (values == null)
@@ -1312,7 +1314,7 @@ namespace RedisExcel
                 GetDb(host).StringSet(keyStr, json, null, When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFSetJSON: key={keyStr}, value={json}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1340,7 +1342,7 @@ namespace RedisExcel
         private static object RedisUDFSetCore(object key, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSet", () => $"key={key}, value={value}, host={host}", () =>
+            return RunCore("RedisUDFSet", () => $"key={key}, value={value}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1350,7 +1352,7 @@ namespace RedisExcel
                 GetDb(host).StringSet(keyStr, valueStr ?? "", null, When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFSet: key={keyStr}, value={value}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1378,7 +1380,7 @@ namespace RedisExcel
         private static object RedisUDFSetKVCore(object[,] keys, object[,] values, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSetKV", () => $"host={host}", () =>
+            return RunCore("RedisUDFSetKV", () => $"host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null || values == null)
@@ -1415,7 +1417,7 @@ namespace RedisExcel
         private static object RedisUDFSetKVPairCore(object[,] keyValuePairs, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSetKVPair", () => $"host={host}", () =>
+            return RunCore("RedisUDFSetKVPair", () => $"host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keyValuePairs == null)
@@ -1433,7 +1435,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFGetMultiple", () => $"host={host}", () =>
+            return RunMatrixCore("RedisUDFGetMultiple", () => $"host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 if (keys == null)
@@ -1477,7 +1479,7 @@ namespace RedisExcel
                 var redisKeys = validKeys.Select(k => (RedisKey)k).ToArray();
                 var values = GetDb(host).StringGet(redisKeys);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFGetMultiple: keys={validKeys.Count}, multipleColumns={multipleColumns}, host={host}");
+                    logger.Trace($"RedisUDFGetMultiple: keys={validKeys.Count}, multipleColumns={multipleColumns}, host={AppConfig.MaskHost(host)}");
 
                 int columns = multipleColumns ? 2 : 1;
                 var result = new object[values.Length, columns];
@@ -1499,7 +1501,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFKeys", () => $"pattern={pattern}, host={host}", () =>
+            return RunMatrixCore("RedisUDFKeys", () => $"pattern={pattern}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string patternStr = ToRedisString(pattern);
@@ -1538,7 +1540,7 @@ namespace RedisExcel
                 }
 
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFKeys: pattern={patternStr}, found={keys.Count}, host={host}");
+                    logger.Trace($"RedisUDFKeys: pattern={patternStr}, found={keys.Count}, host={AppConfig.MaskHost(host)}");
                 if (keys.Count == 0)
                     return new object[,] { { "" } };
                 var result = new object[keys.Count, 1];
@@ -1561,12 +1563,12 @@ namespace RedisExcel
                 string keyStr = RequireText(key, "key");
                 var ttl = GetDb(host).KeyTimeToLive(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFTTL: key={keyStr}, ttl={ttl}, host={host}");
+                    logger.Trace($"RedisUDFTTL: key={keyStr}, ttl={ttl}, host={AppConfig.MaskHost(host)}");
                 return ttl.HasValue ? ttl.Value.TotalSeconds : -1;
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFTTL", ex, $"key={key}, host={host}");
+                return Fail("RedisUDFTTL", ex, $"key={key}, host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -1582,12 +1584,12 @@ namespace RedisExcel
                 var server = GetServer(host);
                 var time = server.Time();
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFServerTime: {time}, host={host}");
+                    logger.Trace($"RedisUDFServerTime: {time}, host={AppConfig.MaskHost(host)}");
                 return time.ToString("o"); // ISO 8601 format
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFServerTime", ex, $"host={host}");
+                return Fail("RedisUDFServerTime", ex, $"host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -1598,7 +1600,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFExistsMultiples", () => $"host={host}", () =>
+            return RunMatrixCore("RedisUDFExistsMultiples", () => $"host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 var keysList = RequireKeyRange(keys, out var result);
@@ -1612,7 +1614,7 @@ namespace RedisExcel
                 for (int i = 0; i < tasks.Length; i++)
                     result[i, 1] = WaitBoundedResult(tasks[i], timeoutMs) ? "1" : "0";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFExistsMultiples: {keysList.Count} keys, host={host}");
+                    logger.Trace($"RedisUDFExistsMultiples: {keysList.Count} keys, host={AppConfig.MaskHost(host)}");
                 return result;
             });
         }
@@ -1635,7 +1637,7 @@ namespace RedisExcel
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFExists", ex, $"key={key}, host={host}");
+                return Fail("RedisUDFExists", ex, $"key={key}, host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -1661,7 +1663,7 @@ namespace RedisExcel
         private static object RedisUDFDelCore(object key, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFDel", () => $"key={key}, host={host}", () =>
+            return RunCore("RedisUDFDel", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1669,12 +1671,12 @@ namespace RedisExcel
                 {
                     GetDb(host).KeyDelete(keyStr, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFDel: key={keyStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFDel: key={keyStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long deleted = GetDb(host).KeyDelete(keyStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFDel: key={keyStr}, deleted={deleted}, host={host}");
+                    logger.Trace($"RedisUDFDel: key={keyStr}, deleted={deleted}, host={AppConfig.MaskHost(host)}");
                 return deleted;
             });
         }
@@ -1704,7 +1706,7 @@ namespace RedisExcel
         private static object RedisUDFSetExCore(object key, object value, object ttlSeconds, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSetEx", () => $"key={key}, value={value}, ttl={ttlSeconds}, host={host}", () =>
+            return RunCore("RedisUDFSetEx", () => $"key={key}, value={value}, ttl={ttlSeconds}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
@@ -1719,7 +1721,7 @@ namespace RedisExcel
                 GetDb(host).StringSet(keyStr, valueStr ?? "", TimeSpan.FromSeconds(ttl), When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFSetEx: key={keyStr}, value={value}, ttl={ttl}s, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1748,7 +1750,7 @@ namespace RedisExcel
         private static object RedisUDFExpireCore(object key, object ttlSeconds, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFExpire", () => $"key={key}, ttl={ttlSeconds}, host={host}", () =>
+            return RunCore("RedisUDFExpire", () => $"key={key}, ttl={ttlSeconds}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long ttl = ToInt64Invariant(ttlSeconds);
@@ -1762,12 +1764,12 @@ namespace RedisExcel
                 {
                     GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl), CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 bool expired = GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={host}");
+                    logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={AppConfig.MaskHost(host)}");
                 return expired ? "1" : "0";
             });
         }
@@ -1794,7 +1796,7 @@ namespace RedisExcel
         private static object RedisUDFIncrCore(object key, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFIncr", () => $"key={key}, host={host}", () =>
+            return RunCore("RedisUDFIncr", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -1802,12 +1804,12 @@ namespace RedisExcel
                 {
                     GetDb(host).StringIncrement(keyStr, 1, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFIncr: key={keyStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFIncr: key={keyStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long value = GetDb(host).StringIncrement(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFIncr: key={keyStr}, value={value}, host={host}");
+                    logger.Trace($"RedisUDFIncr: key={keyStr}, value={value}, host={AppConfig.MaskHost(host)}");
                 return value;
             });
         }
@@ -1836,7 +1838,7 @@ namespace RedisExcel
         private static object RedisUDFIncrByCore(object key, object increment, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFIncrBy", () => $"key={key}, increment={increment}, host={host}", () =>
+            return RunCore("RedisUDFIncrBy", () => $"key={key}, increment={increment}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 long incr = ToInt64Invariant(increment);
@@ -1845,12 +1847,12 @@ namespace RedisExcel
                 {
                     GetDb(host).StringIncrement(keyStr, incr, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long value = GetDb(host).StringIncrement(keyStr, incr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, value={value}, host={host}");
+                    logger.Trace($"RedisUDFIncrBy: key={keyStr}, increment={incr}, value={value}, host={AppConfig.MaskHost(host)}");
                 return value;
             });
         }
@@ -1862,7 +1864,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFTTLMultiples", () => $"host={host}", () =>
+            return RunMatrixCore("RedisUDFTTLMultiples", () => $"host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 var keysList = RequireKeyRange(keys, out var result);
@@ -1883,7 +1885,7 @@ namespace RedisExcel
                     result[i, 1] = ttl.HasValue ? (object)ttl.Value.TotalSeconds : -1;
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFTTLMultiples: {keysList.Count} keys, host={host}");
+                    logger.Trace($"RedisUDFTTLMultiples: {keysList.Count} keys, host={AppConfig.MaskHost(host)}");
                 return result;
             });
         }
@@ -1913,7 +1915,7 @@ namespace RedisExcel
         private static object RedisUDFHashSetCore(object hashKey, object field, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFHashSet", () => $"{hashKey}, host={host}", () =>
+            return RunCore("RedisUDFHashSet", () => $"{hashKey}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
@@ -1924,7 +1926,7 @@ namespace RedisExcel
                 GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "", When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1954,7 +1956,7 @@ namespace RedisExcel
         private static object RedisUDFHashSetMultipleCore(object hashKey, object[,] fieldValuePairs, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFHashSetMultiple", () => $"{hashKey}, host={host}", () =>
+            return RunCore("RedisUDFHashSetMultiple", () => $"{hashKey}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 // Validate the hash key first: the same precedence as HashSet,
@@ -1971,7 +1973,7 @@ namespace RedisExcel
                 GetDb(host).HashSet(hashKeyStr, entries.ToArray(),
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFHashSetMultiple: {hashKeyStr}, fields={entries.Count}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -1991,12 +1993,12 @@ namespace RedisExcel
                 string fieldStr = RequireText(field, "field");
                 var value = GetDb(host).HashGet(hashKeyStr, fieldStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGet: {hashKeyStr}[{fieldStr}] = {value}, host={host}");
+                    logger.Trace($"RedisUDFHashGet: {hashKeyStr}[{fieldStr}] = {value}, host={AppConfig.MaskHost(host)}");
                 return value.HasValue ? value.ToString() : "";
             }
             catch (Exception ex)
             {
-                return Fail("RedisUDFHashGet", ex, $"{hashKey}[{field}], host={host}");
+                return Fail("RedisUDFHashGet", ex, $"{hashKey}[{field}], host={AppConfig.MaskHost(host)}");
             }
         }
 
@@ -2007,13 +2009,13 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFHashGetAll", () => $"{hashKey}, host={host}", () =>
+            return RunMatrixCore("RedisUDFHashGetAll", () => $"{hashKey}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
                 var all = GetDb(host).HashGetAll(hashKeyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={host}");
+                    logger.Trace($"RedisUDFHashGetAll: {hashKeyStr}, fields={all.Length}, host={AppConfig.MaskHost(host)}");
                 return ToHashMatrix(all);
             });
         }
@@ -2026,7 +2028,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFHashGetFieldMultipleKeys", () => $"field={field}, host={host}", () =>
+            return RunMatrixCore("RedisUDFHashGetFieldMultipleKeys", () => $"field={field}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 var keysList = RequireKeyRange(hashKeys, out var result);
@@ -2052,7 +2054,7 @@ namespace RedisExcel
                     }
                 }
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={keysList.Count}, host={host}");
+                    logger.Trace($"RedisUDFHashGetFieldMultipleKeys: field={fieldStr}, hashes={keysList.Count}, host={AppConfig.MaskHost(host)}");
                 return result;
             });
         }
@@ -2081,7 +2083,7 @@ namespace RedisExcel
         private static object RedisUDFHashDelCore(object hashKey, object field, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFHashDel", () => $"{hashKey}[{field}], host={host}", () =>
+            return RunCore("RedisUDFHashDel", () => $"{hashKey}[{field}], host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string hashKeyStr = RequireText(hashKey, "hash key");
@@ -2090,12 +2092,12 @@ namespace RedisExcel
                 {
                     GetDb(host).HashDelete(hashKeyStr, fieldStr, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}], host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}], host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long deleted = GetDb(host).HashDelete(hashKeyStr, fieldStr) ? 1L : 0L;
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}] deleted={deleted}, host={host}");
+                    logger.Trace($"RedisUDFHashDel: {hashKeyStr}[{fieldStr}] deleted={deleted}, host={AppConfig.MaskHost(host)}");
                 return deleted;
             });
         }
@@ -2123,7 +2125,7 @@ namespace RedisExcel
         private static object RedisUDFListPushRightCore(object key, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFListPushRight", () => $"key={key}, value={value}, host={host}", () =>
+            return RunCore("RedisUDFListPushRight", () => $"key={key}, value={value}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2132,7 +2134,7 @@ namespace RedisExcel
                 long length = GetDb(host).ListRightPush(keyStr, valueStr, When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFListPushRight: key={keyStr}, value={value}, length={length}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 if (fireAndForget)
                     return FireAndForgetMarker(replyDependent: false);
                 return length;
@@ -2162,7 +2164,7 @@ namespace RedisExcel
         private static object RedisUDFListPushLeftCore(object key, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFListPushLeft", () => $"key={key}, value={value}, host={host}", () =>
+            return RunCore("RedisUDFListPushLeft", () => $"key={key}, value={value}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2171,7 +2173,7 @@ namespace RedisExcel
                 long length = GetDb(host).ListLeftPush(keyStr, valueStr, When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={host}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFListPushLeft: key={keyStr}, value={value}, length={length}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 if (fireAndForget)
                     return FireAndForgetMarker(replyDependent: false);
                 return length;
@@ -2187,7 +2189,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFListRange", () => $"key={key}, host={host}", () =>
+            return RunMatrixCore("RedisUDFListRange", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2195,12 +2197,12 @@ namespace RedisExcel
                 if (values.Length == 0)
                 {
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFListRange: key={keyStr}, empty, host={host}");
+                        logger.Trace($"RedisUDFListRange: key={keyStr}, empty, host={AppConfig.MaskHost(host)}");
                     return ToSingleColumnMatrix(values);
                 }
                 var result = ToSingleColumnMatrix(values);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListRange: key={keyStr}, values={values.Length}, host={host}");
+                    logger.Trace($"RedisUDFListRange: key={keyStr}, values={values.Length}, host={AppConfig.MaskHost(host)}");
                 return result;
             });
         }
@@ -2227,7 +2229,7 @@ namespace RedisExcel
         private static object RedisUDFListPopRightCore(object key, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFListPopRight", () => $"key={key}, host={host}", () =>
+            return RunCore("RedisUDFListPopRight", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2235,12 +2237,12 @@ namespace RedisExcel
                 {
                     GetDb(host).ListRightPop(keyStr, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFListPopRight: key={keyStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFListPopRight: key={keyStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 var value = GetDb(host).ListRightPop(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPopRight: key={keyStr}, value={value}, host={host}");
+                    logger.Trace($"RedisUDFListPopRight: key={keyStr}, value={value}, host={AppConfig.MaskHost(host)}");
                 return value.HasValue ? value.ToString() : "";
             });
         }
@@ -2267,7 +2269,7 @@ namespace RedisExcel
         private static object RedisUDFListPopLeftCore(object key, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFListPopLeft", () => $"key={key}, host={host}", () =>
+            return RunCore("RedisUDFListPopLeft", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2275,12 +2277,12 @@ namespace RedisExcel
                 {
                     GetDb(host).ListLeftPop(keyStr, CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFListPopLeft: key={keyStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFListPopLeft: key={keyStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 var value = GetDb(host).ListLeftPop(keyStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFListPopLeft: key={keyStr}, value={value}, host={host}");
+                    logger.Trace($"RedisUDFListPopLeft: key={keyStr}, value={value}, host={AppConfig.MaskHost(host)}");
                 return value.HasValue ? value.ToString() : "";
             });
         }
@@ -2309,7 +2311,7 @@ namespace RedisExcel
         private static object RedisUDFSetAddCore(object key, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSetAdd", () => $"key={key}, value={value}, host={host}", () =>
+            return RunCore("RedisUDFSetAdd", () => $"key={key}, value={value}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2318,12 +2320,12 @@ namespace RedisExcel
                 {
                     GetDb(host).SetAdd(keyStr, valueStr ?? "", CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long added = GetDb(host).SetAdd(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, added={added}, host={host}");
+                    logger.Trace($"RedisUDFSetAdd: key={keyStr}, value={valueStr}, added={added}, host={AppConfig.MaskHost(host)}");
                 return added;
             });
         }
@@ -2352,7 +2354,7 @@ namespace RedisExcel
         private static object RedisUDFSetRemoveCore(object key, object value, object optionalHost)
         {
             string host = null;
-            return RunCore("RedisUDFSetRemove", () => $"key={key}, value={value}, host={host}", () =>
+            return RunCore("RedisUDFSetRemove", () => $"key={key}, value={value}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2361,12 +2363,12 @@ namespace RedisExcel
                 {
                     GetDb(host).SetRemove(keyStr, valueStr ?? "", CommandFlags.FireAndForget);
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, host={host}, fireAndForget=true");
+                        logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, host={AppConfig.MaskHost(host)}, fireAndForget=true");
                     return FireAndForgetMarker(replyDependent: true);
                 }
                 long removed = GetDb(host).SetRemove(keyStr, valueStr ?? "") ? 1L : 0L;
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, removed={removed}, host={host}");
+                    logger.Trace($"RedisUDFSetRemove: key={keyStr}, value={valueStr}, removed={removed}, host={AppConfig.MaskHost(host)}");
                 return removed;
             });
         }
@@ -2378,7 +2380,7 @@ namespace RedisExcel
         )
         {
             string host = null;
-            return RunMatrixCore("RedisUDFSetMembers", () => $"key={key}, host={host}", () =>
+            return RunMatrixCore("RedisUDFSetMembers", () => $"key={key}, host={AppConfig.MaskHost(host)}", () =>
             {
                 host = ResolveHost(optionalHost);
                 string keyStr = RequireText(key, "key");
@@ -2386,12 +2388,12 @@ namespace RedisExcel
                 if (members.Length == 0)
                 {
                     if (logger.IsTraceEnabled)
-                        logger.Trace($"RedisUDFSetMembers: key={keyStr}, empty, host={host}");
+                        logger.Trace($"RedisUDFSetMembers: key={keyStr}, empty, host={AppConfig.MaskHost(host)}");
                     return ToSingleColumnMatrix(members);
                 }
                 var result = ToSingleColumnMatrix(members);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFSetMembers: key={keyStr}, members={members.Length}, host={host}");
+                    logger.Trace($"RedisUDFSetMembers: key={keyStr}, members={members.Length}, host={AppConfig.MaskHost(host)}");
                 return result;
             });
         }
