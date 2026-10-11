@@ -154,12 +154,11 @@ namespace RedisExcel.Tests
             // The connect is parked on ConnectionMultiplexer.Connect for the
             // unreachable host (connectTimeout=1000ms): trip the post-create
             // fence while it is in flight, so the in-flight connect must dispose
-            // its multiplexer and fail the caller. The fence is set once the
-            // pool entry exists (observable), not after a fixed sleep: the
-            // entry is published by GetOrAdd before the blocking Connect, so a
-            // short bounded wait avoids a machine-speed dependency.
+            // its multiplexer and fail the caller. Wait for the observable pool
+            // entry (published by GetOrAdd before the blocking Connect) instead
+            // of a fixed sleep, so the test is not machine-speed dependent.
             var poolDeadline = DateTime.UtcNow.AddSeconds(5);
-            while (DateTime.UtcNow < poolDeadline && manager.UdfConnectionCount == 0)
+            while (DateTime.UtcNow < poolDeadline && UdfPool(manager).IsEmpty)
                 Thread.Sleep(10);
             SetShutdown(manager, true);
             Assert.True(thread.Join(15000), "the in-flight connect never completed after the shutdown fence was set");
