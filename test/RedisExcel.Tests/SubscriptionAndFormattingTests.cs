@@ -108,13 +108,15 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void HashEquals_ValuesKeepRedisValueEquality()
+        public void HashEquals_TreatsZeroPaddedAndNumericVariantsAsDifferent()
         {
-            // Values keep RedisValue semantics: numeric formatting differences
-            // ("1" vs "1.00") are the same value and must not trigger an update.
-            var a = new[] { new HashEntry("f", "1") };
-            var b = new[] { new HashEntry("f", "1.00") };
-            Assert.True(RedisResultFormatter.HashEquals(a, b));
+            // Ordinal comparison: "007" and "7" are different strings (a zero-padded
+            // id is not a formatting variant of the number), so the value change must
+            // trigger an update. RedisValue equality would collapse them numerically
+            // and leave the cell stale.
+            var a = new[] { new HashEntry("f", "007") };
+            var b = new[] { new HashEntry("f", "7") };
+            Assert.False(RedisResultFormatter.HashEquals(a, b));
         }
     }
 

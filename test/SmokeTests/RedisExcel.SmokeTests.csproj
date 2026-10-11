@@ -31,6 +31,7 @@
     <Compile Include="..\..\Conflation.cs" />
     <Compile Include="..\..\ExcelJson.cs" />
     <Compile Include="..\..\RedisConnectionManager.cs" />
+    <Compile Include="..\..\RedisResultFormatter.cs" />
     <Compile Include="..\..\RedisSubscriptionManager.cs" />
     <Compile Include="..\..\RedisRuntime.cs" />
     <Compile Include="..\..\RedisUDF.cs" />

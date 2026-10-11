@@ -88,7 +88,9 @@ namespace RedisExcel
         /// <summary>Test-only override: when set, <see cref="Current"/> returns this
         /// instance instead of the machine's file, so the unit suite is hermetic and
         /// never depends on a developer's %USERPROFILE%\RedisExcel.json.</summary>
+#pragma warning disable 0649 // assigned only by the linked unit test sources
         internal static ConfigRoot CurrentOverrideForTests;
+#pragma warning restore 0649
 
         public static ConfigRoot Current => CurrentOverrideForTests ?? _current.Value;
 

@@ -22,14 +22,25 @@ namespace RedisExcel
                 $"{JsonConvert.ToString(e.Name.ToString())}:{JsonConvert.ToString(e.Value.ToString())}")) + "}";
         }
         /// <summary>
+        /// TRUE when two payloads are byte-for-byte identical, for the
+        /// SkipRepeatedMessages dedup. Uses ordinal comparison, NOT RedisValue
+        /// equality: the latter compares numeric-LOOKING strings numerically, so
+        /// "007" == "7", "+1" == "1" and "01234" == "1234" - genuinely different
+        /// string values (zero-padded ids, signed numbers) would then be silently
+        /// swallowed and the cell would keep a stale value. This matches the write
+        /// side (PublishIfChanged already compares ordinals).
+        /// </summary>
+        internal static bool SameMessage(RedisValue a, RedisValue b) =>
+            string.Equals(a.ToString(), b.ToString(), System.StringComparison.Ordinal);
+
+        /// <summary>
         /// TRUE when two HGETALL results have the same fields and values.
         /// Order-insensitive and O(n): "b" is indexed by field NAME as text
         /// (so the distinct Redis fields "1" and "01" never collide), then every
-        /// entry of "a" is looked up and its value compared with RedisValue
-        /// equality (numeric formatting differences such as "1" and "1.00" are
-        /// still the same value and must not trigger an update). The comparison
-        /// assumes unique field names, as guaranteed by a Redis hash: a
-        /// duplicated name collapses to a single dictionary entry.
+        /// entry of "a" is looked up and its value compared ORDINALLY (so a value
+        /// like "007" vs "7" is a real change, not a formatting variant).
+        /// The comparison assumes unique field names, as guaranteed by a Redis
+        /// hash: a duplicated name collapses to a single dictionary entry.
         /// </summary>
         internal static bool HashEquals(HashEntry[] a, HashEntry[] b)
         {
@@ -43,7 +54,7 @@ namespace RedisExcel
             for (int i = 0; i < a.Length; i++)
             {
                 RedisValue value;
-                if (!valuesByName.TryGetValue(a[i].Name.ToString(), out value) || value != a[i].Value)
+                if (!valuesByName.TryGetValue(a[i].Name.ToString(), out value) || !SameMessage(value, a[i].Value))
                     return false;
             }
             return true;

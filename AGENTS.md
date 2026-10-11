@@ -229,11 +229,12 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - 2x2 pair ranges are read as 2 rows x 2 columns (vertical pairs).
 - Identical consecutive payloads are skipped before decoding for literal
   subscriptions and GET/HGET polling (`SkipRepeatedMessages`, default on):
-  payloads are compared without a decode step, using `RedisValue` equality;
-  PSUB patterns are never deduplicated because channels interleave. Unchanged
-  HGETALL hashes are compared field-by-field and skipped too. `RedisValue`
-  equality normalizes numeric formatting (e.g. `"1.00"` equals `"1"`), so
-  formatting-only changes are treated as duplicates.
+  payloads are compared by ORDINAL text, so `"007"` and `"7"` are different
+  values (a zero-padded id must not be swallowed). RedisValue's numeric equality
+  is NOT used: it would collapse `"7"`/`"007"`/`"+1"` and leave the cell stale,
+  and it disagreed with the write side (`PublishIfChanged` already compares
+  ordinals); PSUB patterns are never deduplicated because channels interleave.
+  Unchanged HGETALL hashes are compared field-by-field (ordinal) and skipped too.
 - The config file is read once per Excel process (restart Excel after editing
   it) and searched in: user profile, Excel folder, `C:\Windows` (first existing
   wins). The file may contain `//` and `/* */` comments and is validated against

@@ -210,7 +210,7 @@ namespace RedisExcel
         {
             lock (_sync)
             {
-                if (_hasLastPolledValue && _lastPolledValue == value)
+                if (_hasLastPolledValue && RedisResultFormatter.SameMessage(_lastPolledValue, value))
                     return false;
                 return true;
             }

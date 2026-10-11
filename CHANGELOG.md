@@ -18,6 +18,11 @@
 - **Hermetic unit tests:** the unit suite no longer depends on the machine's
   `%USERPROFILE%\RedisExcel.json` (a leftover `AsyncWrites:true` used to change
   the UDF dispatch); a fixture pins a known default for the run.
+- **`SkipRepeatedMessages` compares payloads ordinally:** `"007"` and `"7"` (or
+  `"+1"`/`"1"`) are now treated as different values, so a zero-padded id is no
+  longer swallowed and the cell stays fresh. The previous `RedisValue` equality
+  compared numeric-looking strings numerically (leaving a stale cell) and
+  disagreed with the write side, which already compared ordinals.
 - **No credentials in cells or logs:** a `host` argument that is a connection
   string carries credentials (`password=` / `user=`), so every error cell, RTD
   `#ERROR` text, the `RedisRTDDefaultHost` cell and log line now masks them

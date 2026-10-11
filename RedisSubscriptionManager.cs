@@ -599,7 +599,7 @@ namespace RedisExcel
                 {
                     lock (_dedupSync)
                     {
-                        if (_hasLastMessage && message == _lastMessage)
+                        if (_hasLastMessage && RedisResultFormatter.SameMessage(_lastMessage, message))
                             return;
                         _lastMessage = message;
                         _hasLastMessage = true;
