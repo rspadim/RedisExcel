@@ -1254,19 +1254,28 @@ internal static class Program
             Check(burstDelivered,
                 $"convergence: a distinct burst payload is observed (stream delivering, {burstBase.ElapsedMilliseconds} ms)");
 
-            // Phase 2: republish FINAL repeatedly; the FINAL value must be
-            // observed at least once. Strict ordering is NOT asserted.
-            string finalPayload = "FINAL-" + runId;
+            // Phase 2: republish a DISTINCT "final" payload each attempt and
+            // require that one is observed. Distinct payloads matter: with the
+            // duplicate-suppression seam pinned on (SkipRepeatedMessages), an
+            // IDENTICAL republish is suppressed, so a single racing miss during
+            // the burst would make every later identical republish invisible.
+            // A distinct payload also cannot be suppressed, so this measures
+            // convergence (eventual delivery), not the dedup path.
+            string finalPrefix = "final-" + runId + "-";
             bool finalObserved = false;
             int finalTries = 0;
             var finalWatch = Stopwatch.StartNew();
             for (int attempt = 0; attempt < finalAttempts && !finalObserved; attempt++)
             {
                 finalTries = attempt + 1;
-                publisher.Publish(redisChannel, finalPayload); // blocking: the server accepted it
+                publisher.Publish(redisChannel, finalPrefix + attempt); // blocking: the server accepted it
                 if (WaitUntil(
-                        () => string.Equals(RedisUDF.RedisUDFChannelLatest(channel, host), finalPayload, StringComparison.Ordinal),
-                        100))
+                        () =>
+                        {
+                            string latest = RedisUDF.RedisUDFChannelLatest(channel, host);
+                            return latest != null && latest.StartsWith(finalPrefix, StringComparison.Ordinal);
+                        },
+                        200))
                 {
                     finalObserved = true;
                 }

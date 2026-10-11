@@ -45,6 +45,14 @@
 - New "Function return values" README section: the per-function return contract
   for reads and writes, the fire-and-forget markers and the error shapes.
 
+### Internal
+
+- CI resilience: the smoke step now retries once (like the liveness step) and the
+  delivery-convergence check publishes a DISTINCT payload per attempt (an
+  identical republish is suppressed by the duplicate-suppression seam, so a
+  single racing miss made convergence look broken). Both were red CI flakes, not
+  add-in defects.
+
 ## v1.4.1
 
 ### Fixed
