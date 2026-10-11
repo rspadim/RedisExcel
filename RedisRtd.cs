@@ -1127,7 +1127,15 @@ namespace RedisExcel
         /// </summary>
         private void DeliverToTopic(TopicData td, string value)
         {
-            if (_realTimeUpdates && !_coalesceRealtimeUpdates)
+            // The RESOLVED window is the single source of truth (Conflation.Resolve
+            // already folds in the explicit ConflationMs and the legacy
+            // CoalesceRealtimeUpdates boolean). Push per message only when the
+            // window says so; otherwise the value waits for the Excel tick, which
+            // conflates to the newest value per window. Keying off the raw boolean
+            // here ignored an explicit ConflationMs (e.g. 200 with
+            // CoalesceRealtime=false pushed per message; ConflationMs=0 was
+            // honoured as windowed).
+            if (_realTimeUpdates && Conflation.PushImmediately(_conflationMs))
                 td.UpdateAndSendToExcel(value);
             else
                 td.UpdateOnly(value);

@@ -145,12 +145,23 @@ namespace RedisExcel
             return task.GetAwaiter().GetResult();
         }
 
-        /// <summary>Response wait bound: the configured timeout plus slack.</summary>
-        internal static int ResponseTimeoutMs()
+        /// <summary>Response wait bound for the RTD pool: the configured RTD
+        /// timeout plus slack. Kept for the RTD batch drain.</summary>
+        internal static int ResponseTimeoutMs() => ResponseTimeoutMs(RedisPool.RtdData);
+
+        /// <summary>Response wait bound for a pool: the pool's configured timeout
+        /// plus slack. The UDF batches must use the UDF timeout, not the RTD one:
+        /// the multiplexer's SyncTimeout comes from the same pool setting, so a
+        /// bound keyed off the wrong pool can abandon a reply that arrived within
+        /// the connection's own timeout.</summary>
+        internal static int ResponseTimeoutMs(RedisPool pool)
         {
             try
             {
-                return Math.Max(500, AppConfig.Current.RTD.timeout + 500);
+                int timeout = pool == RedisPool.UdfData
+                    ? AppConfig.Current.UDF.timeout
+                    : AppConfig.Current.RTD.timeout;
+                return Math.Max(500, timeout + 500);
             }
             catch
             {
@@ -1614,7 +1625,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyExistsAsync(k)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs();
+                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
                 for (int i = 0; i < tasks.Length; i++)
                     result[i, 1] = WaitBoundedResult(tasks[i], timeoutMs) ? "1" : "0";
                 if (logger.IsTraceEnabled)
@@ -1878,7 +1889,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyTimeToLiveAsync(k)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs();
+                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     var ttl = WaitBoundedResult(tasks[i], timeoutMs);
@@ -2043,7 +2054,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.HashGetAsync(k, fieldStr)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs();
+                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     // Per-row try: one failing hash (e.g. WRONGTYPE) must not

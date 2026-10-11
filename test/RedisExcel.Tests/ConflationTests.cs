@@ -52,6 +52,24 @@ namespace RedisExcel.Tests
             Assert.Equal(0, Conflation.Resolve(null, coalesceRealtimeUpdates: true, excelUpdateRateMs: 0));
         }
 
+        [Theory]
+        // The delivery MODE must follow the RESOLVED window, not the raw boolean.
+        // These 4 combinations pin the contract the old DeliverToTopic broke:
+        // an explicit ConflationMs wins in both directions.
+        // (ConflationMs, CoalesceRealtimeUpdates, tickMs, expectedPushImmediately)
+        [InlineData(200, false, 100, false)] // explicit window, legacy says per-message -> WINDOW
+        [InlineData(0, true, 100, true)]     // explicit off, legacy says window -> PER-MESSAGE
+        [InlineData(200, true, 100, false)]  // explicit window, legacy window -> WINDOW
+        [InlineData(0, false, 100, true)]    // explicit off, legacy off -> PER-MESSAGE
+        [InlineData(null, true, 100, false)] // absent + legacy window -> WINDOW (tick)
+        [InlineData(null, false, 100, true)] // absent + legacy off -> PER-MESSAGE
+        public void PushImmediately_FollowsTheResolvedWindow(
+            int? conflationMs, bool coalesceRealtimeUpdates, int tickMs, bool expected)
+        {
+            int window = Conflation.Resolve(conflationMs, coalesceRealtimeUpdates, tickMs);
+            Assert.Equal(expected, Conflation.PushImmediately(window));
+        }
+
         [Fact]
         public void IsDue_NoWindow_AlwaysPushes()
         {

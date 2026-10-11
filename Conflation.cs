@@ -43,6 +43,17 @@ namespace RedisExcel
         }
 
         /// <summary>
+        /// Whether a real-time value should be pushed to Excel immediately
+        /// (per-message) instead of waiting for the Excel tick (which conflates
+        /// to the newest value per window). The RESOLVED window is the single
+        /// source of truth: a window &lt;= 0 is per-message. This folds in the
+        /// explicit <c>ConflationMs</c> and the legacy <c>CoalesceRealtimeUpdates</c>
+        /// boolean via <see cref="Resolve"/>, so an explicit value cannot be
+        /// overridden by the old boolean (a bug the pre-helper code had).
+        /// </summary>
+        internal static bool PushImmediately(int resolvedWindowMs) => resolvedWindowMs <= 0;
+
+        /// <summary>
         /// Whether a push is due for a topic whose last push happened at
         /// <paramref name="lastPushTicks"/>. A window &lt;= 0 always pushes
         /// (conflation off) and a topic that never pushed always pushes. A clock
