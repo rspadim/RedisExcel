@@ -2442,6 +2442,12 @@ namespace RedisExcel
             }
             return AppConfig.ValidateConfiguration(path);
         }
+
+        [ExcelFunction(Description = "Returns the JSON Schema used to validate RedisExcel.json (so you can inspect the allowed keys/values).", IsVolatile = true)]
+        public static string RedisJsonSchemaContents()
+        {
+            return ConfigSchema.Text;
+        }
     }
 
     /// <summary>

@@ -12,6 +12,7 @@ namespace RedisExcel.Tests
     /// failure; a task that never completes returns false at the bound instead
     /// of blocking the calling thread forever.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class WaitBoundedTests
     {
         [Fact]

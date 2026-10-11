@@ -8,6 +8,7 @@ namespace RedisExcel.Tests
     /// must mask that credential. MaskHost is the single redaction primitive;
     /// these tests pin it and the end-to-end cell text.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class HostMaskingTests
     {
         [Fact]

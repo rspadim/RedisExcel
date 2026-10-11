@@ -5,6 +5,7 @@ using Xunit;
 
 namespace RedisExcel.Tests
 {
+    [Collection("write-mode-seam")]
     public class AppConfigTests
     {
         [Fact]
@@ -397,7 +398,7 @@ namespace RedisExcel.Tests
                 string report = AppConfig.ValidateConfiguration(bad);
                 Assert.StartsWith("Error:", report);
                 Assert.Contains("ConflationMs", report);
-                Assert.Contains("3600000", report);
+                Assert.Contains("maximum", report);
             }
         }
 

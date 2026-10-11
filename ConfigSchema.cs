@@ -1,15 +1,17 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using NJsonSchema;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 
 namespace RedisExcel
 {
     /// <summary>A single problem found while validating RedisExcel.json.</summary>
     internal sealed class ConfigIssue
     {
-        /// <summary>JSON pointer-ish path of the offending value ("" = the root).</summary>
+        /// <summary>JSON path of the offending value (e.g. "#/RTD.timeout").</summary>
         public string Path { get; }
         public string Message { get; }
 
@@ -23,64 +25,50 @@ namespace RedisExcel
     }
 
     /// <summary>
-    /// Validates RedisExcel.json against an embedded JSON Schema and produces a
-    /// cleaned copy with every invalid value removed, so one wrong value can no
-    /// longer discard the whole file (the tolerant parser previously failed at
-    /// the JSON reader level for bool/object/array in a numeric position, which
-    /// the Error callback cannot repair, and the file collapsed to defaults).
+    /// Validates RedisExcel.json against an embedded JSON Schema using NJsonSchema,
+    /// and produces a cleaned copy with every invalid value removed, so one wrong
+    /// value can no longer discard the whole file. The previous tolerant parser
+    /// failed at the JSON READER level for a bool/object/array in a numeric
+    /// position (the Error callback cannot repair that), which collapsed the file
+    /// to defaults - repointing the host to localhost and changing the write mode.
     ///
-    /// The subset of JSON Schema keywords this schema uses is supported: type,
-    /// properties, additionalProperties (bool or schema), enum, minimum, maximum.
-    /// Comments (// and /* */) are accepted. Keys are matched case-insensitively,
-    /// mirroring Newtonsoft's default property binding.
+    /// The schema lives in RedisExcel.schema.json, embedded in the assembly as a
+    /// resource (so it ships inside the XLL) and exposed verbatim to Excel through
+    /// RedisJsonSchemaContents(). Comments (// and /* */) are accepted on load.
     /// </summary>
     internal static class ConfigSchema
     {
-        /// <summary>The schema for RedisExcel.json. Kept as a literal so it ships
-        /// inside the XLL (no external file) and is the single source of truth for
-        /// both validation and the "clean then deserialize" load path.</summary>
-        internal const string SchemaJson = @"{
-  ""type"": ""object"",
-  ""additionalProperties"": false,
-  ""properties"": {
-    ""RTD"": {
-      ""type"": ""object"",
-      ""additionalProperties"": false,
-      ""properties"": {
-        ""host"": { ""type"": ""string"" },
-        ""timeout"": { ""type"": ""integer"", ""minimum"": 1 },
-        ""RedisUpdateRateMs"": { ""type"": ""integer"", ""minimum"": 1 },
-        ""ExcelUpdateRateMs"": { ""type"": ""integer"", ""minimum"": 1 },
-        ""ExcelUpdateStyle"": { ""type"": ""string"", ""enum"": [ ""Timer"", ""Realtime"", ""Automatic"" ] },
-        ""MessageCounterThreshold"": { ""type"": ""integer"" },
-        ""UseGetMultiple"": { ""type"": ""boolean"" }
-      }
-    },
-    ""UDF"": {
-      ""type"": ""object"",
-      ""additionalProperties"": false,
-      ""properties"": {
-        ""host"": { ""type"": ""string"" },
-        ""timeout"": { ""type"": ""integer"", ""minimum"": 1 }
-      }
-    },
-    ""Servers"": { ""type"": ""object"", ""additionalProperties"": { ""type"": ""string"" } },
-    ""UpdateCheck"": { ""type"": ""boolean"" },
-    ""SkipRepeatedMessages"": { ""type"": ""boolean"" },
-    ""CoalesceRealtimeUpdates"": { ""type"": ""boolean"" },
-    ""ConflationMs"": { ""type"": ""integer"", ""minimum"": 0, ""maximum"": 3600000 },
-    ""PublishDedupCacheSize"": { ""type"": ""integer"", ""minimum"": 1 },
-    ""SyncWrite"": { ""type"": ""string"", ""enum"": [ ""sync"", ""fireforget"", ""fireforget-all"" ] },
-    ""AsyncWrites"": { ""type"": ""boolean"" }
-  }
-}";
+        private const string ResourceSuffix = "RedisExcel.schema.json";
 
-        private static readonly JObject Schema = (JObject)JsonConvert.DeserializeObject(SchemaJson);
+        private static readonly Lazy<string> _schemaText = new Lazy<string>(ReadSchemaText);
+        private static readonly Lazy<JsonSchema> _schema =
+            new Lazy<JsonSchema>(() => JsonSchema.FromJsonAsync(_schemaText.Value).GetAwaiter().GetResult());
+
+        /// <summary>The embedded schema document, verbatim (for the Excel function
+        /// and for tooling).</summary>
+        internal static string Text => _schemaText.Value;
+
+        private static string ReadSchemaText()
+        {
+            var assembly = typeof(ConfigSchema).Assembly;
+            foreach (var name in assembly.GetManifestResourceNames())
+            {
+                if (name.EndsWith(ResourceSuffix, StringComparison.Ordinal))
+                {
+                    using (var stream = assembly.GetManifestResourceStream(name))
+                    using (var reader = new StreamReader(stream))
+                        return reader.ReadToEnd();
+                }
+            }
+            // Fallback: a minimal object schema. Never throw at load - the config
+            // path must keep working even if the resource is somehow missing.
+            return "{\"type\":\"object\"}";
+        }
 
         /// <summary>Parses JSON accepting // and /* */ comments (Newtonsoft discards
-        /// them when loading into a JToken). Returns null when the text is not a JSON
-        /// object; the caller treats that as an unusable file. Throws on malformed
-        /// JSON (the caller's catch handles it).</summary>
+        /// them when loading into a JToken). Returns null when the text is not a
+        /// JSON object; the caller treats that as an unusable file. Throws on
+        /// malformed JSON (the caller's catch handles it).</summary>
         internal static JObject ParseWithComments(string json)
         {
             using (var reader = new JsonTextReader(new StringReader(json)))
@@ -97,128 +85,97 @@ namespace RedisExcel
         /// reader never sees it. Returns null when the root itself is invalid.</summary>
         internal static JToken Clean(JToken root, IList<ConfigIssue> issues)
         {
-            return Prune(root, Schema, "", issues);
-        }
+            var errors = _schema.Value.Validate(root);
+            if (errors.Count == 0)
+                return root;
 
-        private static JToken Prune(JToken value, JObject schema, string path, IList<ConfigIssue> issues)
-        {
-            string type = (string)schema["type"];
-            if (!MatchesType(value, type))
+            var perPath = new List<KeyValuePair<string, string>>();
+            foreach (var error in errors)
             {
-                issues.Add(new ConfigIssue(path, "expected " + type + ", found " + Describe(value)));
-                return null;
+                perPath.Add(new KeyValuePair<string, string>(NormalizePath(error.Path), Describe(error)));
             }
 
-            switch (type)
+            // Remove the offending values from the deepest path first, so that
+            // dropping a child does not shift a parent that also has an error.
+            var cleaned = root.DeepClone();
+            perPath.Sort((a, b) => PathDepth(b.Key).CompareTo(PathDepth(a.Key)));
+            foreach (var pair in perPath)
             {
-                case "integer":
-                {
-                    long n = value.Value<long>();
-                    var min = schema["minimum"];
-                    var max = schema["maximum"];
-                    if (min != null && n < min.Value<long>())
-                    {
-                        issues.Add(new ConfigIssue(path, "must be >= " + min.Value<long>() + " (found " + n + ")"));
-                        return null;
-                    }
-                    if (max != null && n > max.Value<long>())
-                    {
-                        issues.Add(new ConfigIssue(path, "must be <= " + max.Value<long>() + " (found " + n + ")"));
-                        return null;
-                    }
-                    return value;
-                }
-                case "string":
-                {
-                    var allowed = schema["enum"] as JArray;
-                    if (allowed != null)
-                    {
-                        string s = value.Value<string>();
-                        foreach (var e in allowed)
-                        {
-                            // Case-insensitive: Newtonsoft binds enum strings and the
-                            // SyncWrite modes case-insensitively.
-                            if (string.Equals((string)e, s, StringComparison.OrdinalIgnoreCase))
-                                return value;
-                        }
-                        issues.Add(new ConfigIssue(path, "must be one of [" + Join(allowed) + "], found '" + s + "'"));
-                        return null;
-                    }
-                    return value;
-                }
-                case "boolean":
-                    return value;
-                case "object":
-                {
-                    var obj = (JObject)value;
-                    var props = schema["properties"] as JObject;
-                    var additional = schema["additionalProperties"];
-                    var cleaned = new JObject();
-                    foreach (var prop in obj.Properties())
-                    {
-                        string childPath = path + "/" + prop.Name;
-                        var childSchema = FindProperty(props, prop.Name);
-                        if (childSchema != null)
-                        {
-                            var kept = Prune(prop.Value, childSchema, childPath, issues);
-                            if (kept != null) cleaned[prop.Name] = kept;
-                        }
-                        else if (additional is JObject additionalSchema)
-                        {
-                            var kept = Prune(prop.Value, additionalSchema, childPath, issues);
-                            if (kept != null) cleaned[prop.Name] = kept;
-                        }
-                        else if (additional != null && additional.Type == JTokenType.Boolean && !(bool)additional)
-                        {
-                            issues.Add(new ConfigIssue(childPath, "unknown key"));
-                        }
-                        else
-                        {
-                            cleaned[prop.Name] = prop.Value;
-                        }
-                    }
-                    return cleaned;
-                }
-                default:
-                    return value;
+                RemovePath(cleaned as JObject, pair.Key);
+                issues?.Add(new ConfigIssue(pair.Key, pair.Value));
             }
+            return cleaned;
         }
 
-        private static JObject FindProperty(JObject properties, string name)
+        /// <summary>NJsonSchema paths look like "#/RTD.timeout" or "#/Extra"; turn
+        /// them into a slash path the remover understands ("RTD/timeout").</summary>
+        private static string NormalizePath(string path)
         {
-            if (properties == null)
-                return null;
-            if (properties.TryGetValue(name, out var exact) && exact is JObject exactObj)
-                return exactObj;
-            foreach (var prop in properties.Properties())
+            if (string.IsNullOrEmpty(path))
+                return "";
+            string p = path.StartsWith("#", StringComparison.Ordinal) ? path.Substring(1) : path;
+            p = p.Replace('.', '/');
+            while (p.StartsWith("/", StringComparison.Ordinal))
+                p = p.Substring(1);
+            return p;
+        }
+
+        private static int PathDepth(string path) =>
+            string.IsNullOrEmpty(path) ? 0 : path.Split('/').Length;
+
+        private static void RemovePath(JObject root, string path)
+        {
+            if (root == null || string.IsNullOrEmpty(path))
+                return;
+            var parts = path.Split('/');
+            JToken current = root;
+            for (int i = 0; i < parts.Length - 1; i++)
             {
-                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase) && prop.Value is JObject obj)
-                    return obj;
+                current = FindChild(current, parts[i]);
+                if (current == null)
+                    return;
+            }
+            var last = FindProperty(current as JObject, parts[parts.Length - 1]);
+            if (last != null)
+                last.Remove();
+        }
+
+        private static JObject FindChild(JToken token, string name)
+        {
+            var obj = token as JObject;
+            var prop = FindProperty(obj, name);
+            return prop?.Value as JObject;
+        }
+
+        private static JProperty FindProperty(JObject obj, string name)
+        {
+            if (obj == null)
+                return null;
+            foreach (var prop in obj.Properties())
+            {
+                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
+                    return prop;
             }
             return null;
         }
 
-        private static bool MatchesType(JToken value, string type)
+        private static string Describe(NJsonSchema.Validation.ValidationError error)
         {
-            switch (type)
+            switch (error.Kind)
             {
-                case "object": return value != null && value.Type == JTokenType.Object;
-                case "string": return value != null && value.Type == JTokenType.String;
-                case "integer": return value != null && value.Type == JTokenType.Integer;
-                case "boolean": return value != null && value.Type == JTokenType.Boolean;
-                default: return true;
+                case NJsonSchema.Validation.ValidationErrorKind.IntegerExpected: return "expected an integer";
+                case NJsonSchema.Validation.ValidationErrorKind.NumberExpected: return "expected a number";
+                case NJsonSchema.Validation.ValidationErrorKind.StringExpected: return "expected a string";
+                case NJsonSchema.Validation.ValidationErrorKind.BooleanExpected: return "expected true or false";
+                case NJsonSchema.Validation.ValidationErrorKind.ObjectExpected: return "expected an object";
+                case NJsonSchema.Validation.ValidationErrorKind.ArrayExpected: return "expected an array";
+                case NJsonSchema.Validation.ValidationErrorKind.NoAdditionalPropertiesAllowed: return "unknown key";
+                case NJsonSchema.Validation.ValidationErrorKind.NumberTooSmall: return "value is below the minimum";
+                case NJsonSchema.Validation.ValidationErrorKind.NumberTooBig: return "value is above the maximum";
+                case NJsonSchema.Validation.ValidationErrorKind.NotInEnumeration: return "not one of the allowed values";
+                case NJsonSchema.Validation.ValidationErrorKind.PatternMismatch: return "not one of the allowed values";
+                default: return error.Kind.ToString();
             }
-        }
-
-        private static string Describe(JToken value) =>
-            value == null ? "null" : value.Type.ToString().ToLowerInvariant();
-
-        private static string Join(JArray array)
-        {
-            var parts = new List<string>();
-            foreach (var token in array)
-                parts.Add(token.ToString());
-            return string.Join(", ", parts);
         }
     }
 }

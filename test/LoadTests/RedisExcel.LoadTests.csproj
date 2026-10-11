@@ -11,6 +11,7 @@
     <PackageReference Include="NLog" Version="6.0.0-rc3" />
     <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NJsonSchema" Version="10.9.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -27,6 +28,12 @@
     <Compile Include="..\..\RedisRuntime.cs" />
     <Compile Include="..\..\TickGate.cs" />
     <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\RedisExcel.schema.json">
+      <LogicalName>RedisExcel.schema.json</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
 </Project>

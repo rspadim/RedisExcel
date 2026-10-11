@@ -43,7 +43,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | File | Responsibility |
 | --- | --- |
 | `Config.cs` | `AppConfig`: loads `RedisExcel.json` once, safe defaults, host alias resolution. |
-| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates (comments accepted) and drops bad values so one mistake no longer discards the file. |
+| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates with NJsonSchema (comments accepted) and drops bad values so one mistake no longer discards the file. |
 | `RedisConnectionManager.cs` | Single place that creates/caches `ConnectionMultiplexer` per host and pool (`RtdData`/`RtdSub`/`UdfData`). |
 | `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
@@ -277,8 +277,9 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 
 Covers: `ExcelJson` conversions and the matrix size/total-cell budget,
 `AppConfig` load/sanitize (including alias trim/case-insensitivity, the
-undefined-`ExcelUpdateStyle` reset and the tolerant per-value parsing),
-`ResolveHostCore` (exact-match priority), the real-time conflation window
+undefined-`ExcelUpdateStyle` reset, the JSON-Schema per-value validation/drop and
+the comment-tolerant parse), `ResolveHostCore` (exact-match priority), the
+real-time conflation window
 (`ConflationMs` sanitize/resolve/due), the
 `RedisConnectionManager`/`RedisSubscriptionManager`
 behavior (the shutdown fences, the connect-failure memo, eviction protection and

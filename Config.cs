@@ -85,7 +85,12 @@ namespace RedisExcel
 
         private static readonly Lazy<ConfigRoot> _current = new Lazy<ConfigRoot>(Load);
 
-        public static ConfigRoot Current => _current.Value;
+        /// <summary>Test-only override: when set, <see cref="Current"/> returns this
+        /// instance instead of the machine's file, so the unit suite is hermetic and
+        /// never depends on a developer's %USERPROFILE%\RedisExcel.json.</summary>
+        internal static ConfigRoot CurrentOverrideForTests;
+
+        public static ConfigRoot Current => CurrentOverrideForTests ?? _current.Value;
 
         private static ConfigRoot Load() => LoadFromPaths(CandidatePaths());
 

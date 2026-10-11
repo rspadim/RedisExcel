@@ -7,6 +7,7 @@ using Xunit;
 
 namespace RedisExcel.Tests
 {
+    [Collection("write-mode-seam")]
     public class SubscriptionKeyTests
     {
         [Fact]
@@ -49,6 +50,7 @@ namespace RedisExcel.Tests
                 RedisSubscriptionManager.MakeKey("a", "b\u0001c", false));
         }
     }
+    [Collection("write-mode-seam")]
 
     public class RedisResultFormatterTests
     {
@@ -122,6 +124,7 @@ namespace RedisExcel.Tests
     /// unchanged payload is still fanned out to the new listener. No Redis
     /// server is involved; only the marker cache and the join handler run.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class ListenerJoinDedupTests
     {
         public ListenerJoinDedupTests()
@@ -244,6 +247,7 @@ namespace RedisExcel.Tests
     /// The state's HandleMessage is driven through reflection, so no live
     /// publish is needed either. No other test class touches these statics.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class RedisSubscriptionManagerLifecycleTests
     {
         // A refused local port: the connect fails fast and stays in-process,

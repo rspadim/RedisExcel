@@ -273,6 +273,7 @@ Functions to use directly in Excel cells:
 | RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
 | RedisCheckConfigFile          | Validate RedisExcel.json against its schema | optionalFilePath (blank = the config in use) |
+| RedisJsonSchemaContents       | The JSON Schema used to validate RedisExcel.json | none                              |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
@@ -327,6 +328,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | `RedisUDFServerTime` | the server time | - |
 | `RedisUDFUpdateAvailable` | `TRUE` when a newer release is known (background check, never blocks) | `FALSE` |
 | `RedisCheckConfigFile` | `OK (...)` when the config is valid, otherwise one line per problem | `Error: ...` (never blocks) |
+| `RedisJsonSchemaContents` | the JSON Schema text (the allowed keys/values) | - |
 | `RedisUDFConnectionCount` | live UDF connections | `0` |
 | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix` | the converted text / matrix | `Error:` cell on bad input |
 
@@ -439,6 +441,8 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 > kept. Put `=RedisCheckConfigFile()` in a cell to validate the configuration in
 > use, or `=RedisCheckConfigFile("C:\\path\\RedisExcel.json")` for a specific
 > file: it returns `OK (...)` or one line per problem without needing the log.
+> `=RedisJsonSchemaContents()` returns the JSON Schema itself (the allowed keys
+> and values), validated with NJsonSchema against the schema shipped in the XLL.
 
 #### Other JSON keys
 

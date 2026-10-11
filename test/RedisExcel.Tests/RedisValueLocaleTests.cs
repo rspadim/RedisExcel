@@ -5,6 +5,7 @@ using Xunit;
 
 namespace RedisExcel.Tests
 {
+    [Collection("write-mode-seam")]
     public class RedisValueLocaleTests
     {
         /// <summary>

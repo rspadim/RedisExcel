@@ -14,6 +14,7 @@ namespace RedisExcel.Tests
     /// marked volatile, so Excel evaluates it only on entry and when an
     /// argument changes.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class NonVolatileTwinTests
     {
         /// <summary>The (volatile base, non-volatile twin) UDF name pairs.</summary>
@@ -129,11 +130,12 @@ namespace RedisExcel.Tests
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToList();
 
-            // 42 reads/status writes + the config validator = 43 volatile functions;
-            // 24 have a NonVolatile write twin, so 19 are reads/status with no twin.
-            Assert.Equal(43, volatileFunctions.Count);
+            // 42 reads/status writes + the config validator + the schema dump = 44
+            // volatile functions; 24 have a NonVolatile write twin, so 20 are
+            // reads/status with no twin.
+            Assert.Equal(44, volatileFunctions.Count);
             Assert.Equal(24, volatileWithTwin.Count);
-            Assert.Equal(19, volatileFunctions.Count - volatileWithTwin.Count);
+            Assert.Equal(20, volatileFunctions.Count - volatileWithTwin.Count);
             Assert.Equal(explicitBases, volatileWithTwin);
 
             foreach (string name in volatileWithTwin)
