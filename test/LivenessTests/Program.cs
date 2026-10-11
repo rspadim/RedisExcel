@@ -214,6 +214,7 @@ namespace RedisExcel.LivenessTests
         {
             StartProbes();
 
+            SelfCheckTimeoutClassifier();
             Warmup();
             PhaseA0();
             PhaseA();
@@ -1973,6 +1974,30 @@ namespace RedisExcel.LivenessTests
             // and a slow runner fails an otherwise healthy run.
             return text.IndexOf("Error: Timeout ", StringComparison.Ordinal) >= 0
                 || text.IndexOf("The message timed out", StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>Self-test for the transient-timeout classifier: an
+        /// unclassified StackExchange.Redis timeout would surface as a hard UDF
+        /// error and fail a healthy run on a loaded runner (the regression this
+        /// guard prevents). Run once at startup so the shared CI runner keeps
+        /// exercising it.</summary>
+        private static void SelfCheckTimeoutClassifier()
+        {
+            string[][] cases =
+            {
+                new[] { "Error: Timeout performing PUBLISH, inst: 0", "t" },
+                new[] { "Error: Timeout awaiting response (5000ms elapsed, timeout is 1000ms)", "t" },
+                new[] { "Error: Timeout before awaiting for tasks", "t" },
+                new[] { "Error: The message timed out in the backlog attempting to send", "t" },
+                new[] { "Error: OOM command not allowed when used memory > 'maxmemory'", "f" },
+                new[] { "Error: WRONGTYPE Operation against a key holding the wrong kind of value", "f" },
+                new[] { null, "f" }
+            };
+            int bad = 0;
+            foreach (var c in cases)
+                if (IsTimeout(c[0]) != (c[1] == "t")) bad++;
+            Check("timeout-classifier", bad == 0,
+                bad == 0 ? "all " + cases.Length + " cases classified" : bad + " misclassified");
         }
 
         private static void Check(string name, bool ok, string detail)
