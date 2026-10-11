@@ -57,6 +57,12 @@ namespace RedisExcel
                             row[j] = null;
                         else if (value is double d)
                         {
+                            // Reject non-finite doubles for symmetry with
+                            // JSONToMatrix: Newtonsoft would otherwise emit the raw
+                            // token NaN/Infinity (invalid JSON), while the reverse
+                            // direction rejects them with this same message.
+                            if (double.IsNaN(d) || double.IsInfinity(d))
+                                throw new ArgumentException("JSON contains a non-finite number");
                             // Excel numbers are doubles; serialize whole numbers as longs,
                             // but only when the cast cannot overflow. long.MaxValue is not
                             // representable as a double (it rounds up to 2^63), so compare

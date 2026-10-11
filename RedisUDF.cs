@@ -803,7 +803,21 @@ namespace RedisExcel
                 string formatted = d.ToString("G15", CultureInfo.InvariantCulture);
                 if (!(double.TryParse(formatted, NumberStyles.Float, CultureInfo.InvariantCulture, out var back) && back == d))
                     formatted = d.ToString("G17", CultureInfo.InvariantCulture);
+                // -0.0 formats as "0" and the round-trip check above accepts it
+                // (0.0 == -0.0), silently dropping the sign bit. Preserve it
+                // (double.IsNegative is .NET Core only).
+                if (d == 0.0 && BitConverter.DoubleToInt64Bits(d) < 0)
+                    return "-0";
                 return formatted;
+            }
+            // float is not an Excel cell type but can arrive from a caller; format
+            // it with round-trip precision too (its ToString() uses only 7 digits
+            // and silently changes the value), consistent with ToInt64Invariant.
+            if (value is float f)
+            {
+                if (f == 0f && BitConverter.ToInt32(BitConverter.GetBytes(f), 0) < 0)
+                    return "-0";
+                return f.ToString("R", CultureInfo.InvariantCulture);
             }
             return Convert.ToString(value, CultureInfo.InvariantCulture);
         }

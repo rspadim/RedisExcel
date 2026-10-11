@@ -62,6 +62,18 @@ namespace RedisExcel.Tests
             Assert.Equal(1e19, parsed[0][0].Value<double>());
         }
 
+        [Theory]
+        [InlineData(double.NaN)]
+        [InlineData(double.PositiveInfinity)]
+        [InlineData(double.NegativeInfinity)]
+        public void MatrixToJSON_NonFiniteReturnsError(double value)
+        {
+            // Symmetric with JSONToMatrix: a non-finite double must not serialize to
+            // the raw token NaN/Infinity (invalid JSON); it returns the same Error.
+            var result = ExcelJson.RedisUDFMatrixToJSON(new object[,] { { value } });
+            Assert.Equal("Error: JSON contains a non-finite number", result);
+        }
+
         [Fact]
         public void MatrixToJSON_ExactlyTwoToThe63StaysDouble()
         {

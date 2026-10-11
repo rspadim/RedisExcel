@@ -47,6 +47,27 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ToRedisString_FloatUsesRoundTripPrecision()
+        {
+            // A float fell into Convert.ToString -> Single.ToString() (7 digits),
+            // which does not round-trip (16777217f became 16777216). It must use
+            // round-trip precision like the double branch.
+            Assert.Equal("0.333333343", RedisUDF.ToRedisString(1f / 3f));
+            Assert.Equal(16777217f, float.Parse(RedisUDF.ToRedisString(16777217f), System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Equal(float.MaxValue, float.Parse(RedisUDF.ToRedisString(float.MaxValue), System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        [Fact]
+        public void ToRedisString_PreservesNegativeZero()
+        {
+            // -0.0 formats as "0" and the round-trip guard accepts it, silently
+            // dropping the sign bit; the sign is preserved instead.
+            Assert.Equal("-0", RedisUDF.ToRedisString(-0.0));
+            Assert.Equal("-0", RedisUDF.ToRedisString(-0.0f));
+            Assert.Equal("0", RedisUDF.ToRedisString(0.0));
+        }
+
+        [Fact]
         public void ToRedisString_PassesThroughEmptyAndWhitespaceStrings()
         {
             // An explicit empty or whitespace-only cell is a valid Redis name,
