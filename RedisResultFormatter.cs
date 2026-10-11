@@ -23,15 +23,31 @@ namespace RedisExcel
         }
         /// <summary>
         /// TRUE when two payloads are byte-for-byte identical, for the
-        /// SkipRepeatedMessages dedup. Uses ordinal comparison, NOT RedisValue
-        /// equality: the latter compares numeric-LOOKING strings numerically, so
-        /// "007" == "7", "+1" == "1" and "01234" == "1234" - genuinely different
-        /// string values (zero-padded ids, signed numbers) would then be silently
-        /// swallowed and the cell would keep a stale value. This matches the write
-        /// side (PublishIfChanged already compares ordinals).
+        /// SkipRepeatedMessages dedup. Compares the RAW BYTES, not string equality:
+        ///   * RedisValue's own == compares numeric-LOOKING strings numerically
+        ///     ("007" == "7"), which would swallow genuinely different values and
+        ///     leave the cell stale;
+        ///   * ToString() decodes UTF-8, so two DIFFERENT invalid byte sequences
+        ///     ("\x80" vs "\x81") both decode to U+FFFD and would compare equal,
+        ///     again leaving the cell stale on a real change.
+        /// A byte comparison is correct in both cases and matches the write side
+        /// (PublishIfChanged compares ordinals of the same bytes).
         /// </summary>
-        internal static bool SameMessage(RedisValue a, RedisValue b) =>
-            string.Equals(a.ToString(), b.ToString(), System.StringComparison.Ordinal);
+        internal static bool SameMessage(RedisValue a, RedisValue b)
+        {
+            if (a.IsNull || b.IsNull)
+                return a.IsNull && b.IsNull;
+            byte[] ba = (byte[])a;
+            byte[] bb = (byte[])b;
+            if (ba.Length != bb.Length)
+                return false;
+            for (int i = 0; i < ba.Length; i++)
+            {
+                if (ba[i] != bb[i])
+                    return false;
+            }
+            return true;
+        }
 
         /// <summary>
         /// TRUE when two HGETALL results have the same fields and values.

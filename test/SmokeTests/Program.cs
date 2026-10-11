@@ -1606,18 +1606,17 @@ internal static class Program
             Check(!RedisUDF.RedisUDFUpdateAvailable(),
                 "UpdateAvailable: returns FALSE for the running tag itself");
 
-            // And it must agree with the live GitHub release for a KNOWN build tag.
-            // Use synthetic running tags so the expected value is hard-coded and
-            // independent of the comparison under test: any real release is newer
-            // than 0.0.1 (=> TRUE) and older than 99.0.0 (=> FALSE).
-            UpdateCheck.CurrentTagOverrideForTests = "0.0.1";
+            // And it must agree with the live GitHub release. Compute the expected
+            // value with an INDEPENDENT parser (not UpdateCheck.IsNewer, which is
+            // the code under test): strip a leading 'v', split on '.', compare
+            // numerically. This makes the check falsifiable per-release instead of
+            // "any real release is between 0.0.1 and 99.0.0".
+            string buildTag = BuildTagSnapshot();
+            UpdateCheck.CurrentTagOverrideForTests = buildTag;
             UpdateLatestTagField.SetValue(null, latest);
-            Check(RedisUDF.RedisUDFUpdateAvailable(),
-                $"UpdateAvailable: TRUE for the live release {latest} vs a build at 0.0.1");
-            UpdateCheck.CurrentTagOverrideForTests = "99.0.0";
-            UpdateLatestTagField.SetValue(null, latest);
-            Check(!RedisUDF.RedisUDFUpdateAvailable(),
-                $"UpdateAvailable: FALSE for the live release {latest} vs a build at 99.0.0");
+            bool expected = CompareVersions(latest, buildTag) > 0;
+            Check(RedisUDF.RedisUDFUpdateAvailable() == expected,
+                $"UpdateAvailable: live {latest} vs build {buildTag} => {expected}");
         }
         finally
         {
@@ -1625,5 +1624,38 @@ internal static class Program
             UpdateLatestTagField.SetValue(null, originalTag);
             AppConfig.Current.UpdateCheck = originalUpdateCheck;
         }
+    }
+
+    /// <summary>The running build tag (BuildInfo.Tag) at the moment of the check,
+    /// captured before the override so the comparison uses the real build.</summary>
+    private static string BuildTagSnapshot() => RedisExcel.BuildInfo.Tag;
+
+    /// <summary>Independent numeric version comparison (NOT UpdateCheck.IsNewer):
+    /// strips a leading 'v' and any suffix, splits on '.', compares numerically
+    /// with missing components treated as 0. Used to derive the expected
+    /// "update available" without reusing the code under test.</summary>
+    private static int CompareVersions(string a, string b)
+    {
+        long[] Parse(string v)
+        {
+            v = (v ?? "").Trim();
+            if (v.StartsWith("v", StringComparison.OrdinalIgnoreCase)) v = v.Substring(1);
+            int suffix = v.IndexOfAny(new[] { '-', '+' });
+            if (suffix >= 0) v = v.Substring(0, suffix);
+            var parts = v.Split('.');
+            var nums = new long[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+                long.TryParse(parts[i], NumberStyles.Integer, CultureInfo.InvariantCulture, out nums[i]);
+            return nums;
+        }
+        long[] x = Parse(a), y = Parse(b);
+        int n = Math.Max(x.Length, y.Length);
+        for (int i = 0; i < n; i++)
+        {
+            long xi = i < x.Length ? x[i] : 0;
+            long yi = i < y.Length ? y[i] : 0;
+            if (xi != yi) return xi.CompareTo(yi);
+        }
+        return 0;
     }
 }

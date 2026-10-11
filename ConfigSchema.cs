@@ -103,27 +103,50 @@ namespace RedisExcel
             if (schema.Type.HasFlag(JsonObjectType.Object) && value is JObject obj)
             {
                 var cleaned = new JObject();
-                var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                // Known model properties, keyed by their canonical schema name. Two
+                // keys that differ only by case bind to the same field
+                // case-insensitively; keep the exact-case spelling (else the first)
+                // so a bad "rtd" cannot shadow a good "RTD" - in EITHER order.
+                var modelProps = new Dictionary<string, JProperty>(StringComparer.OrdinalIgnoreCase);
+                var otherProps = new List<JProperty>();
                 foreach (var prop in obj.Properties())
                 {
-                    string childPath = path + "/" + prop.Name;
-                    // Two keys that differ only by case are ambiguous (Newtonsoft
-                    // binds case-insensitively, so one silently wins). Keep the
-                    // first and drop the later variant so a bad duplicate cannot
-                    // override a good one.
-                    if (!seenNames.Add(prop.Name))
+                    var childSchema = FindProperty(schema, prop.Name, out string canonical);
+                    if (childSchema == null)
                     {
-                        issues?.Add(new ConfigIssue(childPath, "duplicate key (differs only by case)"));
+                        otherProps.Add(prop);
                         continue;
                     }
-                    var childSchema = FindProperty(schema, prop.Name);
-                    if (childSchema != null)
+                    if (modelProps.TryGetValue(canonical, out var existing))
                     {
-                        var kept = Prune(prop.Value, childSchema, childPath, issues);
-                        if (kept != null)
-                            cleaned[prop.Name] = kept;
+                        issues?.Add(new ConfigIssue(path + "/" + prop.Name, "duplicate key (differs only by case)"));
+                        bool currentExact = string.Equals(prop.Name, canonical, StringComparison.Ordinal);
+                        bool existingExact = string.Equals(existing.Name, canonical, StringComparison.Ordinal);
+                        if (currentExact && !existingExact)
+                            modelProps[canonical] = prop;
+                        // else keep the existing one
                     }
-                    else if (schema.AdditionalPropertiesSchema != null)
+                    else
+                    {
+                        modelProps[canonical] = prop;
+                    }
+                }
+
+                foreach (var kv in modelProps)
+                {
+                    var prop = kv.Value;
+                    var childSchema = FindProperty(schema, prop.Name, out _);
+                    var kept = Prune(prop.Value, childSchema, path + "/" + prop.Name, issues);
+                    if (kept != null)
+                        cleaned[prop.Name] = kept;
+                }
+                foreach (var prop in otherProps)
+                {
+                    string childPath = path + "/" + prop.Name;
+                    // Free-form keys (Servers): the backing dictionary is
+                    // case-SENSITIVE and the resolver supports both spellings, so
+                    // they are never deduped here.
+                    if (schema.AdditionalPropertiesSchema != null)
                     {
                         var kept = Prune(prop.Value, schema.AdditionalPropertiesSchema, childPath, issues);
                         if (kept != null)
@@ -141,7 +164,19 @@ namespace RedisExcel
                 return cleaned;
             }
 
-            var errors = schema.Validate(value);
+            // A value the schema cannot even inspect (e.g. a JSON integer larger
+            // than Int64 makes NJsonSchema throw) is treated as invalid, so it is
+            // dropped instead of reaching ToObject and discarding the whole file.
+            ICollection<NJsonSchema.Validation.ValidationError> errors;
+            try
+            {
+                errors = schema.Validate(value);
+            }
+            catch (Exception ex)
+            {
+                issues?.Add(new ConfigIssue(path, "invalid value (" + ex.GetType().Name + ")"));
+                return null;
+            }
             if (errors.Count > 0)
             {
                 var first = errors.First();
@@ -151,16 +186,24 @@ namespace RedisExcel
             return value;
         }
 
-        private static JsonSchema FindProperty(JsonSchema schema, string name)
+        /// <summary>Finds the schema for a property name, case-insensitively, and
+        /// reports the CANONICAL schema spelling so callers can prefer the exact
+        /// case when two keys differ only by case.</summary>
+        private static JsonSchema FindProperty(JsonSchema schema, string name, out string canonical)
         {
+            canonical = null;
             if (schema.Properties.TryGetValue(name, out var exact))
+            {
+                canonical = name;
                 return exact;
-            // The object binds case-insensitively (Newtonsoft default), so accept a
-            // different case too - but the CALLER keeps the property's own name.
+            }
             foreach (var kv in schema.Properties)
             {
                 if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    canonical = kv.Key;
                     return kv.Value;
+                }
             }
             return null;
         }

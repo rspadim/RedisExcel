@@ -118,6 +118,28 @@ namespace RedisExcel.Tests
             var b = new[] { new HashEntry("f", "7") };
             Assert.False(RedisResultFormatter.HashEquals(a, b));
         }
+
+        [Fact]
+        public void SameMessage_ComparesRawBytes()
+        {
+            // Identical payloads are equal; a numeric-looking difference is not.
+            Assert.True(RedisResultFormatter.SameMessage("007", "007"));
+            Assert.False(RedisResultFormatter.SameMessage("007", "7"));
+            Assert.False(RedisResultFormatter.SameMessage("+1", "1"));
+            Assert.False(RedisResultFormatter.SameMessage("1", "1.0"));
+            // Null/empty are handled distinctly.
+            Assert.True(RedisResultFormatter.SameMessage(RedisValue.Null, RedisValue.Null));
+            Assert.False(RedisResultFormatter.SameMessage(RedisValue.Null, ""));
+            Assert.True(RedisResultFormatter.SameMessage("", ""));
+            // Two DIFFERENT invalid-UTF8 byte sequences both decode to U+FFFD via
+            // ToString(); the byte comparison must still tell them apart, or a real
+            // change would be swallowed and the cell would stay stale.
+            var x = new byte[] { 0x80, 0x41 };
+            var y = new byte[] { 0x81, 0x41 };
+            Assert.True(x.ToString() == y.ToString());              // decoded text collides
+            Assert.False(RedisResultFormatter.SameMessage(x, y));   // bytes differ
+            Assert.True(RedisResultFormatter.SameMessage(x, x));
+        }
     }
 
     /// <summary>
