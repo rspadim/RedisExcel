@@ -417,6 +417,21 @@ function Wait-CellRegex($Sheet, [string]$Address, [string]$Pattern, [int]$Timeou
     return $false
 }
 
+# Waits until a cell holds a real computed value: non-empty, not a "#..." error
+# and not an "Error: ..." text. A plain Get-CellText right after Calculate can
+# read a transient state (Excel still settling), so poll instead of asserting
+# once - the caller passes the last observed text for the diagnostic.
+function Wait-CellComputed($Sheet, [string]$Address, [int]$TimeoutSeconds = 20) {
+    $last = @('')
+    $ok = Wait-Until {
+        $last[0] = Get-CellText $Sheet $Address
+        return (-not [string]::IsNullOrWhiteSpace($last[0]) -and
+            -not $last[0].StartsWith('#') -and
+            -not $last[0].StartsWith('Error'))
+    } $TimeoutSeconds
+    return @{ Ok = $ok; Last = $last[0] }
+}
+
 # #N/A is Excel's N/A error: the display text is locale-dependent (#N/A,
 # #N/D, #NV, ...), so a pending async cell is detected through
 # WorksheetFunction.IsNA instead of matching the text. The Range is passed
@@ -821,8 +836,12 @@ try {
     Invoke-ExcelAction { $udf.Calculate() } | Out-Null
     $nvKey = Get-RedisValue @('GET', "$KeyPrefix.nvkey")
     Check ($nvKey -eq 'v2') 'UDF SetNonVolatile does not re-run on a worksheet recalculation'
-    $nvCellText = Get-CellText $udf 'B48'
-    Check (-not [string]::IsNullOrWhiteSpace($nvCellText) -and -not $nvCellText.StartsWith('#') -and -not $nvCellText.StartsWith('Error')) ("UDF SetNonVolatile cell was computed (not an error) [B48='" + $nvCellText + "']")
+    # Poll instead of a single read: right after Calculate the cell can still be
+    # settling, and a one-shot read of a transient state flaked once. The twin
+    # not re-running is proven by nvKey above; this only confirms the cell shows
+    # a computed value (not an error).
+    $nvCell = Wait-CellComputed $udf 'B48'
+    Check $nvCell.Ok ("UDF SetNonVolatile cell was computed (not an error) [B48='" + $nvCell.Last + "']")
 
     # (b) Two more plain recalculations must not increment the counter again
     # (a volatile Incr would have reached 4 by now: entry + three recalcs).
