@@ -454,7 +454,7 @@ namespace RedisExcel
                 long elapsedMs = (DateTime.UtcNow.Ticks - failedAtTicks) / TimeSpan.TicksPerMillisecond;
                 if (elapsedMs >= 0 && elapsedMs < ConnectFailureMemoMs)
                     throw new RedisConnectionException(ConnectionFailureType.UnableToConnect,
-                        $"connect to '{host}' skipped (recent failure {elapsedMs}ms ago)");
+                        $"connect to '{AppConfig.MaskHost(host)}' skipped (recent failure {elapsedMs}ms ago)");
             }
 
             var config = AppConfig.Current;
@@ -483,7 +483,7 @@ namespace RedisExcel
                 // through the endpoint/DNS layer as a localized argument error;
                 // normalize it to a stable English message. Real connection
                 // failures (RedisConnectionException and friends) pass through.
-                throw new ArgumentException($"invalid Redis host '{host}'", ex);
+                throw new ArgumentException($"invalid Redis host '{AppConfig.MaskHost(host)}'", ex);
             }
             if (_shutdown)
             {
@@ -533,8 +533,10 @@ namespace RedisExcel
             {
                 // StackExchange.Redis surfaces a malformed endpoint with a
                 // localized argument/format error; give callers a stable
-                // English message instead (inner exception preserved).
-                throw new ArgumentException($"invalid Redis host '{host}'", ex);
+                // English message instead (inner exception preserved). Mask any
+                // credential: the host may be a full connection string and this
+                // message reaches both the log and the cell.
+                throw new ArgumentException($"invalid Redis host '{AppConfig.MaskHost(host)}'", ex);
             }
         }
 

@@ -489,7 +489,7 @@ namespace RedisExcel
 
             logger.Info(
                 "ServerStart: config " +
-                $"host={_defaultHost}, excelRate={_excelUpdateRateMs}ms, redisRate={_redisUpdateRateMs}ms, " +
+                $"host={AppConfig.MaskHost(_defaultHost)}, excelRate={_excelUpdateRateMs}ms, redisRate={_redisUpdateRateMs}ms, " +
                 $"style={_excelUpdateStyle}, threshold={_messageCounterThreshold}, useGetMultiple={_useGetMultiple}, " +
                 $"conflationMs={_conflationMs}");
 
@@ -811,7 +811,7 @@ namespace RedisExcel
                 if (attempt == 1)
                     logger.Warn(ex, $"Subscribe failed, retry in {seconds}s: {td}");
                 else if (logger.IsDebugEnabled)
-                    logger.Debug($"Subscribe retry failed (attempt {attempt}), retry in {seconds}s: {td}: {ex.Message}");
+                    logger.Debug($"Subscribe retry failed (attempt {attempt}), retry in {seconds}s: {td}: {AppConfig.MaskHost(ex.Message)}");
                 return ex.Message;
             }
             finally
@@ -1169,7 +1169,7 @@ namespace RedisExcel
         public static int RedisRTDChannelCount() => Guarded(() => RedisRtd.ChannelTopicsCount(), 0);
 
         [ExcelFunction(Description = "Returns the default Redis host address used by the RTD server.", IsVolatile = true)]
-        public static string RedisRTDDefaultHost() => Guarded(() => RedisRtd.DefaultHost() ?? "", "");
+        public static string RedisRTDDefaultHost() => Guarded(() => AppConfig.MaskHost(RedisRtd.DefaultHost()) ?? "", "");
 
         [ExcelFunction(Description = "Returns the Excel update interval in milliseconds.", IsVolatile = true)]
         public static double RedisRTDExcelUpdateInterval() => Guarded(() => RedisRtd.ExcelUpdateRate(), 0);

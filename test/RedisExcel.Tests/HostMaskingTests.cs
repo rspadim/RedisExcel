@@ -62,6 +62,22 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void InvalidHostErrorCell_MasksCredentials()
+        {
+            // An invalid endpoint is rejected by RedisConnectionManager.ParseOptions
+            // with "invalid Redis host '<host>'"; the host there is a connection
+            // string and reaches the cell. Assert no credential leaks.
+            const string secret = "cache-secret";
+            string host = "localhost:99999,password=" + secret;
+            object result = RedisUDF.RedisUDFGet("k", host);
+            string text = (string)result;
+
+            Assert.StartsWith("Error:", text);
+            Assert.DoesNotContain(secret, text);
+            Assert.Contains("password=****", text);
+        }
+
+        [Fact]
         public void VerboseErrorCell_NeverContainsThePassword()
         {
             // End-to-end: a runtime failure on a password-protected host must not

@@ -188,7 +188,7 @@ namespace RedisExcel
                 }
                 catch (Exception ex)
                 {
-                    logger.Debug(ex, $"ResetAfterAddInReload: error disposing listener {kv.Key}");
+                    logger.Debug(ex, $"ResetAfterAddInReload: error disposing listener {AppConfig.MaskHost(kv.Key)}");
                 }
             }
             _latestMessages.Clear();
@@ -423,6 +423,9 @@ namespace RedisExcel
                 cause = cause.Substring(0, ErrorCauseMax) + "...";
             if (string.IsNullOrWhiteSpace(context))
                 context = "(no context)";
+            // Defense in depth: the context embeds host/key/value; mask any
+            // credential anywhere in it.
+            context = AppConfig.MaskHost(context);
             if (context.Length > ErrorContextMax)
                 context = context.Substring(0, ErrorContextMax) + "...";
             string text = context + ": " + cause;
@@ -502,9 +505,10 @@ namespace RedisExcel
         {
             logger.Error(ex, $"{function}: {context}");
             // Invalid arguments keep their terse, stable message; runtime
-            // (connection/command) failures get the verbose cell text.
+            // (connection/command) failures get the verbose cell text. Both are
+            // masked: an argument error can name the host (connection string).
             if (ex is ArgumentException)
-                return "Error: " + ex.Message;
+                return "Error: " + AppConfig.MaskHost(ex.Message);
             return VerboseError(ex, context);
         }
 
@@ -1172,7 +1176,7 @@ namespace RedisExcel
                     {
                         logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, PUBSUB NUMSUB batch");
                         for (int i = 0; i < channelNames.Length; i++)
-                            result[i + 1, 1] = $"Error: {ex.Message}";
+                            result[i + 1, 1] = $"Error: {AppConfig.MaskHost(ex.Message)}";
                     }
                 }
                 return result;
@@ -1180,7 +1184,7 @@ namespace RedisExcel
             catch (Exception ex)
             {
                 logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}");
-                return new object[,] { { "Error", ex.Message } }; // legacy 2-column shape
+                return new object[,] { { "Error", AppConfig.MaskHost(ex.Message) } }; // legacy 2-column shape
             }
         }
 
@@ -2050,7 +2054,7 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
-                        result[i, 1] = "Error: " + ex.Message;
+                        result[i, 1] = "Error: " + AppConfig.MaskHost(ex.Message);
                     }
                 }
                 if (logger.IsTraceEnabled)
