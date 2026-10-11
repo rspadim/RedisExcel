@@ -1967,31 +1967,36 @@ namespace RedisExcel.LivenessTests
             if (text == null) return false;
             // StackExchange.Redis 2.x RedisTimeoutException messages:
             // "Timeout performing {command} (...)", "Timeout awaiting response
-            // (...)" and "Timeout before awaiting for tasks (...)" (all surface
-            // here with the product's "Error: " prefix), plus the send-backlog
-            // variant "The message timed out in the backlog ...". Match that
-            // family precisely instead of only the backlog wording: otherwise a
-            // transient client timeout under load is counted as a hard UDF error
-            // and a slow runner fails an otherwise healthy run.
-            return text.IndexOf("Error: Timeout ", StringComparison.Ordinal) >= 0
-                || text.IndexOf("The message timed out", StringComparison.Ordinal) >= 0;
+            // (...)" and "Timeout before awaiting for tasks (...)", plus the
+            // send-backlog variant "The message timed out in the backlog ...".
+            // Match the timeout FAMILY anywhere in the text: the product emits
+            // VERBOSE errors ("Error: <context>: Timeout performing ..."), so an
+            // anchored "Error: Timeout " missed every real timeout and counted
+            // it as a hard UDF error (the context sits between prefix and reason).
+            return text.IndexOf("Timeout performing ", StringComparison.Ordinal) >= 0
+                || text.IndexOf("Timeout awaiting response", StringComparison.Ordinal) >= 0
+                || text.IndexOf("Timeout before awaiting", StringComparison.Ordinal) >= 0
+                || text.IndexOf("The message timed out in the backlog", StringComparison.Ordinal) >= 0;
         }
 
         /// <summary>Self-test for the transient-timeout classifier: an
         /// unclassified StackExchange.Redis timeout would surface as a hard UDF
         /// error and fail a healthy run on a loaded runner (the regression this
-        /// guard prevents). Run once at startup so the shared CI runner keeps
-        /// exercising it.</summary>
+        /// guard prevents). The cases use the PRODUCTION verbose format
+        /// ("Error: &lt;context&gt;: &lt;reason&gt;") so a format change cannot
+        /// silently defeat the classifier again. Run once at startup so the
+        /// shared CI runner keeps exercising it.</summary>
         private static void SelfCheckTimeoutClassifier()
         {
             string[][] cases =
             {
-                new[] { "Error: Timeout performing PUBLISH, inst: 0", "t" },
-                new[] { "Error: Timeout awaiting response (5000ms elapsed, timeout is 1000ms)", "t" },
-                new[] { "Error: Timeout before awaiting for tasks", "t" },
-                new[] { "Error: The message timed out in the backlog attempting to send", "t" },
-                new[] { "Error: OOM command not allowed when used memory > 'maxmemory'", "f" },
-                new[] { "Error: WRONGTYPE Operation against a key holding the wrong kind of value", "f" },
+                new[] { "Error: channel=c, host=h: Timeout performing PUBLISH (1000ms), inst: 0", "t" },
+                new[] { "Error: key=k, host=h: Timeout awaiting response (5000ms elapsed, timeout is 1000ms)", "t" },
+                new[] { "Error: key=k, host=h: Timeout before awaiting for tasks", "t" },
+                new[] { "Error: key=k, host=h: The message timed out in the backlog attempting to send", "t" },
+                new[] { "Error: key=k, host=h: OOM command not allowed when used memory > 'maxmemory'", "f" },
+                new[] { "Error: key=k, host=h: WRONGTYPE Operation against a key holding the wrong kind of value", "f" },
+                new[] { "Timeout performing PUBLISH", "t" }, // bare form (no prefix) still matches
                 new[] { null, "f" }
             };
             int bad = 0;
