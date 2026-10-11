@@ -103,10 +103,11 @@ jobs:
         shell: pwsh
         run: |
           # A release tag must name the finalized changelog section, otherwise
-          # the repo would ship an "(unreleased)" heading and no release body.
+          # the repo would ship an "(unreleased)" heading. Anchor the match on the
+          # exact heading so a short tag (v1.5) cannot pass against v1.5.0.
           $tag = "${{ github.ref_name }}"
           $heading = (Get-Content CHANGELOG.md -TotalCount 6 | Where-Object { $_ -match '^##\s' } | Select-Object -First 1)
-          if ($heading -notmatch [regex]::Escape($tag)) {
+          if ("$heading" -notmatch ('^##\s+' + [regex]::Escape($tag) + '\s*$')) {
             throw "CHANGELOG.md top heading '$heading' does not match the tag '$tag'. Finalize the changelog (remove '(unreleased)') and set 'Current release' in AGENTS.md before tagging."
           }
           Write-Host "CHANGELOG heading matches the tag: $heading"
@@ -117,6 +118,26 @@ jobs:
           $tag = "dev"
           if ("${{ github.ref_type }}" -eq "tag") { $tag = "${{ github.ref_name }}" }
           msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=$tag
+
+      # Fail loudly if ANY release asset is missing: if-no-files-found only fails
+      # when the whole path set matches zero files, so one missing asset among the
+      # five would otherwise upload a partial (broken) release.
+      - name: Verify the release assets exist
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $assets = @(
+            'bin/Release/net48/publish/RedisExcel.dll',
+            'bin/Release/net48/publish/RedisExcel-packed.xll',
+            'bin/Release/net48/publish/RedisExcel64-packed.xll',
+            'NLog.config',
+            'RedisExcel.json'
+          )
+          $missing = $assets | Where-Object { -not (Test-Path -LiteralPath $_) }
+          if ($missing.Count -gt 0) {
+            throw "release assets missing: " + ($missing -join ', ')
+          }
+          Write-Host ("release assets present: " + ($assets.Count) + " files")
 
       # Hand the release assets to the release job. The artifact keeps the
       # paths relative to the repository root (bin/... plus the two config
@@ -148,11 +169,28 @@ jobs:
           name: release-assets
           path: release-assets
 
+      - name: Extract the release notes from CHANGELOG.md
+        shell: pwsh
+        run: |
+          # Use the section for this tag as the release body, so the published
+          # release explains what shipped (the guard above already proved the
+          # heading exists). The section runs from '## <tag>' up to the next '## '.
+          $tag = "${{ github.ref_name }}"
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern ('^##\s+' + [regex]::Escape($tag) + '\s*$') | Select-Object -First 1).LineNumber
+          if (-not $start) { throw "no CHANGELOG section for $tag" }
+          $end = ($lines | Select-String -Pattern '^##\s' | Where-Object { $_.LineNumber -gt $start } | Select-Object -First 1).LineNumber
+          if (-not $end) { $end = $lines.Count + 1 }
+          $body = $lines[($start)..($end - 2)] -join "`n"
+          Set-Content -LiteralPath release-notes.md -Value $body -Encoding utf8
+          Write-Host ("release notes: " + ($end - 1 - $start) + " lines")
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           # Tags with a suffix (e.g. v1.2.7-rc1) publish as prerelease.
           prerelease: ${{ contains(github.ref_name, '-') }}
+          body_path: release-notes.md
           files: |
             release-assets/bin/Release/net48/publish/RedisExcel.dll
             release-assets/bin/Release/net48/publish/RedisExcel-packed.xll

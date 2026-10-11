@@ -263,7 +263,11 @@ Outputs in `bin\Release\net48\publish\`:
 
 CI (`.github/workflows/build.yml`) runs on pull requests and main pushes; on
 `v*` tags it passes `/p:InformationalVersion=<tag>`, which is embedded in the
-Redis `ClientName` for diagnostics (shown as `dev` for local builds). The smoke
+Redis `ClientName` for diagnostics (shown as `dev` for local builds). On a tag it
+also: verifies the CHANGELOG top heading matches the tag (anchored, so a short
+tag cannot pass against a longer heading), asserts each of the five release
+assets exists (an upload with `if-no-files-found: error` only fails when the whole
+set is empty), and uses that CHANGELOG section as the release body. The smoke
 step retries once (2 attempts, 3s apart) and the quick liveness step up to three
 times (5s apart): a shared runner can stall the whole process or trip a
 documented best-effort race on infrastructure noise, and the bounds themselves
