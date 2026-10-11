@@ -14,9 +14,11 @@ namespace RedisExcel.Tests
     /// </summary>
     internal static class AntivirusInfo
     {
-        /// <summary>Names of the registered products that are ACTIVE (the
-        /// productState 0x?000 nibble is non-zero). Empty when none is
-        /// reported or the query is unavailable.</summary>
+        /// <summary>Names of the registered products that are ACTIVE. The
+        /// productState bit 12 (0x1000) is the real-time/on-access flag
+        /// (authoritative decode: 0x41000 = enabled, 0x42000 = paused), so test
+        /// that bit rather than the whole nibble. Empty when none is reported
+        /// or the query is unavailable.</summary>
         public static IList<string> ActiveProductNames()
         {
             var active = new List<string>();
@@ -34,8 +36,7 @@ namespace RedisExcel.Tests
                             if (state == null)
                                 continue;
                             int value = Convert.ToInt32(state);
-                            int level = (value >> 12) & 0xF;
-                            if (level >= 1)
+                            if ((value & 0x1000) != 0)
                                 active.Add(Convert.ToString(product["displayName"]));
                         }
                     }

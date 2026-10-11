@@ -270,15 +270,14 @@ function Get-AntivirusStatus {
     try {
         return @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction Stop | ForEach-Object {
             $state = [int]$_.productState
-            # The vendor-specific enabled/snoozed code lives in the 0x?000
-            # nibble (0 = off; 1..3 = on/snoozed variants; some products set an
-            # extra flag, e.g. 0x4xxxx instead of 0x0xxxx). Only the nibble is
-            # compared, so the result is product-independent. The raw state is
-            # printed too.
-            $level = ($state -shr 12) -band 0xF
+            # Real-time/on-access state is the 0x1000 bit (bit 12): 0x41000 is
+            # enabled, 0x42000 is paused. Testing just that bit is
+            # product-independent (do NOT treat the whole 0x?000 nibble as
+            # "on": a paused product reports 0x4xxxx). The raw state is printed
+            # too.
             [pscustomobject]@{
                 Name = [string]$_.displayName
-                Active = ($level -ge 1)
+                Active = (($state -band 0x1000) -ne 0)
                 StateHex = ('0x{0:X}' -f $state)
             }
         })

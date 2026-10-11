@@ -55,7 +55,9 @@ function Get-AvProducts {
                 $state = [int]$_.productState
                 [pscustomobject]@{
                     Name   = [string]$_.displayName
-                    Active = ((($state -shr 12) -band 0xF) -ge 1)
+                    # Real-time state is the 0x1000 bit (0x41000 = enabled,
+                    # 0x42000 = paused); testing the bit is product-independent.
+                    Active = (($state -band 0x1000) -ne 0)
                     State  = '0x{0:X}' -f $state
                 }
             }
