@@ -41,6 +41,10 @@ namespace RedisExcel
                     throw new ArgumentException("a range is required");
                 int rows = range.GetLength(0);
                 int cols = range.GetLength(1);
+                // Symmetric with JSONToMatrix: reject an oversized range before
+                // building the row arrays and the JSON string (an 80M-cell range
+                // serializes to tens of MB, which no cell could hold anyway).
+                EnsureMatrixFitsExcel(rows, cols);
                 var array = new object[rows][];
 
                 for (int i = 0; i < rows; i++)

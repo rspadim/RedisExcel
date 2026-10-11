@@ -4,6 +4,7 @@ using NJsonSchema;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 
 namespace RedisExcel
@@ -82,79 +83,84 @@ namespace RedisExcel
         /// <summary>Returns a copy of <paramref name="root"/> with every schema
         /// violation removed, appending one <see cref="ConfigIssue"/> per removal.
         /// Deserializing the result cannot fail on a wrong-typed value because the
-        /// reader never sees it. Returns null when the root itself is invalid.</summary>
+        /// reader never sees it. Returns null when the root itself is invalid.
+        ///
+        /// The pruning WALKS the schema (not the error path strings): NJsonSchema's
+        /// paths use a notation ("Servers['prod.eu']") that a naive split corrupts,
+        /// and its property lookup is case-sensitive while the object's is not, so
+        /// pruning by path could remove the wrong key. Walking the document together
+        /// with its schema keeps the exact JSON property names.</summary>
         internal static JToken Clean(JToken root, IList<ConfigIssue> issues)
         {
-            var errors = _schema.Value.Validate(root);
-            if (errors.Count == 0)
-                return root;
+            return Prune(root, _schema.Value, "", issues);
+        }
 
-            var perPath = new List<KeyValuePair<string, string>>();
-            foreach (var error in errors)
+        private static JToken Prune(JToken value, JsonSchema schema, string path, IList<ConfigIssue> issues)
+        {
+            // Objects are walked property by property (so an unknown or bad child
+            // is dropped without touching its siblings). Every other value is
+            // checked as a whole: a violation drops just that value.
+            if (schema.Type.HasFlag(JsonObjectType.Object) && value is JObject obj)
             {
-                perPath.Add(new KeyValuePair<string, string>(NormalizePath(error.Path), Describe(error)));
+                var cleaned = new JObject();
+                var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var prop in obj.Properties())
+                {
+                    string childPath = path + "/" + prop.Name;
+                    // Two keys that differ only by case are ambiguous (Newtonsoft
+                    // binds case-insensitively, so one silently wins). Keep the
+                    // first and drop the later variant so a bad duplicate cannot
+                    // override a good one.
+                    if (!seenNames.Add(prop.Name))
+                    {
+                        issues?.Add(new ConfigIssue(childPath, "duplicate key (differs only by case)"));
+                        continue;
+                    }
+                    var childSchema = FindProperty(schema, prop.Name);
+                    if (childSchema != null)
+                    {
+                        var kept = Prune(prop.Value, childSchema, childPath, issues);
+                        if (kept != null)
+                            cleaned[prop.Name] = kept;
+                    }
+                    else if (schema.AdditionalPropertiesSchema != null)
+                    {
+                        var kept = Prune(prop.Value, schema.AdditionalPropertiesSchema, childPath, issues);
+                        if (kept != null)
+                            cleaned[prop.Name] = kept;
+                    }
+                    else if (schema.AllowAdditionalProperties)
+                    {
+                        cleaned[prop.Name] = prop.Value;
+                    }
+                    else
+                    {
+                        issues?.Add(new ConfigIssue(childPath, "unknown key"));
+                    }
+                }
+                return cleaned;
             }
 
-            // Remove the offending values from the deepest path first, so that
-            // dropping a child does not shift a parent that also has an error.
-            var cleaned = root.DeepClone();
-            perPath.Sort((a, b) => PathDepth(b.Key).CompareTo(PathDepth(a.Key)));
-            foreach (var pair in perPath)
+            var errors = schema.Validate(value);
+            if (errors.Count > 0)
             {
-                RemovePath(cleaned as JObject, pair.Key);
-                issues?.Add(new ConfigIssue(pair.Key, pair.Value));
-            }
-            return cleaned;
-        }
-
-        /// <summary>NJsonSchema paths look like "#/RTD.timeout" or "#/Extra"; turn
-        /// them into a slash path the remover understands ("RTD/timeout").</summary>
-        private static string NormalizePath(string path)
-        {
-            if (string.IsNullOrEmpty(path))
-                return "";
-            string p = path.StartsWith("#", StringComparison.Ordinal) ? path.Substring(1) : path;
-            p = p.Replace('.', '/');
-            while (p.StartsWith("/", StringComparison.Ordinal))
-                p = p.Substring(1);
-            return p;
-        }
-
-        private static int PathDepth(string path) =>
-            string.IsNullOrEmpty(path) ? 0 : path.Split('/').Length;
-
-        private static void RemovePath(JObject root, string path)
-        {
-            if (root == null || string.IsNullOrEmpty(path))
-                return;
-            var parts = path.Split('/');
-            JToken current = root;
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                current = FindChild(current, parts[i]);
-                if (current == null)
-                    return;
-            }
-            var last = FindProperty(current as JObject, parts[parts.Length - 1]);
-            if (last != null)
-                last.Remove();
-        }
-
-        private static JObject FindChild(JToken token, string name)
-        {
-            var obj = token as JObject;
-            var prop = FindProperty(obj, name);
-            return prop?.Value as JObject;
-        }
-
-        private static JProperty FindProperty(JObject obj, string name)
-        {
-            if (obj == null)
+                var first = errors.First();
+                issues?.Add(new ConfigIssue(path, Describe(first)));
                 return null;
-            foreach (var prop in obj.Properties())
+            }
+            return value;
+        }
+
+        private static JsonSchema FindProperty(JsonSchema schema, string name)
+        {
+            if (schema.Properties.TryGetValue(name, out var exact))
+                return exact;
+            // The object binds case-insensitively (Newtonsoft default), so accept a
+            // different case too - but the CALLER keeps the property's own name.
+            foreach (var kv in schema.Properties)
             {
-                if (string.Equals(prop.Name, name, StringComparison.OrdinalIgnoreCase))
-                    return prop;
+                if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase))
+                    return kv.Value;
             }
             return null;
         }

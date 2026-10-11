@@ -371,6 +371,59 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void LoadFromPaths_AliasWithADot_KeepsTheRestOfTheFile()
+        {
+            // Regression (verify round): a Servers alias containing a dot made the
+            // schema pruner miss the path and discard the WHOLE file. An alias is a
+            // free-form key, so a dot (or any punctuation) must not break it.
+            using (var temp = new TempFiles())
+            {
+                string partlyBad = temp.Write("dot-alias.json",
+                    "{\"Servers\":{\"prod.eu\":\"prodhost:6379\"},\"SyncWrite\":\"sync\"," +
+                    "\"RTD\":{\"host\":\"myhost\"}}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("sync", config.SyncWrite);
+                Assert.Equal("myhost", config.RTD.host);
+                Assert.Equal("prodhost:6379", config.Servers["prod.eu"]);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_KeysDifferingOnlyByCase_KeepTheFirst()
+        {
+            // Regression (verify round): "RTD" (good) + "rtd" (bad) used to make the
+            // pruner remove the GOOD one and leave the bad one, discarding the file.
+            using (var temp = new TempFiles())
+            {
+                string partlyBad = temp.Write("case-dup.json",
+                    "{\"RTD\":{\"host\":\"myhost\"},\"rtd\":{\"timeout\":true},\"SyncWrite\":\"sync\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("myhost", config.RTD.host);
+                Assert.Equal("sync", config.SyncWrite);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_ServersWithNonStringValue_DropsJustThatAlias()
+        {
+            using (var temp = new TempFiles())
+            {
+                string partlyBad = temp.Write("server-val.json",
+                    "{\"Servers\":{\"ok\":\"h:6379\",\"bad\":123},\"SyncWrite\":\"sync\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("sync", config.SyncWrite);
+                Assert.Equal("h:6379", config.Servers["ok"]);
+                Assert.False(config.Servers.ContainsKey("bad")); // the non-string alias is dropped
+            }
+        }
+
+        [Fact]
         public void ValidateConfiguration_ReportsProblemsWithoutThrowing()
         {
             using (var temp = new TempFiles())
@@ -388,8 +441,7 @@ namespace RedisExcel.Tests
 
         [Fact]
         public void ValidateConfiguration_ByPath_ReportsOkOrProblems()
-        {
-            using (var temp = new TempFiles())
+        {            using (var temp = new TempFiles())
             {
                 string good = temp.Write("good.json", "{\"SyncWrite\":\"sync\"}");
                 string bad = temp.Write("bad.json", "{\"ConflationMs\":9999999}");
@@ -418,8 +470,11 @@ namespace RedisExcel.Tests
                 // in-use configuration (whatever this machine has, or "no file").
                 Assert.StartsWith("OK", (string)RedisUDF.RedisCheckConfigFile(good));
                 Assert.StartsWith("Error: file not found", (string)RedisUDF.RedisCheckConfigFile(@"Z:\nope.json"));
+                // The in-use path reads the machine's file (not the hermetic
+                // override), so assert only that it returns a valid report - OK or a
+                // problem list - never that this machine's config happens to be OK.
                 string inUse = (string)RedisUDF.RedisCheckConfigFile(ExcelDna.Integration.ExcelMissing.Value);
-                Assert.StartsWith("OK", inUse);
+                Assert.True(inUse.StartsWith("OK") || inUse.StartsWith("Error:"), "unexpected report: " + inUse);
             }
         }
 

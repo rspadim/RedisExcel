@@ -200,19 +200,18 @@ internal static class Program
         Check(WaitUntil(() => numsub() == 1, 5000), "channel active for the duplicate test");
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
+        publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup");
         publisher.Publish(new RedisChannel(channel, RedisChannel.PatternMode.Literal), "dup2");
         Check(WaitUntil(() => { lock (Sync) return receivedD.Contains("dup2"); }, 5000), "changed payload delivered");
-        // Bounded settle (count stable for 250 ms) instead of a fixed sleep:
-        // the assertion then reads "exactly 2", never a race against a late
-        // suppressed duplicate.
+        // Bounded settle (count stable for 250 ms) instead of a fixed sleep.
+        // Four IDENTICAL "dup" publishes: working suppression delivers 2 (one dup
+        // + dup2); a broken suppression would deliver 5, so the assertion CAN tell
+        // them apart. Two racing duplicates are tolerated (2, 3 or 4 - one of the
+        // four may race past the marker); 5 or 1 is a real defect.
         int dupCount = WaitForCountStable(() => { lock (Sync) return receivedD.Count; }, 2, 250, 5000);
-        // Suppression is best-effort: the two "dup" publishes are dispatched by
-        // StackExchange.Redis through the thread pool, so both can race past the
-        // marker and fan out once (documented as harmless, and shared with the
-        // constant-payload probe below). Accept 2 (suppressed) or 3 (one racing
-        // duplicate); 1 or >3 would be a real defect, not a race.
-        Check(dupCount == 2 || dupCount == 3,
-            $"identical repeated payload skipped (received {dupCount}, expected 2, or 3 for one racing duplicate: \"dup\" + \"dup2\")");
+        Check(dupCount >= 2 && dupCount <= 4,
+            $"identical repeated payloads skipped (received {dupCount}, expected 2..4 for 4 identical + 1 change: \"dup\"*4 + \"dup2\")");
         tokenD.Dispose();
 
         // Pattern subscriptions are never deduplicated, and pattern/literal
@@ -1607,14 +1606,18 @@ internal static class Program
             Check(!RedisUDF.RedisUDFUpdateAvailable(),
                 "UpdateAvailable: returns FALSE for the running tag itself");
 
-            // And it agrees with the real GitHub latest release for this build:
-            // if it is newer than the build, the function must say so.
-            UpdateCheck.CurrentTagOverrideForTests = null;
+            // And it must agree with the live GitHub release for a KNOWN build tag.
+            // Use synthetic running tags so the expected value is hard-coded and
+            // independent of the comparison under test: any real release is newer
+            // than 0.0.1 (=> TRUE) and older than 99.0.0 (=> FALSE).
+            UpdateCheck.CurrentTagOverrideForTests = "0.0.1";
             UpdateLatestTagField.SetValue(null, latest);
-            bool saysOutdated = RedisUDF.RedisUDFUpdateAvailable();
-            bool liveBehind = UpdateCheck.IsNewer(latest, UpdateCheck.CurrentTag);
-            Check(!liveBehind || saysOutdated,
-                $"UpdateAvailable: reports an update when the live release ({latest}) is newer than the build ({UpdateCheck.CurrentTag})");
+            Check(RedisUDF.RedisUDFUpdateAvailable(),
+                $"UpdateAvailable: TRUE for the live release {latest} vs a build at 0.0.1");
+            UpdateCheck.CurrentTagOverrideForTests = "99.0.0";
+            UpdateLatestTagField.SetValue(null, latest);
+            Check(!RedisUDF.RedisUDFUpdateAvailable(),
+                $"UpdateAvailable: FALSE for the live release {latest} vs a build at 99.0.0");
         }
         finally
         {

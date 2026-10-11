@@ -1,3 +1,4 @@
+using System;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -5,11 +6,8 @@ namespace RedisExcel.Tests
 {
     /// <summary>
     /// Reports the environment's antivirus state so a unit run is attributable
-    /// like the smoke/liveness/load/E2E suites (which print the same banner).
-    /// The unit suite is offline and AV-irrelevant, but recording the state
-    /// keeps the environment explanation consistent across every suite. The
-    /// line is visible with <c>dotnet test --logger "console;verbosity=detailed"</c>
-    /// (or in the trx artifacts).
+    /// like the smoke/liveness/load/E2E suites (which print the same banner), and
+    /// verifies the probe itself is well-formed.
     /// </summary>
     public class EnvironmentInfoTests
     {
@@ -21,13 +19,21 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void Antivirus_EnvironmentIsReported()
+        public void Antivirus_ProbeReturnsAWellFormedStatus()
         {
             string status = AntivirusInfo.Describe();
             _output.WriteLine("Antivirus: " + status);
-            // Informational by design: the value depends on the machine, so the
-            // test only asserts the probe does not throw and returns text.
+
+            // The probe must always return a non-empty, single-line report: either
+            // "none reported ..." or "ACTIVE: <products>". This is falsifiable - a
+            // probe that threw, returned null/empty or produced a multi-line blob
+            // (which would break the suite banner) fails.
             Assert.False(string.IsNullOrWhiteSpace(status));
+            Assert.DoesNotContain("\n", status);
+            Assert.True(
+                status.StartsWith("none reported", StringComparison.Ordinal)
+                || status.StartsWith("ACTIVE:", StringComparison.Ordinal),
+                "unexpected AV status format: " + status);
         }
     }
 }
