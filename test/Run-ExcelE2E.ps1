@@ -161,21 +161,6 @@ function Check([bool]$Condition, [string]$Label) {
     else { Write-Host ("FAIL " + $Label) -ForegroundColor Red; $script:Failures++ }
 }
 
-# Records a condition that can only be observed when the COM layer is fast
-# enough. Excel COM automation is inherently flaky (every Range write is
-# rejected once; ~180 retries in the -AsyncWrites block even with no antivirus),
-# so a sub-second timing window (e.g. the async pending #N/A before a local
-# Redis write completes) can be missed regardless of security software. A true
-# failure is reported as SKIP so the run stays green, but the reason is visible;
-# on a quieter machine (or a bigger local Redis round-trip) the same condition
-# passes.
-function Check-Timing([bool]$Condition, [string]$Label) {
-    if ($Condition) { Write-Host ("PASS " + $Label) -ForegroundColor Green; return }
-    $why = if ($script:ActiveAntivirus) { "antivirus '$script:ActiveAntivirus' active" }
-           else { "no antivirus reported" }
-    Write-Host ("SKIP " + $Label + " (COM timing window missed: COM retries=" + $script:ComRetryTotal + ", " + $why + ")") -ForegroundColor DarkYellow
-}
-
 function Get-RedisEndpoint([string]$ConnectionString) {
     $first = ($ConnectionString -split ',')[0].Trim()
     if ($first -match '^(?<host>[^:]+)(:(?<port>\d+))?$') {
@@ -851,7 +836,7 @@ try {
     $nvKeyAfter = Get-RedisValue @('GET', "$KeyPrefix.nvkey")
     Check ($nvCounter -eq '1') ("UDF IncrNonVolatile evaluated once only (recalcs do not increment; nvcounter='" + $nvCounter + "', nvkey='" + $nvKeyAfter + "')")
 
-    # ------------------------------ v1.4.0 async-mode checks (rows 50-53) ----
+    # ------------------------------ v1.4.0 async-mode checks (rows 50-54) ----
     # Gated on -AsyncWrites (audit-4 A/B/C): (A) the pending marker and exactly
     # one delivery per registered call, (B) the calling cell is part of the
     # async identity (two identical formulas must both write), (C) an argument
@@ -869,34 +854,44 @@ try {
             # top-down, so a future check reaching this block would silently
             # overwrite these labels/formulas.
             $asyncBlockEmpty = $true
-            foreach ($row in 50..53) {
+            foreach ($row in 50..54) {
                 foreach ($col in 'A', 'B', 'C', 'D', 'E', 'F') {
                     if (-not [string]::IsNullOrWhiteSpace((Get-CellText $udf "$col$row"))) { $asyncBlockEmpty = $false }
                 }
             }
-            Check $asyncBlockEmpty 'async-mode check block (rows 50-53) is unused'
+            Check $asyncBlockEmpty 'async-mode check block (rows 50-54) is unused'
 
             # (A) Pending marker + single delivery (row 50).
             Invoke-RedisCli @('DEL', "$KeyPrefix.asyncmarker") | Out-Null
             Set-Cell $udf 50 1 'Incr (async pending/single delivery)'
             Set-Formula $udf 'B50' ('=RedisUDFIncr("{1}.asyncmarker","{0}")' -f $h, $kp)
-            # The pending result is Excel's N/A error, detected through the
-            # object model (WorksheetFunction.IsNA) so the check is
-            # locale-independent (#N/A, #N/D, #NV, ...).
+            # The pending marker is Excel's N/A error, detected through the object
+            # model (WorksheetFunction.IsNA) so the check is locale-independent
+            # (#N/A, #N/D, #NV, ...). This window is inherently racy: the queued
+            # write can reach a LOCAL Redis before any COM read completes, so the
+            # marker may already be gone. It is therefore a DIAGNOSTIC, not a
+            # gate - the deterministic facts (the write reached Redis, and the
+            # delivery recalculation settles the cell without re-running) are
+            # asserted below.
             $pendingOk = Wait-CellIsNA $udf 'B50' 5
-            # Timing-sensitive: the queued async write can reach the local Redis
-            # before this COM read of the #N/A pending marker completes, and
-            # under active antivirus every COM call is retried once (~150ms),
-            # widening that gap. Check-Timing keeps the run green on a protected
-            # machine while still failing a genuine defect on a clean one.
-            Check-Timing $pendingOk ("Async pending marker shown for the queued Incr (B50='" + (Get-CellText $udf 'B50') + "')")
-            # The queued write must reach Redis while the cell still shows the
-            # pending marker (manual mode suppresses the delivery recalculation).
+            Write-Host ("      async pending marker observed: " + $pendingOk + " (B50='" + (Get-CellText $udf 'B50') + "'); informational - the window closes as soon as the queued write lands") -ForegroundColor DarkGray
+            # The queued write must reach Redis (deterministic: the value is there).
             $markerOk = Wait-RedisValue @('GET', "$KeyPrefix.asyncmarker") '1' 5
             $markerCell = Get-CellText $udf 'B50'
             $markerStillNa = Test-CellIsNA $udf 'B50'
             $markerRedis = Get-RedisValue @('GET', "$KeyPrefix.asyncmarker")
-            Check-Timing ($markerOk -and $markerStillNa) ("Async Incr reached Redis while the cell was still pending (redis='" + $markerRedis + "', cell='" + $markerCell + "', isNA=" + $markerStillNa + ")")
+            Check $markerOk ("Async queued Incr reached Redis (redis='" + $markerRedis + "', cell='" + $markerCell + "', isNA=" + $markerStillNa + ")")
+            # (A2) Deterministic pending-window: a queued write against an
+            # UNREACHABLE host stays pending for the whole connect timeout
+            # (~1s), so the #N/A marker is reliably observable (unlike the local
+            # case above, where the window closes in microseconds). Row 54 is
+            # free; the block guard below covers 50..54.
+            $unreachable = '10.255.255.1:6379,connectTimeout=2000,connectRetry=0,abortConnect=False'
+            Set-Cell $udf 54 1 'Incr (async pending window, unreachable host)'
+            Set-Formula $udf 'B54' ('=RedisUDFIncr("{1}.asyncpending","{0}")' -f $unreachable, $kp)
+            $pendingSeen = Wait-CellIsNA $udf 'B54' 5
+            Check $pendingSeen ("Async pending marker shown for a write that cannot complete yet (B54='" + (Get-CellText $udf 'B54') + "')")
+
             # Force the delivery recalculation: it must return the cached result
             # (the mode-appropriate reply, not a fresh write); the single retry
             # only covers the completion notification racing this Calculate.
@@ -1045,7 +1040,7 @@ try {
     }
     else {
         # Remote hosts never write into the repository, an async run adds
-        # scratch cells (rows 50-53) that do not belong in the committed
+        # scratch cells (rows 50-54) that do not belong in the committed
         # sample, and -RealChannel/-RealPattern put real data into the RTD
         # sheet's B17/B18 cells, which the metadata sanitizer does not touch:
         # keep all of those runs in %TEMP%.
