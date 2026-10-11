@@ -273,7 +273,9 @@ namespace RedisExcel
         {
             try
             {
-                return ex.Message;
+                // Mask credentials: an exception message can embed the host
+                // connection string (password=...).
+                return AppConfig.MaskHost(ex.Message);
             }
             catch
             {
@@ -419,7 +421,7 @@ namespace RedisExcel
                 return "Error: async write was cancelled";
 
             Exception error = queued.Exception != null ? queued.Exception.GetBaseException() : null;
-            return "Error: " + (error != null ? error.Message : "async write failed");
+            return "Error: " + (error != null ? AppConfig.MaskHost(error.Message) : "async write failed");
         }
 
         /// <summary>

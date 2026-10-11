@@ -52,6 +52,16 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void SafeMessage_MasksCredentialsInExceptionText_AsyncPath()
+        {
+            // The async dispatch path returns the exception text to the cell.
+            string masked = RedisUdfAsync.SafeMessage(
+                new System.Exception("connect failed: host:6379,password=topsecret,ssl=true"));
+            Assert.DoesNotContain("topsecret", masked);
+            Assert.Contains("password=****", masked);
+        }
+
+        [Fact]
         public void VerboseErrorCell_NeverContainsThePassword()
         {
             // End-to-end: a runtime failure on a password-protected host must not
