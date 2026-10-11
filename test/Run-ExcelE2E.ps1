@@ -105,6 +105,12 @@ $script:RedisArgs = @()
 # Attempt count of the last Invoke-ExcelAction call, read by the Set-*/Get-*
 # helpers to report the "succeeded after N retries" diagnostic.
 $script:ExcelActionAttempts = 0
+# How much the environment interfered: total COM retries and the worst single
+# call. Reported at the end so a robust-but-noisy machine (security software
+# scanning every COM call) is visible without reading the whole log.
+$script:ComRetryTotal = 0
+$script:ComRetryWorst = 0
+$script:ActiveAntivirus = $null
 $script:Excel = $null
 $script:Workbook = $null
 $script:ExcelPidsBefore = @()
@@ -206,11 +212,21 @@ function Resolve-RedisCli {
 }
 
 function Test-ComBusyError($ErrorRecord) {
-    $hr = $ErrorRecord.Exception.HResult
-    # RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER and the generic Excel
-    # rejection 0x800A03EC (seen from CalculateFull/CalculateBeforeSave while
-    # Excel is busy with pending async work) are all transient here.
-    return ($hr -eq -2147418111 -or $hr -eq -2147417846 -or $hr -eq -2146827284)
+    # The HResult must be read from the inner COM exception, not only from the
+    # top-level one: a METHOD call (CalculateFull/Calculate/SaveAs) surfaces as a
+    # MethodInvocationException wrapping the COMException, so the outer HResult
+    # is the generic 0x80131501 and the real rejection (RPC_E_CALL_REJECTED,
+    # RPC_E_SERVERCALL_RETRYLATER, 0x800A03EC) is one level down. Walk the whole
+    # chain so those actions retry like property writes do.
+    $ex = $ErrorRecord.Exception
+    for ($i = 0; $ex -and $i -lt 6; $i++) {
+        $hr = $ex.HResult
+        if ($hr -eq -2147418111 -or $hr -eq -2147417846 -or $hr -eq -2146827284) {
+            return $true
+        }
+        $ex = $ex.InnerException
+    }
+    return $false
 }
 
 # Some security products intermittently break Excel COM property sets with a
@@ -258,7 +274,10 @@ function Invoke-ExcelAction([scriptblock]$Action, [int]$Retries = 40) {
     for ($attempt = 0; $attempt -lt $Retries; $attempt++) {
         try {
             $script:ExcelActionAttempts = $attempt
-            return (& $Action)
+            $result = (& $Action)
+            $script:ComRetryTotal += $attempt
+            if ($attempt -gt $script:ComRetryWorst) { $script:ComRetryWorst = $attempt }
+            return $result
         }
         catch {
             if (-not (Test-RetryableError $_)) {
@@ -269,7 +288,22 @@ function Invoke-ExcelAction([scriptblock]$Action, [int]$Retries = 40) {
         }
     }
     $script:ExcelActionAttempts = $Retries
-    return (& $Action)
+    $script:ComRetryTotal += $Retries
+    if ($Retries -gt $script:ComRetryWorst) { $script:ComRetryWorst = $Retries }
+    try {
+        return (& $Action)
+    }
+    catch {
+        # Retries exhausted on a COM action that is known to be flaky under
+        # security software (0x800A03EC / RPC_E_*). Attribute it explicitly, so
+        # a red run in a protected environment is not misread as an add-in
+        # defect. See AGENTS.md "Excel automation lessons".
+        $av = if ($script:ActiveAntivirus) {
+            " Antivirus '$script:ActiveAntivirus' appears active - add an EXCEL.EXE exception and re-run."
+        }
+        else { "" }
+        throw ("Excel COM action failed after {0} retries: {1}.{2}" -f $Retries, $_.Exception.Message, $av)
+    }
 }
 
 # Single bounded poll used by the Wait-* family: runs $Probe every $IntervalMs
@@ -496,6 +530,7 @@ if ($avProducts.Count -eq 0) {
 }
 foreach ($av in $avProducts) {
     if ($av.Active) {
+        $script:ActiveAntivirus = $av.Name
         Write-Host ("WARNING antivirus: {0} appears active ({1}) - Excel COM automation may fail intermittently; add an EXCEL.EXE exception when possible." -f $av.Name, $av.StateHex) -ForegroundColor Yellow
     }
     else {
@@ -1209,7 +1244,17 @@ finally {
 
 if ($script:Failures -eq 0) {
     Write-Host 'ALL PASS' -ForegroundColor Green
-    exit 0
 }
-Write-Host ("{0} FAILURE(S)" -f $script:Failures) -ForegroundColor Red
-exit 1
+else {
+    Write-Host ("{0} FAILURE(S)" -f $script:Failures) -ForegroundColor Red
+}
+
+# Environment-interference summary: how often the COM layer had to retry (the
+# clearest antivirus fingerprint) and the worst single call. Zero across the
+# board means a clean environment; a large total with a 1-retry mode means
+# security software is scanning every COM call.
+$avName = if ($script:ActiveAntivirus) { $script:ActiveAntivirus } else { 'none reported' }
+Write-Host ("COM retries: total={0}, worst-single={1}; antivirus: {2}" -f `
+    $script:ComRetryTotal, $script:ComRetryWorst, $avName) -ForegroundColor DarkGray
+
+exit $(if ($script:Failures -eq 0) { 0 } else { 1 })
