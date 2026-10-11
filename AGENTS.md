@@ -249,7 +249,11 @@ Outputs in `bin\Release\net48\publish\`:
 
 CI (`.github/workflows/build.yml`) runs on pull requests and main pushes; on
 `v*` tags it passes `/p:InformationalVersion=<tag>`, which is embedded in the
-Redis `ClientName` for diagnostics (shown as `dev` for local builds).
+Redis `ClientName` for diagnostics (shown as `dev` for local builds). The quick
+liveness step is wrapped in a bounded retry (up to 3 attempts, 5s apart): the
+shared runner can stall the whole process for a moment, which trips the
+delivery-gap/`udfErrors` bounds on infrastructure noise; the bounds themselves
+are unchanged, so a real regression fails every attempt.
 
 ## Tests
 
