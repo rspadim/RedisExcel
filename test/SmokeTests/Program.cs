@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
@@ -398,6 +399,12 @@ internal static class Program
         // Real write through a ...NonVolatile twin (value round-trip + one
         // delivery to a live channel listener), no Excel involved.
         RunNonVolatileWriteSmokeTest(subscriptions, server, host);
+
+        // Live GitHub release check (the v1.4.1 release this repo just cut):
+        // RedisUDFUpdateAvailable must stay non-blocking and agree with the real
+        // latest release tag. Skipped (with a note) when the network/rate limit
+        // makes the answer unavailable, so CI never turns red offline.
+        RunUpdateAvailableSmokeTest();
 
         // Concurrency regression for the duplicate-suppression marker, kept last
         // because it hammers a dedicated Redis (throwaway container on a random
@@ -1438,5 +1445,87 @@ internal static class Program
         }
         Check(WaitUntil(() => NumSub(server, channel) == 0, 5000),
             "NonVolatile twin: channel released after cleanup");
+    }
+
+    private static readonly FieldInfo UpdateLatestTagField =
+        typeof(UpdateCheck).GetField("_latestTag", BindingFlags.NonPublic | BindingFlags.Static);
+
+    /// <summary>
+    /// Live check of RedisUDFUpdateAvailable: the function must never block the
+    /// caller (scheduling the refresh in the background) and must agree with the
+    /// real latest GitHub release tag. RedisUDFUpdateAvailable itself is a pure
+    /// status read once a tag is known, so the query is forced here through the
+    /// private field; if the network or the GitHub rate limit makes that
+    /// impossible, the check is SKIPPED (not failed), so an offline CI never
+    /// turns red. This is the smoke-level companion to the offline unit tests
+    /// that only exercise the comparison.
+    /// </summary>
+    private static void RunUpdateAvailableSmokeTest()
+    {
+        Check(UpdateLatestTagField != null, "UpdateCheck: _latestTag is reflectable");
+        bool originalUpdateCheck = AppConfig.Current.UpdateCheck;
+        object originalTag = UpdateLatestTagField.GetValue(null);
+        try
+        {
+            // Seed a parseable running tag (a local "dev" build is never beaten)
+            // and a known older tag, then call the function: it must return
+            // immediately (non-blocking) and report the NEWER known tag.
+            UpdateCheck.CurrentTagOverrideForTests = "1.4.0";
+            UpdateLatestTagField.SetValue(null, "v1.4.1");
+
+            // Disable the background refresh so only the non-blocking read path
+            // runs (no network thread can overwrite the seeded tag meanwhile).
+            AppConfig.Current.UpdateCheck = false;
+
+            var sw = Stopwatch.StartNew();
+            bool available = RedisUDF.RedisUDFUpdateAvailable();
+            sw.Stop();
+            Check(available, "UpdateAvailable: a newer known tag reports TRUE");
+            Check(sw.ElapsedMilliseconds < 2000,
+                $"UpdateAvailable: returns without blocking ({sw.ElapsedMilliseconds}ms)");
+
+            AppConfig.Current.UpdateCheck = originalUpdateCheck;
+            UpdateLatestTagField.SetValue(null, null);
+
+            string latest = null;
+            try
+            {
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                {
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("RedisExcel-UpdateCheck");
+                    http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+                    string json = http.GetStringAsync(
+                        "https://api.github.com/repos/rspadim/RedisExcel/releases/latest")
+                        .GetAwaiter().GetResult();
+                    latest = (string)Newtonsoft.Json.Linq.JObject.Parse(json)["tag_name"];
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("SKIP UpdateAvailable: live GitHub query unavailable (" + ex.GetType().Name + ")");
+                return;
+            }
+
+            if (string.IsNullOrEmpty(latest))
+            {
+                Console.WriteLine("SKIP UpdateAvailable: the latest release has no tag yet");
+                return;
+            }
+
+            // With the tag known, RedisUDFUpdateAvailable is a pure comparison:
+            // restore the real running tag and confirm agreement with GitHub.
+            UpdateCheck.CurrentTagOverrideForTests = null;
+            UpdateLatestTagField.SetValue(null, latest);
+            bool saysOutdated = RedisUDF.RedisUDFUpdateAvailable();
+            bool realBuildIsBehind = UpdateCheck.IsNewer(latest, UpdateCheck.CurrentTag);
+            Check(saysOutdated == realBuildIsBehind,
+                $"UpdateAvailable: agrees with the live latest release {latest} (reports {saysOutdated}, build {UpdateCheck.CurrentTag} behind={realBuildIsBehind})");
+        }
+        finally
+        {
+            UpdateCheck.CurrentTagOverrideForTests = null;
+            UpdateLatestTagField.SetValue(null, originalTag);
+            AppConfig.Current.UpdateCheck = originalUpdateCheck;
+        }
     }
 }
