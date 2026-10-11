@@ -1635,7 +1635,18 @@ namespace RedisExcel
                 batch.Execute();
                 int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
                 for (int i = 0; i < tasks.Length; i++)
-                    result[i, 1] = WaitBoundedResult(tasks[i], timeoutMs) ? "1" : "0";
+                {
+                    // Per-row try: one failing key (WRONGTYPE/timeout) must not
+                    // discard the whole matrix - the other rows still report.
+                    try
+                    {
+                        result[i, 1] = WaitBoundedResult(tasks[i], timeoutMs) ? "1" : "0";
+                    }
+                    catch (Exception ex)
+                    {
+                        result[i, 1] = "Error: " + AppConfig.MaskHost(ex.Message);
+                    }
+                }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExistsMultiples: {keysList.Count} keys, host={AppConfig.MaskHost(host)}");
                 return result;
@@ -1900,12 +1911,20 @@ namespace RedisExcel
                 int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
                 for (int i = 0; i < tasks.Length; i++)
                 {
-                    var ttl = WaitBoundedResult(tasks[i], timeoutMs);
-                    // Same representation as RedisUDFTTL: a NUMBER of seconds
-                    // (the scalar function returns a double), -1 when the key is
-                    // missing or has no expiry. Text here used to break
-                    // SUM()/ISNUMBER and exposed G17 noise ("99.74499999999999").
-                    result[i, 1] = ttl.HasValue ? (object)ttl.Value.TotalSeconds : -1;
+                    // Per-row try: one failing key must not discard the whole matrix.
+                    try
+                    {
+                        var ttl = WaitBoundedResult(tasks[i], timeoutMs);
+                        // Same representation as RedisUDFTTL: a NUMBER of seconds
+                        // (the scalar function returns a double), -1 when the key is
+                        // missing or has no expiry. Text here used to break
+                        // SUM()/ISNUMBER and exposed G17 noise ("99.74499999999999").
+                        result[i, 1] = ttl.HasValue ? (object)ttl.Value.TotalSeconds : -1;
+                    }
+                    catch (Exception ex)
+                    {
+                        result[i, 1] = "Error: " + AppConfig.MaskHost(ex.Message);
+                    }
                 }
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFTTLMultiples: {keysList.Count} keys, host={AppConfig.MaskHost(host)}");

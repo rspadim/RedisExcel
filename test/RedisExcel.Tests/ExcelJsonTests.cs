@@ -12,6 +12,28 @@ namespace RedisExcel.Tests
             .GetMethod("EnsureMatrixFitsExcel", BindingFlags.NonPublic | BindingFlags.Static);
 
         [Fact]
+        public void JSONToMatrix_RejectsOversizedTextBeforeParsing()
+        {
+            // A text larger than the cell budget is rejected on length, so the
+            // parser never materializes it (this used to allocate gigabytes and
+            // stall the Excel thread before the post-parse matrix guard ran).
+            // 8M+1 chars of a valid-looking array would otherwise be parsed first.
+            var big = new System.Text.StringBuilder(8_000_100);
+            big.Append('[');
+            for (int i = 0; i < 8_000_090; i++)
+                big.Append(i % 10 == 0 ? ',' : '0');
+            big.Append(']');
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var result = ExcelJson.RedisUDFJSONToMatrix(big.ToString(), "");
+            sw.Stop();
+
+            Assert.Equal("Error: JSON is too large for an Excel sheet", result[0, 0]);
+            // The guard is a length check: it must be effectively instantaneous.
+            Assert.True(sw.ElapsedMilliseconds < 1000, "rejection took " + sw.ElapsedMilliseconds + "ms");
+        }
+
+        [Fact]
         public void MatrixToJSON_IntegralDoublesBecomeLongs()
         {
             var matrix = new object[,] { { 1.0, "a" }, { 2.5, null } };

@@ -21,6 +21,15 @@ namespace RedisExcel
         // (2.1 billion cells) through to the allocation, where the cell shows a
         // raw OutOfMemoryException instead of the documented size error.
         private const long MaxExcelCells = 50000000;
+        // Input-text bound applied BEFORE parsing. An Excel cell holds at most
+        // 32,767 characters, so a JSON argument arriving from a cell is already far
+        // below this; a programmatic/oversized string gets a fast "too large" cell
+        // instead of being materialized. This bounds the parser's transient
+        // allocation (the parser used to build the whole token tree - gigabytes,
+        // seconds - before the post-parse matrix guard ran). 8M chars is ~30x the
+        // largest possible cell text and stays well under the 50M-cell budget in
+        // the densest encoding, so no legitimate request is rejected.
+        private const int MaxJsonTextLength = 8_000_000;
 
         [ExcelFunction(Description = "Converts a 2D Excel matrix to a compact JSON array of arrays.")]
         public static string RedisUDFMatrixToJSON(
@@ -108,6 +117,13 @@ namespace RedisExcel
                 // returns the fill value instead of a parser error.
                 if (jsonText.Length == 0)
                     return new object[,] { { fill } };
+                // Size guard BEFORE parsing: the smallest JSON token ("0," plus a
+                // digit) is at least ~2 chars, so a text far larger than the cell
+                // budget can never fit no matter its shape. Without this the parser
+                // materialized the whole document (gigabytes, seconds) and only the
+                // post-parse EnsureMatrixFitsExcel rejected it - blocking the Excel
+                // thread the guard exists to protect.
+                EnsureTextFitsExcel(jsonText.Length);
                 var token = JsonConvert.DeserializeObject<JToken>(jsonText, new JsonSerializerSettings
                 {
                     // Keep date-like strings as text so cells receive the original
@@ -239,6 +255,15 @@ namespace RedisExcel
         {
             if (rows > MaxExcelRows || columns > MaxExcelColumns
                 || (long)rows * columns > MaxExcelCells)
+                throw new ArgumentException("JSON is too large for an Excel sheet");
+        }
+
+        /// <summary>Rejects an oversized JSON argument BEFORE parsing it, so the
+        /// parser cannot materialize gigabytes and stall the Excel thread before
+        /// the post-parse matrix guard would have run.</summary>
+        private static void EnsureTextFitsExcel(int length)
+        {
+            if (length > MaxJsonTextLength)
                 throw new ArgumentException("JSON is too large for an Excel sheet");
         }
     }
