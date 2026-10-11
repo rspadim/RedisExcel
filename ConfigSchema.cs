@@ -116,11 +116,14 @@ namespace RedisExcel
             if (schema.Type.HasFlag(JsonObjectType.Object) && value is JObject obj)
             {
                 var cleaned = new JObject();
-                // Known model properties, keyed by their canonical schema name. Two
-                // keys that differ only by case bind to the same field
-                // case-insensitively; keep the exact-case spelling (else the first)
-                // so a bad "rtd" cannot shadow a good "RTD" - in EITHER order.
-                var modelProps = new Dictionary<string, JProperty>(StringComparer.OrdinalIgnoreCase);
+                // Known model properties, grouped by their CANONICAL schema name:
+                // two keys that differ only by case bind to the same field
+                // case-insensitively. Candidates are pruned in order and the FIRST
+                // that survives is kept (the exact-case spelling wins when its
+                // value is valid), so a bad exact-case duplicate cannot shadow a
+                // good variant and a good value is never lost.
+                var candidates = new Dictionary<string, List<JProperty>>(StringComparer.OrdinalIgnoreCase);
+                var order = new List<string>();
                 var otherProps = new List<JProperty>();
                 foreach (var prop in obj.Properties())
                 {
@@ -130,28 +133,55 @@ namespace RedisExcel
                         otherProps.Add(prop);
                         continue;
                     }
-                    if (modelProps.TryGetValue(canonical, out var existing))
+                    if (!candidates.TryGetValue(canonical, out var list))
                     {
-                        issues?.Add(new ConfigIssue(path + "/" + prop.Name, "duplicate key (differs only by case)"));
-                        bool currentExact = string.Equals(prop.Name, canonical, StringComparison.Ordinal);
-                        bool existingExact = string.Equals(existing.Name, canonical, StringComparison.Ordinal);
-                        if (currentExact && !existingExact)
-                            modelProps[canonical] = prop;
-                        // else keep the existing one
+                        list = new List<JProperty>();
+                        candidates[canonical] = list;
+                        order.Add(canonical);
                     }
-                    else
-                    {
-                        modelProps[canonical] = prop;
-                    }
+                    list.Add(prop);
                 }
 
-                foreach (var kv in modelProps)
+                foreach (var canonical in order)
                 {
-                    var prop = kv.Value;
-                    var childSchema = FindProperty(schema, prop.Name, out _);
-                    var kept = Prune(prop.Value, childSchema, path + "/" + prop.Name, issues);
-                    if (kept != null)
-                        cleaned[prop.Name] = kept;
+                    var list = candidates[canonical];
+                    // Prefer the exact-case spelling first, then the document order.
+                    list.Sort((a, b) =>
+                    {
+                        bool ax = string.Equals(a.Name, canonical, StringComparison.Ordinal);
+                        bool bx = string.Equals(b.Name, canonical, StringComparison.Ordinal);
+                        if (ax != bx) return ax ? -1 : 1;
+                        return 0; // stable: keeps document order otherwise
+                    });
+                    var childSchema = FindProperty(schema, list[0].Name, out _);
+                    JToken merged = null;
+                    JProperty keeper = list[0];
+                    foreach (var candidate in list)
+                    {
+                        if (candidate != list[0])
+                            issues?.Add(new ConfigIssue(path + "/" + candidate.Name, "duplicate key (differs only by case)"));
+                        var pruned = Prune(candidate.Value, childSchema, path + "/" + candidate.Name, issues);
+                        if (pruned == null)
+                            continue;
+                        if (merged == null)
+                        {
+                            merged = pruned;
+                            keeper = candidate;
+                        }
+                        else if (merged is JObject first && pruned is JObject second)
+                        {
+                            // Both spellings bind to the same object: MERGE so neither
+                            // loses a valid field (a bad field in one is already gone).
+                            foreach (var prop in second.Properties())
+                            {
+                                if (first.Property(prop.Name) == null)
+                                    first[prop.Name] = prop.Value;
+                            }
+                        }
+                        // Scalars: the first surviving value wins.
+                    }
+                    if (merged != null)
+                        cleaned[keeper.Name] = merged;
                 }
                 foreach (var prop in otherProps)
                 {

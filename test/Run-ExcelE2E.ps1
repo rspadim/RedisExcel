@@ -671,7 +671,13 @@ try {
         # Pair-range positive layout (v1.2.7): a 2x2 range is read row by row
         # (F2:G3 = 1/linha1;2/linha2 -> fields "1"="linha1" and "2"="linha2").
         @{ Row = 46; Func = 'HashSetMultiple pairs'; Fx = '=RedisUDFHashSetMultiple("{1}.pairs",$F$2:$G$3,"{0}")' -f $h, $kp; Expected = $null },
-        @{ Row = 47; Func = 'HashGet pairs'; Fx = '=RedisUDFHashGet("{1}.pairs","1","{0}")' -f $h, $kp; Expected = 'linha1' }
+        @{ Row = 47; Func = 'HashGet pairs'; Fx = '=RedisUDFHashGet("{1}.pairs","1","{0}")' -f $h, $kp; Expected = 'linha1' },
+        # The two config functions load the EMBEDDED schema (NJsonSchema + its
+        # Newtonsoft binding) inside the real XLL: if the dependency were missing
+        # from the pack, RedisCheckConfigFile would error and RedisJsonSchemaContents
+        # would be empty. This is the only place that exercises the real binary.
+        @{ Row = 55; Func = 'CheckConfigFile'; Fx = '=RedisCheckConfigFile()'; Expected = $null },
+        @{ Row = 56; Func = 'JsonSchemaContents length'; Fx = '=LEN(RedisJsonSchemaContents())'; Expected = $null }
     )
     foreach ($item in $udfItems) {
         Set-Cell $udf $item.Row 1 $item.Func
@@ -785,6 +791,12 @@ try {
     Check (Wait-CellRegex $udf 'B43' '^Error')                'UDF SetKV rejects mismatched key/value counts'
     Check (Wait-CellRegex $udf 'B45' '^Error')                'UDF ChannelUnsubscribe rejects a blank channel'
     Check (Wait-CellText $udf 'B47' 'linha1')                 'UDF HashSetMultiple pairs a 2x2 range row-by-row'
+    # The embedded schema must be reachable from the real XLL: a non-zero length
+    # proves NJsonSchema + Namotion.Reflection loaded (a missing pack dependency
+    # would make this 0 or an Error cell). RedisCheckConfigFile returns "OK (...)"
+    # or an Error list, never a raw exception.
+    Check (Wait-CellNumberMin $udf 'B56' 100)                 'UDF RedisJsonSchemaContents returns the embedded schema (deps packed)'
+    Check (Wait-CellRegex $udf 'B55' '^(OK|Error)')           'UDF RedisCheckConfigFile returns a report'
 
     # ------------------------------- v1.3.0 NonVolatile twins (rows 48/49) ----
     # A ...NonVolatile write must run on entry only: a plain recalculation
@@ -983,12 +995,12 @@ try {
     # must report the configured default host and positive intervals, and the
     # real-time flag must render as a boolean (TRUE/FALSE, locale-tolerant).
     Check (Wait-CellNotEmpty $rtd 'B13' 10)                  'RTD DefaultHost reports a non-empty host'
-    # B13 is a status helper: it must return the exact configured default host
-    # text (not a substring match, which would also accept an error cell that
-    # merely contains the host) and must not be an Excel error cell.
+    # B13 is a status helper: it must return the configured default host with its
+    # credentials masked (the v1.4.1+ contract - a password-bearing host never
+    # reaches a cell verbatim), so the expected text is the host with password=****.
     $defaultHostText = Get-CellText $rtd 'B13'
-    $expectedDefaultHost = 'localhost:6379,password=,defaultDatabase=0,ssl=False,abortConnect=False'
-    Check ($defaultHostText -eq $expectedDefaultHost) ("RTD DefaultHost matches the configured host (B13='" + $defaultHostText + "')")
+    $expectedDefaultHost = 'localhost:6379,password=****,defaultDatabase=0,ssl=False,abortConnect=False'
+    Check ($defaultHostText -eq $expectedDefaultHost) ("RTD DefaultHost matches the configured host with masked credentials (B13='" + $defaultHostText + "')")
     Check (-not $defaultHostText.StartsWith('#') -and -not $defaultHostText.StartsWith('Error')) ("RTD DefaultHost is a computed value, not an error cell (B13='" + $defaultHostText + "')")
     Check (Wait-CellNumberMin $rtd 'B14' 1)                  'RTD ExcelUpdateInterval >= 1'
     Check (Wait-CellNumberMin $rtd 'B15' 1)                  'RTD RedisUpdateInterval >= 1'

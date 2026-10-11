@@ -280,12 +280,24 @@ namespace RedisExcel.Tests
         [Theory]
         [InlineData("{\"RTD\":{\"host\":\"myhost\"},\"rtd\":{\"timeout\":true},\"SyncWrite\":\"sync\"}")]
         [InlineData("{\"rtd\":{\"timeout\":true},\"RTD\":{\"host\":\"myhost\"},\"SyncWrite\":\"sync\"}")]
+        [InlineData("{\"rtd\":{\"host\":\"myhost\"},\"RTD\":{\"timeout\":true},\"SyncWrite\":\"sync\"}")]
         public void CaseOnlyDuplicate_KeepsTheGoodValueEitherOrder(string json)
         {
             var issues = CleanOut(json, out var bound);
-            Assert.NotEmpty(issues);              // the duplicate is reported
-            Assert.Equal("myhost", bound.RTD.host);        // the good RTD won
+            Assert.NotEmpty(issues);                       // the duplicate is reported
+            Assert.Equal("myhost", bound.RTD.host);        // the good value won (any order)
             Assert.Equal("sync", bound.SyncWrite);         // unrelated keys survive
+        }
+
+        [Fact]
+        public void CaseOnlyDuplicate_FieldLevel_KeepsTheGoodValue()
+        {
+            // A good exact-case spelling and a bad variant (or vice-versa) must keep
+            // the value that survives pruning, never drop both.
+            var issues = CleanOut("{\"RTD\":{\"HOST\":\"GOODHOST\",\"host\":true},\"SyncWrite\":\"sync\"}", out var bound);
+            Assert.NotEmpty(issues);
+            Assert.Equal("GOODHOST", bound.RTD.host);
+            Assert.Equal("sync", bound.SyncWrite);
         }
 
         // ---- the core guarantee: anything the schema accepts binds -------------
