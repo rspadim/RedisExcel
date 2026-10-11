@@ -251,18 +251,25 @@ namespace RedisExcel
         /// text that embeds one, e.g. an exception message) before it reaches
         /// the log or a cell. The host argument of a UDF/RTD call may be a full
         /// connection string ("host:6379,password=secret,user=admin,..."), so a
-        /// bare "host={host}" would leak a credential. Password and user names
-        /// are masked; host/port/options stay readable for diagnostics.
+        /// bare "host={host}" would leak a credential.
+        ///
+        /// The value is matched the way StackExchange.Redis accepts it: the
+        /// keyword must follow a connection-string delimiter (start, ',' or ';',
+        /// optionally with whitespace after it) so a user key/value like
+        /// "key=user=abc" or "key=a password=b" is NOT rewritten, optional
+        /// whitespace is allowed around '=', and quoted values ('...' or "...")
+        /// are handled. The unquoted value runs to the next ',' (Redis does not
+        /// split on ';' inside a value), so "password=ab;cd" is fully masked too.
         /// </summary>
         public static string MaskHost(string host)
         {
             if (string.IsNullOrEmpty(host))
                 return host;
-            return PasswordPair.Replace(host, "$1=****");
+            return PasswordPair.Replace(host, "$1$2=****");
         }
 
         private static readonly Regex PasswordPair = new Regex(
-            @"\b(password|pass|user|username)=[^,;\s]+",
+            @"(^|[,;])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);

@@ -62,6 +62,47 @@ namespace RedisExcel.Tests
             Assert.Null(AppConfig.MaskHost(null));
         }
 
+        [Theory]
+        // StackExchange.Redis tolerates whitespace around '=' and quoted values;
+        // the regex must cover those or the secret leaks (found by audit).
+        [InlineData("host:6379,password = secret")]
+        [InlineData("host:6379,password =secret")]
+        [InlineData("host:6379,password= my secret")]
+        [InlineData("host:6379,password=ab;cd")]
+        [InlineData("host:6379, password = secret")]
+        public void MaskHost_ToleratesWhitespaceAndDelimiters(string input)
+        {
+            string masked = AppConfig.MaskHost(input);
+            Assert.Contains("password", masked, System.StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("****", masked);
+            Assert.DoesNotContain("secret", masked);
+            Assert.DoesNotContain("ab;cd", masked);
+        }
+
+        [Fact]
+        public void MaskHost_MasksQuotedValuesIncludingTheSpace()
+        {
+            string doubleQuoted = AppConfig.MaskHost("host:6379,password=\"my secret\",ssl=true");
+            Assert.DoesNotContain("my secret", doubleQuoted);
+            Assert.Contains("ssl=true", doubleQuoted); // the value after the quote survives
+
+            string singleQuoted = AppConfig.MaskHost("host:6379,password='q s',x=1");
+            Assert.DoesNotContain("q s", singleQuoted);
+            Assert.Contains("x=1", singleQuoted);
+        }
+
+        [Theory]
+        // A user key/channel/pattern that happens to contain a credential-looking
+        // token must NOT be rewritten: only a value after a connection-string
+        // delimiter is a real credential (audit: the old regex corrupted these).
+        [InlineData("key=user=abc, host=dead:1")]
+        [InlineData("key=a password=b, host=dead:1")]
+        [InlineData("channel=pass=x, host=h")]
+        public void MaskHost_DoesNotCorruptUserIdentifiers(string context)
+        {
+            Assert.Equal(context, AppConfig.MaskHost(context));
+        }
+
         [Fact]
         public void SafeMessage_MasksCredentialsInExceptionText_AsyncPath()
         {

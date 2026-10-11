@@ -1592,14 +1592,29 @@ internal static class Program
                 return;
             }
 
-            // With the tag known, RedisUDFUpdateAvailable is a pure comparison:
-            // restore the real running tag and confirm agreement with GitHub.
+            // With the tag known, RedisUDFUpdateAvailable is a pure comparison
+            // against the running build. Assert it against INDEPENDENT expected
+            // values (not against IsNewer itself, which would be a tautology):
+            // a clearly newer and a clearly older tag must flip the boolean.
+            UpdateCheck.CurrentTagOverrideForTests = "1.4.0";
+            UpdateLatestTagField.SetValue(null, "v99.0.0");
+            Check(RedisUDF.RedisUDFUpdateAvailable(),
+                "UpdateAvailable: returns TRUE for a clearly newer tag (v99.0.0)");
+            UpdateLatestTagField.SetValue(null, "v0.0.1");
+            Check(!RedisUDF.RedisUDFUpdateAvailable(),
+                "UpdateAvailable: returns FALSE for an older tag (v0.0.1)");
+            UpdateLatestTagField.SetValue(null, UpdateCheck.CurrentTag);
+            Check(!RedisUDF.RedisUDFUpdateAvailable(),
+                "UpdateAvailable: returns FALSE for the running tag itself");
+
+            // And it agrees with the real GitHub latest release for this build:
+            // if it is newer than the build, the function must say so.
             UpdateCheck.CurrentTagOverrideForTests = null;
             UpdateLatestTagField.SetValue(null, latest);
             bool saysOutdated = RedisUDF.RedisUDFUpdateAvailable();
-            bool realBuildIsBehind = UpdateCheck.IsNewer(latest, UpdateCheck.CurrentTag);
-            Check(saysOutdated == realBuildIsBehind,
-                $"UpdateAvailable: agrees with the live latest release {latest} (reports {saysOutdated}, build {UpdateCheck.CurrentTag} behind={realBuildIsBehind})");
+            bool liveBehind = UpdateCheck.IsNewer(latest, UpdateCheck.CurrentTag);
+            Check(!liveBehind || saysOutdated,
+                $"UpdateAvailable: reports an update when the live release ({latest}) is newer than the build ({UpdateCheck.CurrentTag})");
         }
         finally
         {
