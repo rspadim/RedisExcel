@@ -22,7 +22,6 @@ namespace RedisExcel
 
         private sealed class ChannelListener
         {
-            public string Channel;
             public IDisposable Token;
             // Serializes the callback's write against Close+remove in the
             // unsubscribe/reset paths: a callback that already passed the
@@ -420,6 +419,26 @@ namespace RedisExcel
 
         private static IDatabase GetDb(string host) => RedisRuntime.Connections.GetDatabase(host, RedisPool.UdfData);
 
+        /// <summary>Connects to the host and returns its first server endpoint:
+        /// the shared "one server per host" entry of the SCAN/time/PUBSUB
+        /// functions.</summary>
+        private static IServer GetServer(string host)
+        {
+            var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
+            return conn.GetServer(conn.GetEndPoints().First());
+        }
+
+        /// <summary>Shared "keys range" entry of the ...Multiples functions:
+        /// rejects a missing range, flattens it row-major into the two-column
+        /// echo matrix and returns the RedisKey list to batch. A null return
+        /// means the range was empty, so the caller returns its empty sentinel.</summary>
+        private static List<RedisKey> RequireKeyRange(object[,] keys, out object[,] result)
+        {
+            if (keys == null)
+                throw new ArgumentException("a range is required");
+            return FlattenKeysWithEcho(keys, out result);
+        }
+
         private static string Fail(string function, Exception ex, string context)
         {
             logger.Error(ex, $"{function}: {context}");
@@ -809,7 +828,7 @@ namespace RedisExcel
                 }
                 if (needsSubscribe)
                 {
-                    var listener = new ChannelListener { Channel = channelStr };
+                    var listener = new ChannelListener();
                     // Network I/O outside the lifecycle lock.
                     listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
                         onMessage: message =>
@@ -1032,8 +1051,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
-                var server = conn.GetServer(conn.GetEndPoints().First());
+                var server = GetServer(host);
 
                 var channelsResult = server.Execute("PUBSUB", "CHANNELS");
                 if (channelsResult.Resp2Type != ResultType.Array)
@@ -1420,8 +1438,7 @@ namespace RedisExcel
                 string patternStr = ToRedisString(pattern);
                 if (string.IsNullOrEmpty(patternStr))
                     throw new ArgumentException("a key pattern is required; use \"*\" to match all keys");
-                var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
-                var server = conn.GetServer(conn.GetEndPoints().First());
+                var server = GetServer(host);
                 List<string> keys;
                 bool hasPageSize = false;
                 int pageSizeInt = 0;
@@ -1495,8 +1512,7 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
-                var server = conn.GetServer(conn.GetEndPoints().First());
+                var server = GetServer(host);
                 var time = server.Time();
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFServerTime: {time}, host={host}");
@@ -1518,9 +1534,7 @@ namespace RedisExcel
             return RunMatrixCore("RedisUDFExistsMultiples", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                if (keys == null)
-                    throw new ArgumentException("a range is required");
-                var keysList = FlattenKeysWithEcho(keys, out var result);
+                var keysList = RequireKeyRange(keys, out var result);
                 if (keysList == null)
                     return new object[,] { { "" } };
                 // One round trip for all keys instead of one command per key.
@@ -1784,9 +1798,7 @@ namespace RedisExcel
             return RunMatrixCore("RedisUDFTTLMultiples", () => $"host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                if (keys == null)
-                    throw new ArgumentException("a range is required");
-                var keysList = FlattenKeysWithEcho(keys, out var result);
+                var keysList = RequireKeyRange(keys, out var result);
                 if (keysList == null)
                     return new object[,] { { "" } };
                 // One round trip for all keys instead of one command per key.
@@ -1950,9 +1962,7 @@ namespace RedisExcel
             return RunMatrixCore("RedisUDFHashGetFieldMultipleKeys", () => $"field={field}, host={host}", () =>
             {
                 host = ResolveHost(optionalHost);
-                if (hashKeys == null)
-                    throw new ArgumentException("a range is required");
-                var keysList = FlattenKeysWithEcho(hashKeys, out var result);
+                var keysList = RequireKeyRange(hashKeys, out var result);
                 if (keysList == null)
                     return new object[,] { { "" } };
                 // One round trip for all hashes instead of one command per key.

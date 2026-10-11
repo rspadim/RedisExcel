@@ -173,6 +173,12 @@ function Get-RedisPubsubCount([string[]]$Arguments) {
     return -1
 }
 
+# Trimmed text of a single-value redis-cli reply (GET/LLEN/PUBLISH/... probes).
+# The diagnostic labels around each call site are unchanged.
+function Get-RedisValue([string[]]$Arguments) {
+    return ((Invoke-RedisCli $Arguments | Out-String).Trim())
+}
+
 function Resolve-RedisCli {
     $endpoint = Get-RedisEndpoint $RedisHost
     $script:RedisArgs = @('-h', $endpoint.Host, '-p', $endpoint.Port)
@@ -386,7 +392,7 @@ function Wait-CellNumberMin($Sheet, [string]$Address, [double]$Min, [int]$Timeou
 # text; prints the last observed reply on timeout so failures are diagnosable.
 function Wait-RedisValue([string[]]$Arguments, [string]$Expected, [int]$TimeoutSeconds = 5) {
     $last = @('')
-    $ok = Wait-Until { $last[0] = (Invoke-RedisCli $Arguments | Out-String).Trim(); return ($last[0] -eq $Expected) } $TimeoutSeconds
+    $ok = Wait-Until { $last[0] = Get-RedisValue $Arguments; return ($last[0] -eq $Expected) } $TimeoutSeconds
     if ($ok) { return $true }
     Write-Host ("      Redis {0} = '{1}' (expected '{2}')" -f ($Arguments -join ' '), $last[0], $Expected) -ForegroundColor DarkGray
     return $false
@@ -397,7 +403,7 @@ function Wait-RedisValue([string[]]$Arguments, [string]$Expected, [int]$TimeoutS
 function Publish-Until-Cell($Channel, $Message, $Sheet, [string]$Address, [string]$Expected, [int]$TimeoutSeconds = 30) {
     $last = @('')
     $ok = Wait-Until {
-        $last[0] = (Invoke-RedisCli @('PUBLISH', $Channel, $Message) | Out-String).Trim()
+        $last[0] = Get-RedisValue @('PUBLISH', $Channel, $Message)
         return (Wait-CellText $Sheet $Address $Expected 3)
     } $TimeoutSeconds 250
     if ($ok) { return $true }
@@ -456,7 +462,7 @@ Write-Host ("Redis CLI : {0} {1}" -f $script:RedisExe, ($script:RedisPrefix -joi
 Write-Host ("Redis host: {0}" -f $RedisHost)
 Write-Host ("Key prefix: {0}.*" -f $KeyPrefix)
 
-if ((Invoke-RedisCli @('PING') | Out-String).Trim() -ne 'PONG') {
+if ((Get-RedisValue @('PING')) -ne 'PONG') {
     throw "Redis is not responding at $RedisHost"
 }
 
@@ -747,13 +753,13 @@ try {
         -and -not $nvSetCell.StartsWith('Error') -and -not $nvIncrCell.StartsWith('Error') `
         -and -not $nvSetCell.StartsWith('#') -and -not $nvIncrCell.StartsWith('#')
     Check $nvEntryComputed ("UDF NonVolatile twins evaluated on entry (B48='" + $nvSetCell + "', B49='" + $nvIncrCell + "')")
-    Write-Host ("      DIAG nv-entry: B48='" + (Get-CellText $udf 'B48') + "' B49='" + (Get-CellText $udf 'B49') + "' nvkey='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()) + "' nvcounter='" + ((Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()) + "'") -ForegroundColor DarkGray
+    Write-Host ("      DIAG nv-entry: B48='" + (Get-CellText $udf 'B48') + "' B49='" + (Get-CellText $udf 'B49') + "' nvkey='" + (Get-RedisValue @('GET', "$KeyPrefix.nvkey")) + "' nvcounter='" + (Get-RedisValue @('GET', "$KeyPrefix.nvcounter")) + "'") -ForegroundColor DarkGray
 
     # (a) A recalculation must not re-run SetNonVolatile: nvkey stays v2 and
     # the B48 cell keeps the value it computed on entry (no Error).
     Invoke-RedisCli @('SET', "$KeyPrefix.nvkey", 'v2') | Out-Null
     Invoke-ExcelAction { $udf.Calculate() } | Out-Null
-    $nvKey = (Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()
+    $nvKey = Get-RedisValue @('GET', "$KeyPrefix.nvkey")
     Check ($nvKey -eq 'v2') 'UDF SetNonVolatile does not re-run on a worksheet recalculation'
     $nvCellText = Get-CellText $udf 'B48'
     Check (-not [string]::IsNullOrWhiteSpace($nvCellText) -and -not $nvCellText.StartsWith('#') -and -not $nvCellText.StartsWith('Error')) 'UDF SetNonVolatile cell was computed (not an error)'
@@ -762,8 +768,8 @@ try {
     # (a volatile Incr would have reached 4 by now: entry + three recalcs).
     Invoke-ExcelAction { $udf.Calculate() } | Out-Null
     Invoke-ExcelAction { $udf.Calculate() } | Out-Null
-    $nvCounter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvcounter") | Out-String).Trim()
-    $nvKeyAfter = (Invoke-RedisCli @('GET', "$KeyPrefix.nvkey") | Out-String).Trim()
+    $nvCounter = Get-RedisValue @('GET', "$KeyPrefix.nvcounter")
+    $nvKeyAfter = Get-RedisValue @('GET', "$KeyPrefix.nvkey")
     Check ($nvCounter -eq '1') ("UDF IncrNonVolatile evaluated once only (recalcs do not increment; nvcounter='" + $nvCounter + "', nvkey='" + $nvKeyAfter + "')")
 
     # ------------------------------ v1.4.0 async-mode checks (rows 50-53) ----
@@ -805,7 +811,7 @@ try {
             $markerOk = Wait-RedisValue @('GET', "$KeyPrefix.asyncmarker") '1' 5
             $markerCell = Get-CellText $udf 'B50'
             $markerStillNa = Test-CellIsNA $udf 'B50'
-            $markerRedis = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncmarker") | Out-String).Trim()
+            $markerRedis = Get-RedisValue @('GET', "$KeyPrefix.asyncmarker")
             Check ($markerOk -and $markerStillNa) ("Async Incr reached Redis while the cell was still pending (redis='" + $markerRedis + "', cell='" + $markerCell + "', isNA=" + $markerStillNa + ")")
             # Force the delivery recalculation: it must return the cached result
             # (the mode-appropriate reply, not a fresh write); the single retry
@@ -817,7 +823,7 @@ try {
                 Invoke-ExcelAction { $udf.Range('B50').Calculate() } | Out-Null
                 $settledOk = Wait-CellText $udf 'B50' $asyncIncrReply 10
             }
-            $markerAfter = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncmarker") | Out-String).Trim()
+            $markerAfter = Get-RedisValue @('GET', "$KeyPrefix.asyncmarker")
             Check ($settledOk -and $markerAfter -eq '1') ("Async delivery recalculation settles the cell to '" + $asyncIncrReply + "' without re-running the write (cell='" + (Get-CellText $udf 'B50') + "', redis='" + $markerAfter + "')")
 
             # (B) Two cells, IDENTICAL formula, both must write (rows 51/52):
@@ -833,11 +839,11 @@ try {
             # Re-read twice after settling: a late duplicate write would drift
             # the final length from 2 (two equal reads one second apart).
             Start-Sleep -Milliseconds 300
-            $dupLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
+            $dupLen = Get-RedisValue @('LLEN', "$KeyPrefix.asyncdup")
             $dupLen2 = $dupLen
             if ($dupLen -eq '2') {
                 Start-Sleep -Milliseconds 1000
-                $dupLen2 = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncdup") | Out-String).Trim()
+                $dupLen2 = Get-RedisValue @('LLEN', "$KeyPrefix.asyncdup")
             }
             $dupOk = $dupOk -and ($dupLen -eq '2') -and ($dupLen2 -eq '2')
             if (-not $dupOk) {
@@ -853,7 +859,7 @@ try {
             $singleOk = Wait-RedisValue @('LLEN', "$KeyPrefix.asyncsingle") '1' 10
             Invoke-ExcelAction { $udf.Range('B51').Calculate() } | Out-Null
             Start-Sleep -Milliseconds 400
-            $singleLen = (Invoke-RedisCli @('LLEN', "$KeyPrefix.asyncsingle") | Out-String).Trim()
+            $singleLen = Get-RedisValue @('LLEN', "$KeyPrefix.asyncsingle")
             Check ($singleOk -and $singleLen -eq '1') ("A single cell re-evaluated keeps exactly one async write (LLEN='" + $singleLen + "')")
 
             # (C) Argument change dispatches a new write (row 53), back in
@@ -867,7 +873,7 @@ try {
             $argV1Ok = Wait-RedisValue @('GET', "$KeyPrefix.asyncarg") 'v1' 10
             Set-Cell $udf 53 6 'v2'
             $argV2Ok = Wait-RedisValue @('GET', "$KeyPrefix.asyncarg") 'v2' 10
-            $argFinal = (Invoke-RedisCli @('GET', "$KeyPrefix.asyncarg") | Out-String).Trim()
+            $argFinal = Get-RedisValue @('GET', "$KeyPrefix.asyncarg")
             Check ($argV1Ok -and $argV2Ok -and $argFinal -eq 'v2') ("Async argument change dispatches a new write and the last value wins (v1=" + $argV1Ok + ", v2=" + $argV2Ok + ", final='" + $argFinal + "')")
         }
         finally {
@@ -930,7 +936,7 @@ try {
     $b4Deadline = (Get-Date).AddSeconds(30)
     while (-not $seen -and (Get-Date) -lt $b4Deadline) {
         Invoke-RedisCli @('SET', "$KeyPrefix.key", 'hello_v2') | Out-Null
-        $readBack = (Invoke-RedisCli @('GET', "$KeyPrefix.key") | Out-String).Trim()
+        $readBack = Get-RedisValue @('GET', "$KeyPrefix.key")
         $seen = Wait-CellText $rtd 'B4' 'hello_v2' 3
     }
     Check $seen ("RTD GET picks up a changed value (last read back '" + $readBack + "')")

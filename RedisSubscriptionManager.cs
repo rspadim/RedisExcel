@@ -322,6 +322,16 @@ namespace RedisExcel
             }
             if (!lastListener)
                 return;
+            ReleaseChannelState(state);
+        }
+
+        /// <summary>
+        /// Unsubscribes the state's network handler and drops its registry entry;
+        /// the shared tail of <see cref="Remove"/> and <see cref="RollbackListener"/>,
+        /// called only once the state's last listener is gone.
+        /// </summary>
+        private void ReleaseChannelState(ChannelState state)
+        {
             string key = MakeKey(state.Host, state.Name, state.Pattern);
             RemoveChannelEntry(key, state);
             lock (NetworkGate(key))
@@ -385,9 +395,7 @@ namespace RedisExcel
             if (!lastListener)
                 return;
 
-            RemoveChannelEntry(MakeKey(state.Host, state.Name, state.Pattern), state);
-            lock (NetworkGate(MakeKey(state.Host, state.Name, state.Pattern)))
-                state.ReleaseSubscription();
+            ReleaseChannelState(state);
             logger.Debug($"Remove: host={state.Host}, channel={state.Name}, pattern={state.Pattern} unsubscribed");
         }
 

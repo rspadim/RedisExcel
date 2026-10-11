@@ -260,11 +260,15 @@ dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
 Covers: `ExcelJson` conversions and the matrix size/total-cell budget,
-`AppConfig` load/sanitize, `ResolveHostCore` (alias trim/case-insensitivity,
-exact-match priority) and the undefined-`ExcelUpdateStyle` reset, the
+`AppConfig` load/sanitize (including alias trim/case-insensitivity, the
+undefined-`ExcelUpdateStyle` reset and the tolerant per-value parsing),
+`ResolveHostCore` (exact-match priority), the real-time conflation window
+(`ConflationMs` sanitize/resolve/due), the
 `RedisConnectionManager`/`RedisSubscriptionManager`
-behavior, the `PublishIfChanged` dedup LRU cache, subscription keys, HGETALL
-formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
+behavior (the shutdown fences, the connect-failure memo, eviction protection and
+the idle-down drop), the `PublishIfChanged` dedup LRU cache and the
+pattern-join marker clearing (every marker of the host), subscription keys,
+HGETALL formatting, the `TickGate` reentrancy helper, `UpdateCheckTests`
 (`IsNewer`/`NormalizeTag`), `RedisValueLocaleTests` (de-DE culture), the
 `...NonVolatile` signature-parity and offline delegation tests (the volatile
 write set is pinned to the 24 twins), the write-mode
@@ -273,7 +277,10 @@ order, no host overlap, the synchronous path, the caller refusal and the
 invalid-host fallback), the offline `RedisWriteObservable` tests (single
 delivery + completion, error text, an observer whose `OnNext` throws is still
 completed, one-shot subscribe with duplicate delivery, no-op dispose while
-queued, synchronous enqueue), and a project-file parity test that keeps the
+queued, synchronous enqueue, the enqueue-failure latch and pathological error
+messages), the `WaitBounded` pipelined-wait bound (completed/faulted tasks
+return true, a never-completing task reports the timeout), and a project-file
+parity test that keeps the
 unit project's `Compile` list complete (RedisRtd.cs is the intentional
 exclusion).
 

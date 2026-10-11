@@ -89,7 +89,7 @@ namespace RedisExcel
         /// number as <see cref="LiveRtdConnectionCount"/> without the shutdown
         /// fence. Entries whose Lazy never ran hold nothing and are not
         /// counted.</summary>
-        public int RtdConnectionCount => CountCreated(_rtdData) + CountCreated(_rtdSub);
+        public int RtdConnectionCount => SumCreated(_rtdData, _rtdSub);
 
         /// <summary>Multiplexers actually created in the UDF pool; see
         /// <see cref="RtdConnectionCount"/>.</summary>
@@ -110,7 +110,7 @@ namespace RedisExcel
             // being disposed by Shutdown's walk or by the shutdown races in
             // GetConnection/Connect, so report zero instead of counting one
             // that is being torn down.
-            return _shutdown ? 0 : CountCreated(_rtdData) + CountCreated(_rtdSub) + CountCreated(_udfData);
+            return _shutdown ? 0 : SumCreated(_rtdData, _rtdSub) + CountCreated(_udfData);
         }
 
         /// <summary>
@@ -118,7 +118,7 @@ namespace RedisExcel
         /// value behind RedisRTDConnectionCount. Zero while the shutdown
         /// fence is set, like <see cref="LiveConnectionCount"/>.
         /// </summary>
-        public int LiveRtdConnectionCount() => _shutdown ? 0 : CountCreated(_rtdData) + CountCreated(_rtdSub);
+        public int LiveRtdConnectionCount() => _shutdown ? 0 : SumCreated(_rtdData, _rtdSub);
 
         /// <summary>
         /// Live multiplexers for the UDF pool only (UdfData). Zero while the
@@ -135,6 +135,14 @@ namespace RedisExcel
                     total++;
             }
             return total;
+        }
+
+        /// <summary>Sum of <see cref="CountCreated"/> over the listed pools.</summary>
+        private static int SumCreated(
+            ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> first,
+            ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> second)
+        {
+            return CountCreated(first) + CountCreated(second);
         }
 
         private void EvictDisconnectedConnections(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string keepHost, RedisPool pool)
@@ -180,12 +188,7 @@ namespace RedisExcel
                     DisposeConnection(mux,
                         $"GetConnection: error disposing evicted connection host={kv.Key}",
                         closeFirst: true, allowCommandsToComplete: false);
-                    // Invalidate the cached wrappers too: they are bound to the
-                    // disposed multiplexer, and leaving them would make every
-                    // later call on this host throw ObjectDisposedException
-                    // forever (GetDatabase/GetSubscriber would never rebuild).
-                    _databases.TryRemove(PoolKey(kv.Key, pool), out _);
-                    _subscribers.TryRemove(PoolKey(kv.Key, pool), out _);
+                    InvalidateWrappers(PoolKey(kv.Key, pool));
                     logger.Info($"GetConnection: evicted disconnected connection host={kv.Key} (pool over {MaxCachedConnectionsPerPool} entries)");
                 }
             }
@@ -195,8 +198,9 @@ namespace RedisExcel
         {
             // Shared teardown: log a failure instead of surfacing it. The
             // closeFirst/allowCommandsToComplete pair mirrors each call site's
-            // current sequence (eviction and the shutdown races close(false);
-            // the post-connect path disposes only).
+            // current sequence: eviction and the idle-down sweep close(false);
+            // GetConnection's post-connect shutdown race closes(true); Connect's
+            // post-connect shutdown race disposes only.
             try
             {
                 if (closeFirst)
@@ -207,6 +211,18 @@ namespace RedisExcel
             {
                 logger.Debug(ex, logMessage);
             }
+        }
+
+        /// <summary>
+        /// Drops the cached IDatabase/ISubscriber wrappers for a pool key: they
+        /// are bound to a multiplexer that was just disposed, so leaving them
+        /// would make every later call on the host throw ObjectDisposedException
+        /// forever (GetDatabase/GetSubscriber would never rebuild).
+        /// </summary>
+        private void InvalidateWrappers(string poolKey)
+        {
+            _databases.TryRemove(poolKey, out _);
+            _subscribers.TryRemove(poolKey, out _);
         }
 
         private static InvalidOperationException ShuttingDown()
@@ -418,8 +434,7 @@ namespace RedisExcel
                         DisposeConnection(mux,
                             $"GetConnection: error disposing idle-down connection host={kv.Key}",
                             closeFirst: true, allowCommandsToComplete: false);
-                        _databases.TryRemove(memoKey, out _);
-                        _subscribers.TryRemove(memoKey, out _);
+                        InvalidateWrappers(memoKey);
                         _downSinceTicks.TryRemove(memoKey, out _);
                         _recentConnectFailures.TryRemove(memoKey, out _);
                         logger.Info($"GetConnection: dropped idle-down connection host={kv.Key} (down for over {DownHostTtlMs / 1000}s)");

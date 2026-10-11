@@ -1,5 +1,4 @@
 using System;
-using System.Globalization;
 using System.Reflection;
 using Xunit;
 
@@ -87,21 +86,6 @@ namespace RedisExcel.Tests
                 LatestTagField.SetValue(null, originalTag);
                 AppConfig.Current.UpdateCheck = originalUpdateCheck;
             }
-        }
-
-        /// <summary>Returns a "v{major+1}.0.0" tag guaranteed newer than the
-        /// running build, or null when the build tag is not a plain numeric
-        /// version (e.g. "dev", for which IsNewer always answers false).
-        /// Kept for the "dev never alerts" case.</summary>
-        private static string NewerThan(string currentTag)
-        {
-            string normalized = UpdateCheck.NormalizeTag(currentTag);
-            if (string.IsNullOrEmpty(normalized))
-                return null;
-            string majorText = normalized.Split('.')[0];
-            if (!long.TryParse(majorText, NumberStyles.None, CultureInfo.InvariantCulture, out long major))
-                return null;
-            return "v" + (major + 1) + ".0.0";
         }
     }
 }

@@ -40,8 +40,9 @@ Covers the ref-counted Pub/Sub behavior (two listeners on one channel, the
 last-listener unsubscribe, re-subscription, duplicate suppression,
 literal/pattern independence, late joiners, double dispose, origin counters,
 argument validation) plus the concurrent dedup regression (4 x 50,000 distinct
-payloads against a dedicated Redis: a disposable `rs-smoke-2` container on port
-6396 when a Linux Docker daemon is available, else the main host).
+payloads against a dedicated Redis: a disposable `redis:7-alpine` container
+with a random name on a free ephemeral port when a Linux Docker daemon is
+available, else the main host).
 
 ## 3. Excel end-to-end (requires Excel + Redis + built XLLs)
 

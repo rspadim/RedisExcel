@@ -362,8 +362,6 @@ namespace RedisExcel.Tests
         // A refused local port: the connect fails fast without leaving the
         // process, so no server is needed for the materialized-pool tests.
         private const string DeadLocalHost = "127.0.0.1:1,connectTimeout=500,connectRetry=0";
-        // RFC 5737 TEST-NET-1 address: connect parks until the 1000ms timeout.
-        private const string UnreachableHost = "10.255.255.1:6379,connectTimeout=1000,connectRetry=1";
         // A dedicated, longer connect timeout for the in-flight shutdown-fence
         // test: it blocks on Connect for ~2s, so a short wait is safely inside.
         private const string InFlightHost = "10.255.255.1:6379,connectTimeout=2000,connectRetry=0";

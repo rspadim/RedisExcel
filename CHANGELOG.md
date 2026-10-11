@@ -166,7 +166,7 @@
   the host is cleared, other hosts untouched). The smoke suite keeps covering
   ref-counted Pub/Sub and the concurrent dedup burst against its dedicated
   disposable Redis.
-- New liveness layer (`test\LivenessTests`, not wired to CI yet): drives the
+- New liveness layer (`test\LivenessTests`): drives the
   real managers under ThreadPool starvation, subscribe/dispose churn, lock
   contention on every public entry point, `CLIENT KILL` storms plus a server
   restart, async queue/observable bursts and dedup re-join. The
@@ -191,6 +191,14 @@
   the RTD poll loops, one owner for the realtime delivery policy and for the
   `SyncWrite` vocabulary, plus deduplicated test-harness helpers and shared
   observer doubles.
+- Test hygiene: removed two orphaned test helpers (an unused host constant and
+  a dead `NewerThan` helper) and their now-unused `using`; the E2E script's
+  repeated `redis-cli` reply trim collapsed into one `Get-RedisValue` helper
+  (every check label and diagnostic string is unchanged). The test docs were
+  corrected to match the code: the smoke container description (random name on
+  a free port, not `rs-smoke-2`/6396), the liveness layer is no longer
+  described as "not wired to CI", and the AGENTS.md unit-coverage list now
+  matches the unit suite.
 - The liveness layer gained a scripted failure matrix (`--matrix`: stop/start,
   restart, pause, kill storms, `CLIENT PAUSE`, flapping, reload under traffic,
   writes during the fault) and a soak mode (`--soak <minutes>`); both assert
