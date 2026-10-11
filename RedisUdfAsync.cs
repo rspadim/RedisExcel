@@ -246,6 +246,16 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>Drops the per-host queues on an add-in reload: the previous
+        /// session's pending continuations must not be carried into the new
+        /// runtime (async write identity is per-process). A later Enqueue builds a
+        /// fresh queue; any still-running item finishes and its ReleaseQueue is a
+        /// no-op (its host no longer maps to that queue).</summary>
+        internal static void ResetAfterAddInReload()
+        {
+            _queues.Clear();
+        }
+
         /// <summary>
         /// Runs one queued work item. Exceptions must never surface through the
         /// async handle: they are logged and converted to the same "Error: ..."

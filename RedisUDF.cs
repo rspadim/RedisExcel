@@ -161,7 +161,12 @@ namespace RedisExcel
                 int timeout = pool == RedisPool.UdfData
                     ? AppConfig.Current.UDF.timeout
                     : AppConfig.Current.RTD.timeout;
-                return Math.Max(500, timeout + 500);
+                // Clamp to the int range: a configured timeout near int.MaxValue
+                // would otherwise overflow timeout+500 into a negative bound.
+                long bound = (long)timeout + 500;
+                if (bound < 500) bound = 500;
+                if (bound > int.MaxValue) bound = int.MaxValue;
+                return (int)bound;
             }
             catch
             {
@@ -208,6 +213,9 @@ namespace RedisExcel
                 lock (PublishLock(key))
                     _lastPublishedMessages.Remove(key);
             }
+            // Drop the per-host async write queues too: the previous session's
+            // pending continuations must not survive a same-process reload.
+            RedisUdfAsync.ResetAfterAddInReload();
         }
 
         /// <summary>
@@ -2418,6 +2426,21 @@ namespace RedisExcel
         {
             UpdateCheck.EnsureFresh(TimeSpan.FromHours(6));
             return UpdateCheck.IsUpdateAvailable();
+        }
+
+        [ExcelFunction(Description = "Validates RedisExcel.json against its schema and returns OK or the list of problems (comments are accepted). Leave the file argument blank to validate the configuration in use.", IsVolatile = true)]
+        public static string RedisCheckConfigFile(
+            [ExcelArgument(Description = "Optional path to a RedisExcel.json to validate; blank validates the configuration in use")] object optionalFilePath)
+        {
+            string path = null;
+            if (optionalFilePath != null && !(optionalFilePath is ExcelDna.Integration.ExcelMissing)
+                && !(optionalFilePath is ExcelDna.Integration.ExcelEmpty))
+            {
+                path = Convert.ToString(optionalFilePath, System.Globalization.CultureInfo.InvariantCulture);
+                if (string.IsNullOrWhiteSpace(path))
+                    path = null;
+            }
+            return AppConfig.ValidateConfiguration(path);
         }
     }
 

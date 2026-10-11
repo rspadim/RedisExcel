@@ -129,9 +129,11 @@ namespace RedisExcel.Tests
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToList();
 
-            Assert.Equal(42, volatileFunctions.Count);
+            // 42 reads/status writes + the config validator = 43 volatile functions;
+            // 24 have a NonVolatile write twin, so 19 are reads/status with no twin.
+            Assert.Equal(43, volatileFunctions.Count);
             Assert.Equal(24, volatileWithTwin.Count);
-            Assert.Equal(18, volatileFunctions.Count - volatileWithTwin.Count);
+            Assert.Equal(19, volatileFunctions.Count - volatileWithTwin.Count);
             Assert.Equal(explicitBases, volatileWithTwin);
 
             foreach (string name in volatileWithTwin)

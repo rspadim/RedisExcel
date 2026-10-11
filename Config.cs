@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Converters;
+using Newtonsoft.Json.Linq;
 using NLog;
 using System;
 using System.Collections.Generic;
@@ -89,25 +90,34 @@ namespace RedisExcel
         private static ConfigRoot Load() => LoadFromPaths(CandidatePaths());
 
         /// <summary>
-        /// Deserializes a configuration file tolerating per-value mistakes: a single
-        /// wrong-typed or unknown-enum value is skipped (logged through
-        /// <paramref name="onError"/>) and the rest of the file is kept, instead of
-        /// throwing and silently discarding every configured value (which used to
-        /// repoint the host to localhost and change the write mode). A structural
-        /// failure (not JSON) still throws to the caller's catch and falls back to
-        /// the safe defaults.
+        /// Deserializes a configuration file tolerating per-value mistakes: the
+        /// JSON is first validated against the embedded schema (comments
+        /// accepted) and every invalid value is REMOVED before deserializing, so
+        /// the reader never sees a wrong-typed value. This closes the hole where a
+        /// bool/object/array in a numeric position failed at the JSON reader level
+        /// (the Error callback cannot repair that) and silently discarded the
+        /// whole file - repointing the host to localhost and changing the write
+        /// mode. Each dropped value is reported through <paramref name="onError"/>
+        /// and collected in <paramref name="issues"/>. A structural failure (not
+        /// JSON) still throws to the caller's catch and falls back to defaults.
         /// </summary>
-        internal static ConfigRoot ParseTolerant(string json, Action<Exception> onError)
+        internal static ConfigRoot ParseTolerant(string json, Action<Exception> onError, IList<ConfigIssue> issues = null)
         {
-            var settings = new JsonSerializerSettings
+            JObject root = ConfigSchema.ParseWithComments(json);
+            if (root == null)
+                return null;
+            var collected = issues ?? new List<ConfigIssue>();
+            JToken cleaned = ConfigSchema.Clean(root, collected);
+            if (onError != null)
             {
-                Error = (_, e) =>
-                {
-                    onError?.Invoke(e.ErrorContext.Error);
-                    e.ErrorContext.Handled = true;
-                }
-            };
-            return JsonConvert.DeserializeObject<ConfigRoot>(json, settings);
+                foreach (var issue in collected)
+                    onError(new FormatException(issue.ToString()));
+            }
+            if (cleaned == null)
+                return null;
+            // Comments / unknown keys are gone and every remaining value matches the
+            // schema, so the strict deserialize cannot fail on a typed property.
+            return cleaned.ToObject<ConfigRoot>();
         }
 
         /// <summary>
@@ -132,14 +142,17 @@ namespace RedisExcel
                         // parsed, stop here with safe defaults instead of silently
                         // falling through to a lower-priority file.
                         string json = File.ReadAllText(path);
+                        var issues = new List<ConfigIssue>();
                         var config = ParseTolerant(json, ex =>
-                            logger.Error(ex, $"AppConfig: value ignored in {path} (type mismatch), keeping the rest of the file"));
+                            logger.Error(ex, $"AppConfig: value ignored in {path} (schema), keeping the rest of the file"), issues);
                         if (config != null)
                         {
-                            logger.Info($"AppConfig: loaded configuration from {path}");
+                            logger.Info(issues.Count == 0
+                                ? $"AppConfig: loaded configuration from {path}"
+                                : $"AppConfig: loaded configuration from {path} with {issues.Count} value(s) ignored");
                             return Sanitize(config);
                         }
-                        logger.Error($"AppConfig: config file {path} deserialized to null, using defaults");
+                        logger.Error($"AppConfig: config file {path} is not a JSON object, using defaults");
                     }
                     catch (Exception ex)
                     {
@@ -187,6 +200,7 @@ namespace RedisExcel
 
         internal static ConfigRoot Sanitize(ConfigRoot config)
         {
+            config = config ?? new ConfigRoot();
             config.RTD = config.RTD ?? new RTDConfig();
             config.UDF = config.UDF ?? new ConfigSection();
             if (string.IsNullOrWhiteSpace(config.RTD.host)) config.RTD.host = DefaultHost;
@@ -275,6 +289,69 @@ namespace RedisExcel
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);
 
         public static string ResolveUdfHost(string host) => ResolveHost(host, Current.UDF.host);
+
+        /// <summary>
+        /// Validates a RedisExcel.json and returns a short report for a cell.
+        /// <paramref name="path"/> = null/blank validates the configuration this
+        /// process would load (same discovery order); otherwise the given file is
+        /// validated. Comments (// and /* */) are accepted. Returns "OK (...)" when
+        /// valid, otherwise one line per problem ("&lt;path&gt;: &lt;message&gt;").
+        /// Never throws.
+        /// </summary>
+        public static string ValidateConfiguration(string path = null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(path))
+                    path = FirstExistingPath();
+                else
+                    path = path.Trim();
+
+                if (path == null)
+                    return "OK (no RedisExcel.json found; using defaults)";
+                if (!File.Exists(path))
+                    return "Error: file not found: " + path;
+
+                string json = File.ReadAllText(path);
+                JObject root;
+                try
+                {
+                    root = ConfigSchema.ParseWithComments(json);
+                }
+                catch (Exception ex)
+                {
+                    return "Error: " + AppConfig.MaskHost(ex.Message) + " (" + path + ")";
+                }
+                if (root == null)
+                    return "Error: the config root is not a JSON object (" + path + ")";
+
+                var issues = new List<ConfigIssue>();
+                ConfigSchema.Clean(root, issues);
+                if (issues.Count == 0)
+                    return "OK (" + path + ")";
+
+                var lines = new List<string> { "Error: " + issues.Count + " problem(s) in " + path };
+                foreach (var issue in issues)
+                    lines.Add(issue.ToString());
+                return string.Join("\n", lines);
+            }
+            catch (Exception ex)
+            {
+                return "Error: " + AppConfig.MaskHost(ex.Message);
+            }
+        }
+
+        /// <summary>The first existing candidate path, or null when none exists
+        /// (same discovery order as the loader).</summary>
+        internal static string FirstExistingPath()
+        {
+            foreach (var path in CandidatePaths())
+            {
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
+                    return path;
+            }
+            return null;
+        }
 
         /// <summary>Configured write mode ("sync", "fireforget" or "fireforget-all");
         /// convenience accessor for the process-wide configuration.</summary>

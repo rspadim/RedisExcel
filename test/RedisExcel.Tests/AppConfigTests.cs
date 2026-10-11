@@ -311,6 +311,117 @@ namespace RedisExcel.Tests
             }
         }
 
+        [Fact]
+        public void LoadFromPaths_BoolWhereNumberExpected_KeepsTheRestOfTheFile()
+        {
+            // Regression (audit D1): a bool/object/array in a numeric position used
+            // to fail at the JSON reader level (the Error callback cannot repair it)
+            // and returned null, discarding the WHOLE file - host, write mode and
+            // aliases all reverted to defaults. The schema now removes just the bad
+            // value.
+            using (var temp = new TempFiles())
+            {
+                string partlyBad = temp.Write("bool-int.json",
+                    "{\"RTD\":{\"host\":\"prodhost:6379\",\"timeout\":true}," +
+                    "\"UDF\":{\"host\":\"prodhost:6379\"},\"SyncWrite\":\"sync\"," +
+                    "\"Servers\":{\"prod\":\"prodhost:6379\"}}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("prodhost:6379", config.RTD.host);      // kept
+                Assert.Equal("prodhost:6379", config.UDF.host);      // kept
+                Assert.Equal("sync", config.SyncWrite);              // kept
+                Assert.NotNull(config.Servers);                      // kept
+                Assert.Equal("prodhost:6379", config.Servers["prod"]);
+                Assert.Equal(1000, config.RTD.timeout);              // bad bool -> default
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_ObjectWhereNumberExpected_KeepsTheRestOfTheFile()
+        {
+            using (var temp = new TempFiles())
+            {
+                string partlyBad = temp.Write("obj-int.json",
+                    "{\"RTD\":{\"RedisUpdateRateMs\":{}},\"ConflationMs\":[1],\"SyncWrite\":\"sync\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+
+                Assert.Equal("sync", config.SyncWrite);
+                Assert.Equal(1000, config.RTD.RedisUpdateRateMs);
+                Assert.Null(config.ConflationMs);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_AcceptsCommentsInTheConfigFile()
+        {
+            using (var temp = new TempFiles())
+            {
+                string withComments = temp.Write("comments.json",
+                    "{\n// the production host\n\"RTD\":{\"host\":\"myhost\"},\n" +
+                    "/* write mode */ \"SyncWrite\":\"sync\"\n}");
+
+                var config = AppConfig.LoadFromPaths(new[] { withComments });
+
+                Assert.Equal("myhost", config.RTD.host);
+                Assert.Equal("sync", config.SyncWrite);
+            }
+        }
+
+        [Fact]
+        public void ValidateConfiguration_ReportsProblemsWithoutThrowing()
+        {
+            using (var temp = new TempFiles())
+            {
+                string bad = temp.Write("bad.json", "{\"RTD\":{\"timeout\":true},\"AsyncWrites\":\"yes\"}");
+                var issues = new System.Collections.Generic.List<ConfigIssue>();
+                var parsed = AppConfig.ParseTolerant(System.IO.File.ReadAllText(bad), null, issues);
+
+                Assert.NotNull(parsed);              // the file still loads
+                Assert.Equal(2, issues.Count);        // both bad values reported
+                Assert.Contains(issues, i => i.Path.Contains("timeout"));
+                Assert.Contains(issues, i => i.Path.Contains("AsyncWrites"));
+            }
+        }
+
+        [Fact]
+        public void ValidateConfiguration_ByPath_ReportsOkOrProblems()
+        {
+            using (var temp = new TempFiles())
+            {
+                string good = temp.Write("good.json", "{\"SyncWrite\":\"sync\"}");
+                string bad = temp.Write("bad.json", "{\"ConflationMs\":9999999}");
+
+                Assert.StartsWith("OK", AppConfig.ValidateConfiguration(good));
+                string report = AppConfig.ValidateConfiguration(bad);
+                Assert.StartsWith("Error:", report);
+                Assert.Contains("ConflationMs", report);
+                Assert.Contains("3600000", report);
+            }
+        }
+
+        [Fact]
+        public void ValidateConfiguration_MissingFile_ReturnsError()
+        {
+            Assert.StartsWith("Error: file not found", AppConfig.ValidateConfiguration(@"Z:\nope\does-not-exist.json"));
+        }
+
+        [Fact]
+        public void RedisCheckConfigFile_BlankValidatesInUseAndPathValidatesThatFile()
+        {
+            using (var temp = new TempFiles())
+            {
+                string good = temp.Write("good.json", "{\"SyncWrite\":\"sync\"}");
+                // A path validates that file; ExcelMissing/blank validates the
+                // in-use configuration (whatever this machine has, or "no file").
+                Assert.StartsWith("OK", (string)RedisUDF.RedisCheckConfigFile(good));
+                Assert.StartsWith("Error: file not found", (string)RedisUDF.RedisCheckConfigFile(@"Z:\nope.json"));
+                string inUse = (string)RedisUDF.RedisCheckConfigFile(ExcelDna.Integration.ExcelMissing.Value);
+                Assert.StartsWith("OK", inUse);
+            }
+        }
+
         /// <summary>Creates a unique temp directory for config files and removes
         /// it when the test finishes.</summary>
         private sealed class TempFiles : IDisposable

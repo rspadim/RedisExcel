@@ -4,6 +4,14 @@
 
 ### Changed
 
+- **Config validated against a JSON Schema (comments allowed):** `RedisExcel.json`
+  may now contain `//` and `/* */` comments, and a wrong-typed value (e.g.
+  `"timeout": true`, `"AsyncWrites": "yes"`) is dropped on its own instead of
+  discarding the whole file - previously a bool/object in a numeric position
+  failed at the JSON reader level and silently reverted the host, write mode and
+  aliases to defaults. New `=RedisCheckConfigFile()` returns `OK (...)` or one
+  line per problem (blank = the configuration in use, or pass a file path), so a
+  user can validate without reading the log.
 - **No credentials in cells or logs:** a `host` argument that is a connection
   string carries credentials (`password=` / `user=`), so every error cell, RTD
   `#ERROR` text, the `RedisRTDDefaultHost` cell and log line now masks them

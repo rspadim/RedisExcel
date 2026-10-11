@@ -26,6 +26,7 @@
        involved. -->
   <ItemGroup>
     <Compile Include="..\..\Config.cs" />
+    <Compile Include="..\..\ConfigSchema.cs" />
     <Compile Include="..\..\Conflation.cs" />
     <Compile Include="..\..\ExcelJson.cs" />
     <Compile Include="..\..\RedisConnectionManager.cs" />

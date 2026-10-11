@@ -43,6 +43,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | File | Responsibility |
 | --- | --- |
 | `Config.cs` | `AppConfig`: loads `RedisExcel.json` once, safe defaults, host alias resolution. |
+| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates (comments accepted) and drops bad values so one mistake no longer discards the file. |
 | `RedisConnectionManager.cs` | Single place that creates/caches `ConnectionMultiplexer` per host and pool (`RtdData`/`RtdSub`/`UdfData`). |
 | `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
@@ -235,12 +236,16 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   formatting-only changes are treated as duplicates.
 - The config file is read once per Excel process (restart Excel after editing
   it) and searched in: user profile, Excel folder, `C:\Windows` (first existing
-  wins). A malformed first-existing file uses safe defaults instead of falling
-  through to a lower-priority file. When no config file is found at all, the
-  legacy no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the
-  loaded-file default of 100 ms). An undefined `ExcelUpdateStyle` falls back to
-  `Automatic`, and host aliases are matched after trimming and
-  case-insensitively (exact match first).
+  wins). The file may contain `//` and `/* */` comments and is validated against
+  the embedded JSON Schema (`ConfigSchema.cs`): a wrong-typed value (e.g.
+  `"timeout": true`) is dropped on its own and the rest of the file is kept
+  (a structural failure - not JSON - still uses safe defaults, and the
+  first-existing candidate stops the search). `=RedisCheckConfigFile()` reports
+  the problems in a cell (blank = the config in use, or pass a path). When no
+  config file is found at all, the legacy no-file default for
+  `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file default of 100 ms).
+  An undefined `ExcelUpdateStyle` falls back to `Automatic`, and host aliases are
+  matched after trimming and case-insensitively (exact match first).
 
 ## Build
 

@@ -272,6 +272,7 @@ Functions to use directly in Excel cells:
 | RedisUDFChannelUnsubscribe       | Unsubscribe a channel (host argument added in v1.2.6) | channel, optionalHost   |
 | RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
+| RedisCheckConfigFile          | Validate RedisExcel.json against its schema | optionalFilePath (blank = the config in use) |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
 | RedisUDFMatrixToJSON             | Convert Excel matrix → JSON      | matrix                                    |
 | RedisUDFServerTime               | Redis server current time        | optionalHost                              |
@@ -325,6 +326,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | `RedisUDFPubSubChannelsInfo` | matrix `Channel` / `Subscribers` (header first) | header-only matrix when nothing is subscribed |
 | `RedisUDFServerTime` | the server time | - |
 | `RedisUDFUpdateAvailable` | `TRUE` when a newer release is known (background check, never blocks) | `FALSE` |
+| `RedisCheckConfigFile` | `OK (...)` when the config is valid, otherwise one line per problem | `Error: ...` (never blocks) |
 | `RedisUDFConnectionCount` | live UDF connections | `0` |
 | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix` | the converted text / matrix | `Error:` cell on bad input |
 
@@ -430,6 +432,13 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 > window described in the table below; while a topic keeps changing Excel is
 > updated at most once per window with the latest value, which is the main
 > lever against screen flicker and the recalculation cascade on fast feeds.
+
+> **Comments & validation:** the file may contain `//` and `/* */` comments. A
+> wrong-typed value (e.g. `"timeout": true` or `"AsyncWrites": "yes"`) is dropped
+> on its own instead of discarding the whole file - the rest of your settings are
+> kept. Put `=RedisCheckConfigFile()` in a cell to validate the configuration in
+> use, or `=RedisCheckConfigFile("C:\\path\\RedisExcel.json")` for a specific
+> file: it returns `OK (...)` or one line per problem without needing the log.
 
 #### Other JSON keys
 
