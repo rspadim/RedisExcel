@@ -42,7 +42,12 @@ literal/pattern independence, late joiners, double dispose, origin counters,
 argument validation) plus the concurrent dedup regression (4 x 50,000 distinct
 payloads against a dedicated Redis: a disposable `redis:7-alpine` container
 with a random name on a free ephemeral port when a Linux Docker daemon is
-available, else the main host).
+available, else the main host). It also drives the real `SyncWrite` modes
+against Redis - the CI-safe end-to-end for the write path, no Excel: the exact
+cell text per mode (`OK`, `OK (fire and forget)`, `OK (fire and forget: all)`,
+`0 readers`), the reply shapes and the `RedisUDFChannelPublish` markers - and a
+live `RedisUDFUpdateAvailable` check against the GitHub release API (skipped
+when offline).
 
 ## 3. Excel end-to-end (requires Excel + Redis + built XLLs)
 

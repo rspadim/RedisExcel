@@ -37,6 +37,17 @@ namespace RedisExcel.Tests
         }
 
         [Theory]
+        [InlineData("user=admin")]
+        [InlineData("username=admin")]
+        public void MaskHost_MasksTheUserName(string pair)
+        {
+            string masked = AppConfig.MaskHost("host:6379," + pair + ",password=secret");
+            Assert.DoesNotContain("admin", masked);
+            Assert.DoesNotContain("secret", masked);
+            Assert.Contains("user", masked); // the key stays visible
+        }
+
+        [Theory]
         [InlineData("localhost:6379")]
         [InlineData("localhost:6379,abortConnect=False,ssl=true")]
         [InlineData("")]

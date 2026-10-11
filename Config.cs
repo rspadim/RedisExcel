@@ -250,9 +250,9 @@ namespace RedisExcel
         /// Redacts the credentials of a Redis host/connection string (or any
         /// text that embeds one, e.g. an exception message) before it reaches
         /// the log or a cell. The host argument of a UDF/RTD call may be a full
-        /// connection string ("host:6379,password=secret,..."), so a bare
-        /// "host={host}" would leak the password. Only the password-like value
-        /// is masked; host/port/options stay readable for diagnostics.
+        /// connection string ("host:6379,password=secret,user=admin,..."), so a
+        /// bare "host={host}" would leak a credential. Password and user names
+        /// are masked; host/port/options stay readable for diagnostics.
         /// </summary>
         public static string MaskHost(string host)
         {
@@ -262,7 +262,7 @@ namespace RedisExcel
         }
 
         private static readonly Regex PasswordPair = new Regex(
-            @"\b(password|pass)=[^,;\s]+",
+            @"\b(password|pass|user|username)=[^,;\s]+",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);

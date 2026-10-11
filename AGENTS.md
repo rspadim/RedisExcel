@@ -214,11 +214,12 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Values and identifiers (keys, hash keys, fields, channels, patterns) written
   to Redis always use the invariant culture (decimal point), regardless of the
   Excel locale.
-- The host argument may be a full connection string, so it can carry a
-  `password=...`. Every log line and every verbose error cell masks credentials
-  (`AppConfig.MaskHost`: `password=****` / `pass=****`); host/port/options stay
-  readable. This covers the UDF/RTD error text, the `#ERROR` RTD cell and the
-  `ConnectData` argument log.
+- The host argument may be a full connection string, so it can carry
+  `password=...` / `user=...`. Every log line and every verbose error cell masks
+  credentials (`AppConfig.MaskHost`: `password=****` / `pass=****` /
+  `user=****` / `username=****`); host/port/options stay readable. This covers
+  the UDF/RTD error text, the `#ERROR` RTD cell, the `RedisRTDDefaultHost` cell
+  and the `ConnectData` argument log.
 - Excel error cells are rejected in every scalar argument position; date/time cells
   arrive as their Excel serial number and boolean cells serialize as
   `true`/`false`.

@@ -400,6 +400,11 @@ internal static class Program
         // delivery to a live channel listener), no Excel involved.
         RunNonVolatileWriteSmokeTest(subscriptions, server, host);
 
+        // SyncWrite modes + the fire-and-forget markers and reply shapes,
+        // exercised against a real Redis with no Excel (the CI-safe E2E): the
+        // exact texts a cell shows per mode.
+        RunWriteModeSmokeTest(host);
+
         // Live GitHub release check (the v1.4.1 release this repo just cut):
         // RedisUDFUpdateAvailable must stay non-blocking and agree with the real
         // latest release tag. Skipped (with a note) when the network/rate limit
@@ -1445,6 +1450,65 @@ internal static class Program
         }
         Check(WaitUntil(() => NumSub(server, channel) == 0, 5000),
             "NonVolatile twin: channel released after cleanup");
+    }
+
+    /// <summary>
+    /// SyncWrite modes against a real Redis, no Excel: pins the exact cell text
+    /// per mode and the reply shapes the E2E workbook also asserts (the only
+    /// other place these run). It is the CI-safe end-to-end for the write path.
+    /// The process-wide SyncWrite override pins the mode, so no machine's
+    /// RedisExcel.json can change the outcome.
+    /// </summary>
+    private static void RunWriteModeSmokeTest(string host)
+    {
+        var connections = new RedisConnectionManager();
+        var db = connections.GetDatabase(host, RedisPool.UdfData);
+        string runId = Guid.NewGuid().ToString("N");
+        string baseKey = "smoke:wm:" + runId;
+        string pubChannel = "smoke:wm:chan:" + runId;
+        string prevSync = RedisUDF.SyncWriteOverrideForTests;
+        try
+        {
+            // sync: every write returns its real reply.
+            RedisUDF.SyncWriteOverrideForTests = "sync";
+            Check((string)RedisUDF.RedisUDFSet(baseKey + ":s", "v", host) == "OK",
+                "SyncWrite sync: Set returns 'OK'");
+            Check(Convert.ToString(RedisUDF.RedisUDFIncr(baseKey + ":i", host), CultureInfo.InvariantCulture) == "1",
+                "SyncWrite sync: Incr returns the numeric reply '1'");
+            Check((string)RedisUDF.RedisUDFChannelPublish(pubChannel, "x", host) == "0 readers",
+                "SyncWrite sync: publish with no subscriber returns '0 readers'");
+            try { db.KeyDelete(baseKey + ":i"); } catch { }
+
+            // fireforget: reply-agnostic writes return the marker; reply-dependent
+            // writes keep their real reply.
+            RedisUDF.SyncWriteOverrideForTests = "fireforget";
+            Check((string)RedisUDF.RedisUDFSet(baseKey + ":ff", "v", host) == "OK (fire and forget)",
+                "SyncWrite fireforget: Set returns 'OK (fire and forget)'");
+            Check(Convert.ToString(RedisUDF.RedisUDFIncr(baseKey + ":iff", host), CultureInfo.InvariantCulture) == "1",
+                "SyncWrite fireforget: Incr keeps the reply-awaiting numeric result");
+            Check((string)RedisUDF.RedisUDFChannelPublish(pubChannel, "x", host) == "OK (fire and forget)",
+                "SyncWrite fireforget: publish returns the marker");
+            try { db.KeyDelete(baseKey + ":iff"); } catch { }
+
+            // fireforget-all: every write is fire-and-forget; a reply-dependent
+            // write reports the ": all" marker.
+            RedisUDF.SyncWriteOverrideForTests = "fireforget-all";
+            Check((string)RedisUDF.RedisUDFSet(baseKey + ":ffa", "v", host) == "OK (fire and forget)",
+                "SyncWrite fireforget-all: Set returns 'OK (fire and forget)'");
+            Check((string)RedisUDF.RedisUDFIncr(baseKey + ":ifall", host) == "OK (fire and forget: all)",
+                "SyncWrite fireforget-all: Incr returns 'OK (fire and forget: all)'");
+        }
+        catch (Exception ex)
+        {
+            Check(false, "SyncWrite modes smoke threw: " + ex.Message);
+        }
+        finally
+        {
+            RedisUDF.SyncWriteOverrideForTests = prevSync;
+            try { db.KeyDelete(baseKey + ":s"); } catch { }
+            try { db.KeyDelete(baseKey + ":ff"); } catch { }
+            try { db.KeyDelete(baseKey + ":ffa"); } catch { }
+        }
     }
 
     private static readonly FieldInfo UpdateLatestTagField =

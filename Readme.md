@@ -335,8 +335,8 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | Synchronous write (`SyncWrite: "sync"`) | the real reply: `OK`, the integer result (e.g. `1`), the deleted/added count, etc. |
 | Reply-agnostic write sent fire-and-forget (`SyncWrite: "fireforget"`/`"fireforget-all"`) | `OK (fire and forget)` |
 | Reply-dependent write forced fire-and-forget (`SyncWrite: "fireforget-all"`) | `OK (fire and forget: all)` |
-| Publish (`RedisUDFChannelPublish`, reply awaited) | `N reader` / `N readers` (`No Readers` when none) |
-| Publish suppressed (`RedisUDFChannelPublishIfChanged`, unchanged payload) | `No change` |
+| Publish (`RedisUDFChannelPublish`, reply awaited) | `N reader` / `N readers` (`0 readers` when none) |
+| Publish suppressed (`RedisUDFChannelPublishIfChanged`, unchanged payload) | `No change` (`No Readers` when the channel has no subscriber) |
 
 ### Errors
 
