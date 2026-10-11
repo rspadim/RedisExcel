@@ -51,7 +51,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `RedisUdfAsync.cs` | Optional async write dispatch (`AsyncWrites`, default off): per-host FIFO queue + Excel-DNA `ExcelAsyncUtil.Observe` (`RedisWriteObservable`); pure sync passthrough when disabled. |
 | `ExcelJson.cs` | `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix`. |
 | `RedisResultFormatter.cs` | Value formatting sent to Excel (HGETALL as valid JSON). |
-| `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks. |
+| `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks; shared `StripedLocks` helper. |
+| `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
 | `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
 
 ## Runtime model (why it is the way it is)

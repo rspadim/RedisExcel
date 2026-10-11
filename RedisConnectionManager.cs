@@ -429,7 +429,8 @@ namespace RedisExcel
         }
 
         private ConnectionMultiplexer Connect(string host, RedisPool pool)
-        {            if (_shutdown)
+        {
+            if (_shutdown)
                 throw ShuttingDown();
 
             string memoKey = PoolKey(host, pool);

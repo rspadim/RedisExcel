@@ -13,8 +13,11 @@ The test project compiles the production sources directly (no add-in build), so
 every top-level production file except the intentionally excluded `RedisRtd.cs`
 must be in its `Compile` list (a parity test enforces it).
 Coverage includes the JSON conversions and the matrix size/total-cell budget,
-config load/sanitize (including alias trim/case-insensitivity and the
-undefined-style reset), the connection/subscription managers, the publish-dedup
+config load/sanitize (including alias trim/case-insensitivity, the undefined-style
+reset and the tolerant per-value parsing), the real-time conflation window
+(`ConflationMs` sanitize/resolve/due), the connection/subscription managers
+(the shutdown fences, the connect-failure memo, eviction protection and the
+idle-down drop), the publish-dedup
 LRU cache and the pattern-join marker clearing (every marker of the host),
 `TickGate`, the update-check helpers, the `...NonVolatile` signature-parity and
 delegation tests, the write-mode dispatch (`SyncWrite`/`AsyncWrites` parsing,
