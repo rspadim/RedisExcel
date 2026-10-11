@@ -102,6 +102,12 @@ call (never an add-in defect). Every suite (unit via a test output line, smoke
 and load as `Antivirus: ...`, liveness as `[LIVENESS] antivirus=...`) prints
 the active AV state, so a result is attributable to the machine it ran on.
 
+To compare AV on vs off, `test\Run-ExcelE2E-Matrix.ps1 -Tag <name>` runs all
+four write modes (`default`/`sync`/`ffall`/`async`) and logs each to
+`%TEMP%\e2e-<tag>-<mode>.log`; run it once with the AV active and once paused,
+then `test\Compare-ExcelE2E.ps1 -TagA <on> -TagB <off>` prints them side by
+side (status, COM-retry total, SKIP count per mode).
+
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that
 > reference private hosts.
