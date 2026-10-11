@@ -86,6 +86,20 @@ reports the state and can toggle Defender real-time, but a third-party engine
 with self-defense cannot be paused by any generic script: pause it from its UI
 and use `Status` to record which state a run had.
 
+Measured with a third-party AV active, per mode (same script, `COM retries`
+is the AV fingerprint; the add-in itself is never the source):
+
+| Mode | Result | COM retries | Note |
+| --- | --- | --- | --- |
+| `fireforget` (default) | ALL PASS | ~2-4 | |
+| `sync` | ALL PASS | ~2-5 | |
+| `fireforget-all` | ALL PASS | ~2-5 | |
+| `-AsyncWrites` | ALL PASS | ~180-190 | 2 sub-second timing checks become `SKIP` (the AV retry latency closes the pending `#N/A` observation window) |
+
+With no AV the retry total is ~0 and the async timing checks `PASS`; a large
+total with a mostly-1-retry mode means the security product scans every COM
+call (never an add-in defect).
+
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that
 > reference private hosts.
