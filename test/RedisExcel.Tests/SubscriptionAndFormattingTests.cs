@@ -127,6 +127,9 @@ namespace RedisExcel.Tests
             Assert.False(RedisResultFormatter.SameMessage("007", "7"));
             Assert.False(RedisResultFormatter.SameMessage("+1", "1"));
             Assert.False(RedisResultFormatter.SameMessage("1", "1.0"));
+            // Case matters: the comparison must be ORDINAL, not case-insensitive.
+            Assert.False(RedisResultFormatter.SameMessage("A", "a"));
+            Assert.False(RedisResultFormatter.SameMessage("OK", "ok"));
             // Null/empty are handled distinctly.
             Assert.True(RedisResultFormatter.SameMessage(RedisValue.Null, RedisValue.Null));
             Assert.False(RedisResultFormatter.SameMessage(RedisValue.Null, ""));
