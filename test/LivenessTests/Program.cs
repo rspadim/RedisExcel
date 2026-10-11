@@ -118,6 +118,7 @@ namespace RedisExcel.LivenessTests
                 + " container=" + (ContainerName ?? "-"));
             Console.WriteLine("[LIVENESS] mode=" + (MatrixMode ? "matrix" : (SoakMinutes > 0 ? "soak" : "phases"))
                 + (SoakMinutes > 0 ? " minutes=" + SoakMinutes.ToString("0.##", Inv) : ""));
+            Console.WriteLine("[LIVENESS] antivirus=" + RedisExcel.Tests.AntivirusInfo.Describe());
             RedisSubscriptionManager.ListenerJoined += (h, c, p) => Interlocked.Increment(ref JoinedEvents);
             try
             {

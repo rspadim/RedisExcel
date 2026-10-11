@@ -434,7 +434,10 @@ These cost real debugging time — read before writing automation.
    with self-defense/tamper-protection cannot be disabled by any generic
    script** — the service refuses to stop and the process cannot be killed;
    pause it from its own UI/tray (the helper says so) and use its `Status`
-   output to record which state a run had.
+   output to record which state a run had. Every suite prints the same AV
+   banner (`AntivirusInfo.Describe()`: unit via a test output line, smoke/load
+   as `Antivirus: ...`, liveness as `[LIVENESS] antivirus=...`), so a run's
+   result is always attributable to its environment.
 2. **Elevated processes ignore per-user COM classes.** The add-in registers
    `RedisRtd` under `HKCU\Software\Classes` in `AutoOpen`. If Excel (or the
    whole automation session) runs elevated, `=RTD("RedisRtd", ...)` shows

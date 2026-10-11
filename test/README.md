@@ -98,7 +98,9 @@ is the AV fingerprint; the add-in itself is never the source):
 
 With no AV the retry total is ~0 and the async timing checks `PASS`; a large
 total with a mostly-1-retry mode means the security product scans every COM
-call (never an add-in defect).
+call (never an add-in defect). Every suite (unit via a test output line, smoke
+and load as `Antivirus: ...`, liveness as `[LIVENESS] antivirus=...`) prints
+the active AV state, so a result is attributable to the machine it ran on.
 
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that

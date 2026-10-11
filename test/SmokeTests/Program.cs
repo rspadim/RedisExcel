@@ -127,6 +127,7 @@ internal static class Program
 
         Console.WriteLine($"Redis host: {host}");
         Console.WriteLine($"Channel:    {channel}");
+        Console.WriteLine($"Antivirus:  {RedisExcel.Tests.AntivirusInfo.Describe()}");
 
         // Force SkipRepeatedMessages deterministically (test seam): the
         // duplicate-suppression assertions below must always exercise the

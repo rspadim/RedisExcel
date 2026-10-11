@@ -48,6 +48,7 @@ internal static class Program
             return 2;
         }
         string host = args.Length > 1 ? args[1] : "127.0.0.1:6379,abortConnect=False";
+        Console.WriteLine("Antivirus: " + RedisExcel.Tests.AntivirusInfo.Describe());
         int seconds = 10, publishers = 2, listeners = 1;
         bool pattern = false;
         if ((args.Length > 2 && !int.TryParse(args[2], out seconds))
