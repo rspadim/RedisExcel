@@ -24,6 +24,12 @@
 - The smoke suite now exercises the real `SyncWrite` modes against Redis (the
   CI-safe end-to-end for the write path): the exact cell text per mode and the
   `RedisUDFChannelPublish` markers, without Excel.
+- The Excel E2E now retries COM *method* failures (`CalculateFull`/`Calculate`)
+  by walking the `InnerException` chain (a `MethodInvocationException` wraps the
+  real rejection, so those calls previously failed without retrying), prints a
+  `COM retries: total=...` summary, and marks a genuinely timing-window-only
+  async check as SKIP (with the reason) when security software is interfering.
+  New `test\Set-Antivirus.ps1` reports/toggles AV state in a vendor-agnostic way.
 
 ### Docs
 

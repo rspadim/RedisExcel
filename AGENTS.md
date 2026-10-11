@@ -350,6 +350,17 @@ Useful parameters:
   the pending-marker and single-delivery checks above are exercised.
 - `-KeepExcelOpen` — leave Excel open for debugging.
 
+Environment control: `test\Set-Antivirus.ps1 -Action Status|Disable|Enable` reports
+the AV state (Windows Security Center + AV-looking services) and can turn
+Defender real-time off/on. A third-party engine with self-defense/tamper
+protection cannot be paused by any generic script (the service refuses to stop
+and the process cannot be killed — verified: Kaspersky home refuses `Stop-Service`
+and even `taskkill /F`, and its `STOP Protection` CLI hangs waiting for a
+password/GUI prompt), so for the AV-off comparison the operator pauses it from
+the product UI/tray and the harness records the state; note that pausing/exiting
+one AV usually lets Defender re-engage, so "off" often means Defender-on, which
+the status output shows.
+
 For local hosts the workbook is saved to `test\RedisExcel.Test.xlsx` (committed
 sample). For remote hosts it is saved to `%TEMP%` so the host never lands in
 the repository. The committed workbook only references `localhost:6379` and
@@ -413,10 +424,17 @@ These cost real debugging time — read before writing automation.
    script retries with backoff and has a warm-up phase; if a run fails this
    way, just run it again. The script prints the registered antivirus
    products (Windows Security Center) before creating Excel, so an
-   AV-enabled environment is visible immediately. Add an exception for
-   `EXCEL.EXE` and the script to
-   the security product when possible. Never assume such an error means the
-   add-in is broken.
+   AV-enabled environment is visible immediately. At the end it prints a
+   `COM retries: total=...` line: **0 means a clean environment**, a large
+   total with a mostly-1-retry mode means security software is scanning every
+   COM call (never the add-in's fault). Add an exception for `EXCEL.EXE` and
+   the script to the security product when possible. Never assume such an
+   error means the add-in is broken. `test\Set-Antivirus.ps1` reports the AV
+   state and can turn Defender real-time off/on, but a **third-party product
+   with self-defense/tamper-protection cannot be disabled by any generic
+   script** — the service refuses to stop and the process cannot be killed;
+   pause it from its own UI/tray (the helper says so) and use its `Status`
+   output to record which state a run had.
 2. **Elevated processes ignore per-user COM classes.** The add-in registers
    `RedisRtd` under `HKCU\Software\Classes` in `AutoOpen`. If Excel (or the
    whole automation session) runs elevated, `=RTD("RedisRtd", ...)` shows

@@ -78,6 +78,14 @@ script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,
 Supplying a custom `-RedisCli` (e.g.
 `docker exec my-redis redis-cli`) disables the automatic `CLIENT KILL` step.
 
+Security software (AV/EDR) is the top cause of flaky Excel COM automation, so
+the script reports the AV state up front and a `COM retries: total=...` summary
+at the end, and it retries transient COM rejections (including method calls
+such as `CalculateFull`). `test\Set-Antivirus.ps1 -Action Status|Disable|Enable`
+reports the state and can toggle Defender real-time, but a third-party engine
+with self-defense cannot be paused by any generic script: pause it from its UI
+and use `Status` to record which state a run had.
+
 > Building the test workbook only uses `localhost:6379` and
 > `test.redisexcel.*` keys/channels. Never commit workbooks or configs that
 > reference private hosts.
