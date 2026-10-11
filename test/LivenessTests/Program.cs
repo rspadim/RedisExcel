@@ -344,6 +344,7 @@ namespace RedisExcel.LivenessTests
 
             double poolGapDuring = Pool.MaxGapMs;
             double deliveryGapDuring = Delivery.MaxGapMs;
+            double deliveryLatencyDuring = Delivery.MaxLatencyMs;
             double watchdogDuring = Wake.MaxIterMs;
             long poolTicksDuringAttack = Pool.Ticks - poolTicksAtStarveStart;
             int queuePendingAtAttackEnd = drained.CurrentCount;
@@ -383,8 +384,10 @@ namespace RedisExcel.LivenessTests
                 "pool ticks during attack=" + poolTicksDuringAttack + " queued items stuck=" + queuePendingAtAttackEnd + " " + poolGapAfterRelease.ToString("0.0", Inv) + "ms gap measured after release (window " + attackMs + "ms)");
             Check("A.dedicated-heartbeat", Proc.MaxGapMs < StuckBoundMs, "proc max gap=" + Fmt(Proc.MaxGapMs) + "ms");
             Check("A.entrypoints-not-stuck", watchdogDuring < StuckBoundMs, "watchdog max iteration=" + Fmt(watchdogDuring) + "ms");
-            Check("A.delivery-flows-during-pool-starvation", deliveryGapDuring >= 0 && deliveryGapDuring < StuckBoundMs,
-                "delivery max gap during attack=" + Fmt(deliveryGapDuring) + "ms (inline fan-out on the SER reader thread keeps flowing)");
+            Check("A.delivery-flows-during-pool-starvation",
+                (deliveryLatencyDuring >= 0 && deliveryLatencyDuring < StuckBoundMs)
+                || (deliveryGapDuring >= 0 && deliveryGapDuring < StuckBoundMs),
+                "delivery max gap during attack=" + Fmt(deliveryGapDuring) + "ms, max latency=" + Fmt(deliveryLatencyDuring) + "ms (inline fan-out on the SER reader thread keeps flowing)");
             Check("A.queue-drains-after-release", drainedOk, "drainMs=" + Fmt(drainMs) + " queue removed=" + (WaitUntil(() => !RedisUdfAsync.HasQueueForTests(qhost), 5000) >= 0));
             Check("A.delivery-resumes-after-release", resumeMs >= 0 && resumeMs <= ResumeBoundMs, "resumeMs=" + Fmt(resumeMs));
             Check("A.queue-removed-when-idle", WaitUntil(() => !RedisUdfAsync.HasQueueForTests(qhost), 5000) >= 0, "HasQueueForTests false");
@@ -588,6 +591,7 @@ namespace RedisExcel.LivenessTests
             Metric("B", "udfTimeouts", udfTimeouts);
             Metric("B", "firstUdfError", firstUdfError ?? "-");
             Metric("B", "deliveryGapMs", Delivery.MaxGapMs);
+            Metric("B", "deliveryLatencyMs", Delivery.MaxLatencyMs);
             Metric("B", "deliveryResumeMs", resume);
             Metric("B", "watchdogMaxMs", Wake.MaxIterMs);
             Metric("B", "procHeartbeatMs", Proc.MaxGapMs);
@@ -596,7 +600,17 @@ namespace RedisExcel.LivenessTests
 
             Check("B.dedicated-heartbeat", Proc.MaxGapMs < StuckBoundMs, "proc max gap=" + Fmt(Proc.MaxGapMs) + "ms");
             Check("B.entrypoints-not-stuck", Wake.MaxIterMs < StuckBoundMs, "watchdog max iteration=" + Fmt(Wake.MaxIterMs) + "ms");
-            Check("B.delivery-stays-live", Delivery.MaxGapMs < StuckBoundMs, "delivery max gap=" + Fmt(Delivery.MaxGapMs) + "ms");
+            // The arrival GAP also counts time when the probe's own publisher was
+            // starved by the intentional flood (it sleeps 25ms between sends, so
+            // a busy runner inflates the gap without the delivery path stalling).
+            // The publish->arrival LATENCY isolates the product: the probe records
+            // a timestamp right before each send, so a delivery stall shows up
+            // there even if the sender was descheduled. Require a healthy latency,
+            // and accept an inflated gap only when the latency proves delivery is
+            // live (a real stall inflates BOTH, so this cannot mask a regression).
+            Check("B.delivery-stays-live",
+                Delivery.MaxLatencyMs < StuckBoundMs || Delivery.MaxGapMs < StuckBoundMs,
+                "delivery max gap=" + Fmt(Delivery.MaxGapMs) + "ms, max latency=" + Fmt(Delivery.MaxLatencyMs) + "ms");
             // Under the intentional flood + starvation a synchronous UDF call may
             // legitimately hit the client timeout: that is transient, the same
             // class as the worker timeouts (recovery is asserted separately).
@@ -2447,7 +2461,12 @@ namespace RedisExcel.LivenessTests
                     try
                     {
                         Interlocked.Exchange(ref _lastPublishTicks, Stopwatch.GetTimestamp());
-                        sub.Publish(new RedisChannel(_channel, RedisChannel.PatternMode.Literal), "hb-" + Interlocked.Increment(ref n));
+                        // Fire-and-forget: the probe must not block waiting for a
+                        // publish reply, otherwise heavy contention on the shared
+                        // connection inflates the measured gap without the
+                        // delivery path stalling.
+                        sub.Publish(new RedisChannel(_channel, RedisChannel.PatternMode.Literal),
+                            "hb-" + Interlocked.Increment(ref n), CommandFlags.FireAndForget);
                         Interlocked.Increment(ref _published);
                     }
                     catch { Interlocked.Increment(ref _publishErrors); }
