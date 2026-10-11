@@ -398,5 +398,45 @@ namespace RedisExcel.Tests
             Assert.Equal(100, order.Count);
             Assert.Equal(Enumerable.Range(0, 100), order);
         }
+
+        [Fact]
+        public async Task ResetAfterAddInReload_NoWriteIsLostOrDuplicated()
+        {
+            // The reload clears the queue map while a tail may still be in flight,
+            // so FIFO is not guaranteed across the boundary - but every enqueued
+            // write must still run exactly once (none dropped, none duplicated),
+            // and the map must be empty afterwards.
+            string host = UniqueHost();
+            var ran = new ConcurrentDictionary<int, int>(); // id -> run count
+            var tasks = new List<Task<object>>();
+
+            for (int i = 0; i < 50; i++)
+            {
+                int captured = i;
+                tasks.Add(RedisUdfAsync.Enqueue(host, () =>
+                {
+                    ran.AddOrUpdate(captured, 1, (_, n) => n + 1);
+                    return (object)captured;
+                }));
+            }
+
+            // Reset mid-flight, then enqueue more on the fresh queue.
+            RedisUdfAsync.ResetAfterAddInReload();
+            for (int i = 50; i < 100; i++)
+            {
+                int captured = i;
+                tasks.Add(RedisUdfAsync.Enqueue(host, () =>
+                {
+                    ran.AddOrUpdate(captured, 1, (_, n) => n + 1);
+                    return (object)captured;
+                }));
+            }
+
+            foreach (var task in tasks)
+                await WaitCompleted(task, 30000);
+
+            Assert.Equal(100, ran.Count);                    // every write ran
+            Assert.All(ran.Values, n => Assert.Equal(1, n)); // exactly once
+        }
     }
 }

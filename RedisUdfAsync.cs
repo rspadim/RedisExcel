@@ -187,8 +187,12 @@ namespace RedisExcel
         /// that completes with the item's result. The continuation chain is
         /// built under the queue's gate, so two submissions for one host can
         /// never race; a stale queue instance (removed while idle) is detected
-        /// after taking the gate and the item retries on the live instance,
-        /// which guarantees a host never runs items on two queues at once.
+        /// after taking the gate and the item retries on the live instance. This
+        /// guarantees FIFO order within a session; the only exception is
+        /// <see cref="ResetAfterAddInReload"/>, which clears the map while a tail
+        /// may still be in flight, so a host can briefly run on two queues across
+        /// an add-in reload (no write is lost or duplicated - the docs describe
+        /// async dedup as best-effort).
         /// </summary>
         internal static Task<object> Enqueue(string host, Func<object> work)
         {
@@ -250,7 +254,11 @@ namespace RedisExcel
         /// session's pending continuations must not be carried into the new
         /// runtime (async write identity is per-process). A later Enqueue builds a
         /// fresh queue; any still-running item finishes and its ReleaseQueue is a
-        /// no-op (its host no longer maps to that queue).</summary>
+        /// no-op (its host no longer maps to that queue). A host whose old tail is
+        /// still in flight can therefore run on the old and the new queue briefly
+        /// (FIFO is not guaranteed across the reload) - no write is lost or
+        /// duplicated, only the strict per-host serialization is suspended at the
+        /// reload boundary.</summary>
         internal static void ResetAfterAddInReload()
         {
             _queues.Clear();
