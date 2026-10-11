@@ -139,11 +139,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   (pre-v1.3.0 behavior); `fireforget` (default) sends result-agnostic writes
   (`Set`, `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`,
   `HashSetMultiple`, list pushes, channel publishes) with
-  `CommandFlags.FireAndForget` and returns `OK FireForget`, while
+  `CommandFlags.FireAndForget` and returns `OK (fire and forget)`, while
   reply-dependent writes (`Del`, `Incr`, `IncrBy`, `Expire`, `SetAdd`,
   `SetRemove`, `HashDel`, list pops) stay blocking; `fireforget-all` sends
   every write FireAndForget (reply-dependent writes return
-  `OK-FireForgetAll`). `ChannelUnsubscribe` always removes the local listeners
+  `OK (fire and forget: all)`). `ChannelUnsubscribe` always removes the local listeners
   deterministically (never fire-and-forget). In fire-and-forget modes an
   error detected after the dispatch (or a delivery failure) is only logged
   (the cell keeps the marker) while validation/config failures before the

@@ -36,8 +36,8 @@ namespace RedisExcel.Tests
         }
 
         [Theory]
-        [InlineData(false, "OK FireForget")]
-        [InlineData(true, "OK-FireForgetAll")]
+        [InlineData(false, "OK (fire and forget)")]
+        [InlineData(true, "OK (fire and forget: all)")]
         public void FireAndForgetMarker_IsExact(bool replyDependent, string expected)
         {
             Assert.Equal(expected, RedisUDF.FireAndForgetMarker(replyDependent));

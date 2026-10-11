@@ -387,12 +387,69 @@ namespace RedisExcel
 
         /// <summary>
         /// Result text shown in the cell when a write was sent with
-        /// CommandFlags.FireAndForget: there is no reply to report, so a marker
-        /// takes its place ("OK-FireForgetAll" when a reply-dependent write was
-        /// forced to fire and forget by "fireforget-all").
+        /// CommandFlags.FireAndForget: there is no reply to report, so an
+        /// explicit marker takes its place. The two markers share the same
+        /// "OK (fire and forget...)" shape; the ": all" variant means a
+        /// reply-dependent write was forced to fire and forget by the
+        /// "fireforget-all" mode.
         /// </summary>
         internal static string FireAndForgetMarker(bool replyDependent) =>
-            replyDependent ? "OK-FireForgetAll" : "OK FireForget";
+            replyDependent ? "OK (fire and forget: all)" : "OK (fire and forget)";
+
+        // Cell-message bounds: the full error still goes to NLog; the cell keeps
+        // the operation, the identifiers and the cause without flooding it (a
+        // RedisConnectionException message lists every endpoint).
+        private const int ErrorCauseMax = 200;
+        private const int ErrorContextMax = 200;
+        private const string ErrorUnreachableHint =
+            "host unreachable or wrong port; check the host / RedisExcel.json";
+
+        /// <summary>
+        /// Cell message for a runtime failure: names the operation, what it acted
+        /// on, the underlying cause and a short, actionable hint for the errors
+        /// seen most often (host down, timeout, wrong Redis type). Argument
+        /// validation failures are raised as ArgumentException and keep their
+        /// terse, stable message (they are not runtime surprises); everything
+        /// else is a connection/command failure worth the extra context.
+        /// </summary>
+        private static string VerboseError(Exception ex, string context)
+        {
+            string cause = ex == null || string.IsNullOrWhiteSpace(ex.Message)
+                ? "unknown error"
+                : ex.Message.Trim();
+            if (cause.Length > ErrorCauseMax)
+                cause = cause.Substring(0, ErrorCauseMax) + "...";
+            if (string.IsNullOrWhiteSpace(context))
+                context = "(no context)";
+            if (context.Length > ErrorContextMax)
+                context = context.Substring(0, ErrorContextMax) + "...";
+            string text = context + ": " + cause;
+            string hint = ErrorHint(ex, cause);
+            if (hint != null)
+                text += " | " + hint;
+            return "Error: " + text;
+        }
+
+        /// <summary>Short operational hint for the recurrent failure classes;
+        /// null when the cause is already self-explanatory.</summary>
+        private static string ErrorHint(Exception ex, string cause)
+        {
+            // Match the exception type AND the message wording: a dead host can
+            // surface as RedisConnectionException OR RedisTimeoutException
+            // ("...no connection became available..." / "...UnableToConnect...")
+            // depending on when the multiplexer gives up.
+            if (ex is RedisConnectionException
+                || cause.IndexOf("UnableToConnect", StringComparison.Ordinal) >= 0
+                || cause.IndexOf("no connection", StringComparison.OrdinalIgnoreCase) >= 0)
+                return ErrorUnreachableHint;
+            if (ex is RedisTimeoutException
+                || cause.IndexOf("Timeout", StringComparison.Ordinal) >= 0
+                || cause.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Redis did not answer in time; raise UDF.timeout (RedisExcel.json) or check the connection";
+            if (cause.IndexOf("WRONGTYPE", StringComparison.Ordinal) >= 0)
+                return "the key already holds a different Redis type; use another key or delete it first";
+            return null;
+        }
 
         /// <summary>Publishes a literal channel message with the mode's fire-and-
         /// forget flag; the reply is the reader count (meaningless when sent
@@ -442,7 +499,11 @@ namespace RedisExcel
         private static string Fail(string function, Exception ex, string context)
         {
             logger.Error(ex, $"{function}: {context}");
-            return "Error: " + ex.Message;
+            // Invalid arguments keep their terse, stable message; runtime
+            // (connection/command) failures get the verbose cell text.
+            if (ex is ArgumentException)
+                return "Error: " + ex.Message;
+            return VerboseError(ex, context);
         }
 
         private static object[,] FailMatrix(string function, Exception ex, string context)
@@ -971,10 +1032,16 @@ namespace RedisExcel
                         _lastPublishedMessages.Remove(key);
                     if (logger.IsTraceEnabled)
                         logger.Trace($"RedisUDFChannelPublishIfChanged: channel={channelStr}, msg={message}, readers={readers}, host={host}");
-                    return readers > 0 ? $"{readers} readers(s)" : "No Readers";
+                    return readers > 0 ? ReaderCountText(readers) : "No Readers";
                 }
             });
         }
+
+        /// <summary>Reader-count text with a correct singular ("1 reader").
+        /// Pinned by the unit tests and the E2E expectations; the log path uses
+        /// the same wording.</summary>
+        internal static string ReaderCountText(long readers) =>
+            readers == 1 ? "1 reader" : readers + " readers";
 
         [ExcelFunction(Description = "Publish an Excel matrix to a Redis channel as JSON", IsVolatile = true)]
         public static object RedisUDFChannelPublishJSON(
@@ -1037,8 +1104,8 @@ namespace RedisExcel
                 bool fireAndForget = ShouldFireAndForget(replyDependent: false);
                 long readers = PublishLiteral(subscriber, channelStr, messageStr, fireAndForget);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={host}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : readers + " readers(s)")}");
-                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : $"{readers} readers(s)";
+                    logger.Trace($"RedisUDFChannelPublish: channel={channelStr}, msg={message}, host={host}, fireAndForget={fireAndForget}, reply={(fireAndForget ? "fireAndForget" : ReaderCountText(readers))}");
+                return fireAndForget ? FireAndForgetMarker(replyDependent: false) : ReaderCountText(readers);
             });
         }
 

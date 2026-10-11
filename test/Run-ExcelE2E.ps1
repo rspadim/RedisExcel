@@ -117,29 +117,29 @@ $script:ExcelKilled = $false
 # v1.3.0 SyncWrite/AsyncWrites (written to RedisExcel.json before Excel starts;
 # see the config block in the setup section):
 #   sync           - historical behavior: every write returns its real reply.
-#   fireforget     - reply-agnostic writes return 'OK FireForget'; reply-dependent
+#   fireforget     - reply-agnostic writes return 'OK (fire and forget)'; reply-dependent
 #                    writes (Del, Incr, IncrBy, Expire, SetAdd, SetRemove,
 #                    HashDel, ListPopRight/Left) keep their real replies.
 #   fireforget-all - every write is fire-and-forget: reply-agnostic writes keep
-#                    'OK FireForget', reply-dependent ones return
-#                    'OK-FireForgetAll'.
+#                    'OK (fire and forget)', reply-dependent ones return
+#                    'OK (fire and forget: all)'.
 # AsyncWrites changes only when the reply arrives (the cell shows Excel's
 # pending marker first); every expectation below waits for the settled text.
 $script:IsFireForget = ($SyncWrite -ne 'sync')
 $script:IsFireForgetAll = ($SyncWrite -eq 'fireforget-all')
 # Reply-agnostic write ack (Set, SetJSON, HashSet, SetEx, Rename, ...).
-$script:WriteAck = if ($script:IsFireForget) { 'OK FireForget' } else { 'OK' }
+$script:WriteAck = if ($script:IsFireForget) { 'OK (fire and forget)' } else { 'OK' }
 # Reply-dependent writes: a numeric reply, or the marker when everything is FF.
-$script:IntReplyPattern = if ($script:IsFireForgetAll) { '^OK-FireForgetAll$' } else { '^\d+$' }
-$script:ZeroReplyExpected = if ($script:IsFireForgetAll) { 'OK-FireForgetAll' } else { '0' }
+$script:IntReplyPattern = if ($script:IsFireForgetAll) { '^OK \(fire and forget: all\)$' } else { '^\d+$' }
+$script:ZeroReplyExpected = if ($script:IsFireForgetAll) { 'OK (fire and forget: all)' } else { '0' }
 # ListPushRight/Left are reply-agnostic (an integer reply only in sync mode).
-$script:ListPushReplyPattern = if ($script:IsFireForget) { '^OK FireForget$' } else { '^\d+$' }
+$script:ListPushReplyPattern = if ($script:IsFireForget) { '^OK \(fire and forget\)$' } else { '^\d+$' }
 # ChannelPublish reports the readers count only in sync mode.
-$script:ChannelPublishExpected = if ($script:IsFireForget) { 'OK FireForget' } else { '1 readers(s)' }
+$script:ChannelPublishExpected = if ($script:IsFireForget) { 'OK (fire and forget)' } else { '1 reader' }
 # ListPopRight/Left on a missing list return "" only when the reply is awaited.
 $script:ListPopEmptyExpected = if ($script:IsFireForgetAll) { 'not empty' } else { 'empty' }
 # Rename of a missing key reports the error only when the reply is awaited.
-$script:RenameMissingPattern = if ($script:IsFireForget) { '^OK FireForget$' } else { '^Error' }
+$script:RenameMissingPattern = if ($script:IsFireForget) { '^OK \(fire and forget\)$' } else { '^Error' }
 
 function Check([bool]$Condition, [string]$Label) {
     if ($Condition) { Write-Host ("PASS " + $Label) -ForegroundColor Green }
@@ -569,7 +569,7 @@ try {
         @{ Row = 9;  Func = 'JSONToMatrix';   Fx = '=INDEX(RedisUDFJSONToMatrix(RedisUDFGet("{1}.json","{0}"),""),2,1)' -f $h, $kp;                        Expected = '2' },
         @{ Row = 10; Func = 'HashSet';        Fx = '=RedisUDFHashSet("{1}.hash","campo1","valor1","{0}")' -f $h, $kp;                                      Expected = 'OK' },
         @{ Row = 11; Func = 'HashGet';        Fx = '=RedisUDFHashGet("{1}.hash","campo1","{0}")' -f $h, $kp;                                               Expected = 'valor1' },
-        @{ Row = 12; Func = 'ChannelPublish'; Fx = '=RedisUDFChannelPublish("{1}.channel","ola_mundo","{0}")' -f $h, $kp;                                  Expected = '1 readers(s)' },
+        @{ Row = 12; Func = 'ChannelPublish'; Fx = '=RedisUDFChannelPublish("{1}.channel","ola_mundo","{0}")' -f $h, $kp;                                  Expected = '1 reader' },
         @{ Row = 13; Func = 'ChannelLatest';  Fx = '=RedisUDFChannelLatest("{1}.channel","{0}")' -f $h, $kp;                                               Expected = 'ola_mundo' },
         @{ Row = 14; Func = 'ConnectionCount';Fx = '=RedisUDFConnectionCount()';                                                                           Expected = $null },
         @{ Row = 15; Func = 'ExistsMultiples';Fx = '=INDEX(RedisUDFExistsMultiples({{"{1}.key","{1}.missing"}},"{0}"),1,2)' -f $h, $kp;                  Expected = '1' },
@@ -816,7 +816,7 @@ try {
             # Force the delivery recalculation: it must return the cached result
             # (the mode-appropriate reply, not a fresh write); the single retry
             # only covers the completion notification racing this Calculate.
-            $asyncIncrReply = if ($script:IsFireForgetAll) { 'OK-FireForgetAll' } else { '1' }
+            $asyncIncrReply = if ($script:IsFireForgetAll) { 'OK (fire and forget: all)' } else { '1' }
             Invoke-ExcelAction { $udf.Range('B50').Calculate() } | Out-Null
             $settledOk = Wait-CellText $udf 'B50' $asyncIncrReply 10
             if (-not $settledOk) {

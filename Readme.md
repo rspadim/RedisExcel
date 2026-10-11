@@ -300,6 +300,60 @@ Functions to use directly in Excel cells:
 
 ---
 
+## 🔁 Function return values
+
+What each cell shows for the common outcomes. "matrix" means the function
+spills a 2-column range; a missing key/value uses the sentinel noted per group.
+
+### Reads
+
+| Function | Found | Missing key/value |
+| --- | --- | --- |
+| `RedisUDFGet` | the string value | empty cell |
+| `RedisUDFType` | `string` / `list` / `set` / `zset` / `hash` / `stream` | `none` |
+| `RedisUDFExists` | `1` | `0` |
+| `RedisUDFTTL` | seconds (or `-1` when the key has no expiry) | `-2` |
+| `RedisUDFKeys` | matrix (pattern matches, SCAN) | empty cell when there is no match |
+| `RedisUDFGetMultiple` | matrix (one row per key) | `(null)` per blank/missing cell |
+| `RedisUDFHashGet` | the field value | empty cell |
+| `RedisUDFHashGetAll` | matrix of field/value pairs | empty cell (a missing hash is not an error) |
+| `RedisUDFHashGetFieldMultipleKeys` | matrix (one row per hash key) | per-row `Error:`/empty cell, never the whole matrix |
+| `RedisUDFSetMembers` | matrix (one member per row) | empty cell when empty |
+| `RedisUDFListRange` | matrix (one element per row) | empty cell when the range is empty |
+| `RedisUDFListPopRight` / `Left` | the popped element | empty cell when the list is empty |
+| `RedisUDFChannelLatest` | the latest message (subscribes on first use) | `(null)` before the first message |
+| `RedisUDFPubSubChannelsInfo` | matrix `Channel` / `Subscribers` (header first) | header-only matrix when nothing is subscribed |
+| `RedisUDFServerTime` | the server time | - |
+| `RedisUDFUpdateAvailable` | `TRUE` when a newer release is known (background check, never blocks) | `FALSE` |
+| `RedisUDFConnectionCount` | live UDF connections | `0` |
+| `RedisUDFMatrixToJSON` / `RedisUDFJSONToMatrix` | the converted text / matrix | `Error:` cell on bad input |
+
+### Writes
+
+| Outcome | Cell |
+| --- | --- |
+| Synchronous write (`SyncWrite: "sync"`) | the real reply: `OK`, the integer result (e.g. `1`), the deleted/added count, etc. |
+| Reply-agnostic write sent fire-and-forget (`SyncWrite: "fireforget"`/`"fireforget-all"`) | `OK (fire and forget)` |
+| Reply-dependent write forced fire-and-forget (`SyncWrite: "fireforget-all"`) | `OK (fire and forget: all)` |
+| Publish (`RedisUDFChannelPublish`, reply awaited) | `N reader` / `N readers` (`No Readers` when none) |
+| Publish suppressed (`RedisUDFChannelPublishIfChanged`, unchanged payload) | `No change` |
+
+### Errors
+
+| Kind | Cell |
+| --- | --- |
+| Invalid argument (blank key/field/channel, bad range shape, bad ttl, ...) | `Error: <short message>` (stable, e.g. `Error: a key is required`) |
+| Runtime/connection failure | `Error: <operation, identifiers>: <cause> | <hint>` (verbose, e.g. host unreachable, timeout, `WRONGTYPE`) |
+
+> In the fire-and-forget modes an error detected **after** the command is
+> dispatched (or a delivery failure) is only logged, and the cell keeps the
+> marker - the markers mean the write was sent, not confirmed by Redis.
+> Validation and host/config failures **before** the dispatch still surface as
+> an `Error:` cell. Matrix functions report per-row `Error:` cells for the rows
+> that failed instead of discarding the whole matrix.
+
+---
+
 ## 📝 Configuration Files
 
 ### Example: NLog.config
@@ -403,20 +457,20 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
 - `"fireforget"` (default) - result-agnostic writes (`Set`, `SetJSON`,
   `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`, `HashSetMultiple`, list
   pushes and channel publishes) are sent with FireAndForget and return the
-  marker `OK FireForget`; reply-dependent writes (`Del`, `Incr`, `IncrBy`,
+  marker `OK (fire and forget)`; reply-dependent writes (`Del`, `Incr`, `IncrBy`,
   `Expire`, `SetAdd`, `SetRemove`, `HashDel` and the list pops) still block and
   return their real result. `RedisUDFChannelUnsubscribe` never uses the
   fire-and-forget path: it removes the local listeners deterministically and
   returns its own result.
 - `"fireforget-all"` - every write uses FireAndForget (except
   `RedisUDFChannelUnsubscribe`, which always completes its listener
-  bookkeeping): result-agnostic writes return `OK FireForget`, reply-dependent
-  writes return `OK-FireForgetAll`.
+  bookkeeping): result-agnostic writes return `OK (fire and forget)`,
+  reply-dependent writes return `OK (fire and forget: all)`.
 
 In the fire-and-forget modes an error detected after the command is dispatched
 (or a delivery failure) is only logged - the cell keeps the marker - while
 validation and host/config failures before the dispatch still surface as
-`Error:`. A publish returns the marker instead of `N readers(s)`
+`Error:`. A publish returns the marker instead of `N reader(s)`
 (`RedisUDFChannelPublishIfChanged` reports `No change` when the payload was
 suppressed; in the fire-and-forget modes its dedup marker is recorded without
 a confirmed delivery, so an external subscriber joining later may miss an

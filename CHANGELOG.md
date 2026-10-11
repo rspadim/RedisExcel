@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Verbose runtime errors in cells: a connection/command failure now names the
+  operation and the identifiers it acted on, the underlying cause and a short
+  hint (`Error: key=k, host=h: <cause> | <hint>`), instead of a bare
+  `<cause>` - the full error still goes to the log. Argument-validation
+  failures keep their terse, stable message (no hint, no context).
+- Consistent fire-and-forget markers: `OK (fire and forget)` and
+  `OK (fire and forget: all)`, replacing the mixed `OK FireForget` /
+  `OK-FireForgetAll` pair.
+- Publish cells report a proper reader count (`1 reader` / `N readers`),
+  replacing `N readers(s)`; `No Readers` is unchanged.
+
+### Docs
+
+- New "Function return values" README section: the per-function return contract
+  for reads and writes, the fire-and-forget markers and the error shapes.
+
 ## v1.4.1
 
 ### Fixed
