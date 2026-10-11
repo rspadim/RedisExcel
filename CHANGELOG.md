@@ -28,8 +28,13 @@
   by walking the `InnerException` chain (a `MethodInvocationException` wraps the
   real rejection, so those calls previously failed without retrying), prints a
   `COM retries: total=...` summary, and marks a genuinely timing-window-only
-  async check as SKIP (with the reason) when security software is interfering.
-  New `test\Set-Antivirus.ps1` reports/toggles AV state in a vendor-agnostic way.
+  async check as SKIP (with the reason). Measured with the AV active AND paused:
+  the retry counts are the same, so Excel COM automation is inherently flaky —
+  a retry total is normal, not an antivirus fingerprint. `-RepoRoot` is resolved
+  to an absolute path (a relative one made `RegisterXLL` fail every formula).
+  New `test\Set-Antivirus.ps1` reports/toggles AV state in a vendor-agnostic way;
+  `test\Run-ExcelE2E-Matrix.ps1` + `test\Compare-ExcelE2E.ps1` compare two
+  environment states.
 - Every suite now prints the active antivirus state (`AntivirusInfo.Describe()`:
   unit via a test output line, smoke/load as `Antivirus: ...`, liveness as
   `[LIVENESS] antivirus=...`), so any run's result is attributable to its

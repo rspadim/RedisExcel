@@ -86,21 +86,25 @@ reports the state and can toggle Defender real-time, but a third-party engine
 with self-defense cannot be paused by any generic script: pause it from its UI
 and use `Status` to record which state a run had.
 
-Measured with a third-party AV active, per mode (same script, `COM retries`
-is the AV fingerprint; the add-in itself is never the source):
+Measured per mode (same script; the add-in itself is never the source of the
+retries). Excel COM automation is **inherently flaky**: the counts below are the
+same with the antivirus active and paused, so a retry total is normal, not a red
+flag:
 
-| Mode | Result | COM retries | Note |
-| --- | --- | --- | --- |
-| `fireforget` (default) | ALL PASS | ~2-4 | |
-| `sync` | ALL PASS | ~2-5 | |
-| `fireforget-all` | ALL PASS | ~2-5 | |
-| `-AsyncWrites` | ALL PASS | ~180-190 | 2 sub-second timing checks become `SKIP` (the AV retry latency closes the pending `#N/A` observation window) |
+| Mode | Result | COM retries |
+| --- | --- | --- |
+| `fireforget` (default) | ALL PASS | ~2-5 |
+| `sync` | ALL PASS | ~2-5 |
+| `fireforget-all` | ALL PASS | ~1-5 |
+| `-AsyncWrites` | ALL PASS | ~180-190 |
 
-With no AV the retry total is ~0 and the async timing checks `PASS`; a large
-total with a mostly-1-retry mode means the security product scans every COM
-call (never an add-in defect). Every suite (unit via a test output line, smoke
-and load as `Antivirus: ...`, liveness as `[LIVENESS] antivirus=...`) prints
-the active AV state, so a result is attributable to the machine it ran on.
+The `-AsyncWrites` mode drives ~180 method calls, so ~1 retry each accumulates;
+its two sub-second timing checks (the pending `#N/A` before a local Redis write
+completes) can be missed regardless of security software and are reported as
+`SKIP` with the COM-retry count as the reason. Every suite (unit via a test
+output line, smoke and load as `Antivirus: ...`, liveness as
+`[LIVENESS] antivirus=...`) prints the active AV state, so a result is
+attributable to the machine it ran on.
 
 To compare AV on vs off, `test\Run-ExcelE2E-Matrix.ps1 -Tag <name>` runs all
 four write modes (`default`/`sync`/`ffall`/`async`) and logs each to

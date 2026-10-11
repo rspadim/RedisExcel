@@ -421,17 +421,21 @@ run the fuller modes manually against a disposable/local server.
 
 These cost real debugging time — read before writing automation.
 
-1. **Antivirus/EDR can intermittently block Excel COM automation.** Symptoms
-   are misleading errors (`InvalidCastException: cannot convert Int32 to
-   String`, `RPC_E_CALL_REJECTED`, COM calls hanging or aborting). The E2E
-   script retries with backoff and has a warm-up phase; if a run fails this
-   way, just run it again. The script prints the registered antivirus
-   products (Windows Security Center) before creating Excel, so an
-   AV-enabled environment is visible immediately. At the end it prints a
-   `COM retries: total=...` line: **0 means a clean environment**, a large
-   total with a mostly-1-retry mode means security software is scanning every
-   COM call (never the add-in's fault). Add an exception for `EXCEL.EXE` and
-   the script to the security product when possible. Never assume such an
+1. **Excel COM automation is inherently flaky; antivirus/EDR only adds to it.**
+   Measured on this repo: even with **no** antivirus, every `Range.Value2`
+   write is rejected once (`RPC_E_CALL_REJECTED`) and the `-AsyncWrites` mode
+   needs one retry ~180 times (Excel is busy computing), so a retry count is
+   NORMAL, not a red flag. AV on vs off showed the same counts in this
+   environment; security software widens the window for a *flake* (e.g. a
+   sub-second timing check), it is not the source of the retries. Symptoms of
+   COM interference are misleading errors (`InvalidCastException: cannot
+   convert Int32 to String`, `RPC_E_CALL_REJECTED`, COM calls hanging or
+   aborting); the E2E retries with backoff and has a warm-up phase, so **if a
+   run fails this way, run it again**. The script prints the AV products
+   (Windows Security Center — real-time state is the productState **bit 12**:
+   `0x41000` = on, `0x42000` = paused) before creating Excel and a
+   `COM retries: total=...` line at the end. When the interference exceeds the
+   retry budget, the failure names the active product. Never assume such an
    error means the add-in is broken. `test\Set-Antivirus.ps1` reports the AV
    state and can turn Defender real-time off/on, but a **third-party product
    with self-defense/tamper-protection cannot be disabled by any generic
