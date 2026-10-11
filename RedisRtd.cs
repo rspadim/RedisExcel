@@ -752,7 +752,7 @@ namespace RedisExcel
                     return;
                 Interlocked.Increment(ref _messageCount);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={message}");
+                    logger.Trace($"Subscribe: TopicId={topicId}, channel={td.KeyOrChannel}, message={ShortForLog(message)}");
                 DeliverToTopic(td, message);
             }, "RTD");
             logger.Info($"Subscribe: subscribed {td}");
@@ -972,6 +972,18 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>Caps a payload embedded in a log line: a subscription message
+        /// or published value can be arbitrarily large (a 10 MB value would dump a
+        /// 10 MB log line), so only the head is logged.</summary>
+        private static string ShortForLog(object value)
+        {
+            string text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            const int limit = 64;
+            if (string.IsNullOrEmpty(text) || text.Length <= limit)
+                return text;
+            return text.Substring(0, limit) + "...(truncated)";
+        }
+
         private void PollHost(string host, List<TopicData> topics)
         {
             var db = RedisRuntime.Connections.GetDatabase(host, RedisPool.RtdData);
@@ -1116,7 +1128,7 @@ namespace RedisExcel
                 return;
             Interlocked.Increment(ref _messageCount);
             if (logger.IsTraceEnabled)
-                logger.Trace($"Publish: {td.Type} host={AppConfig.MaskHost(td.Host)}, key={td.KeyOrChannel}, field={td.Field}, value={value}");
+                logger.Trace($"Publish: {td.Type} host={AppConfig.MaskHost(td.Host)}, key={td.KeyOrChannel}, field={td.Field}, value={ShortForLog(value)}");
             DeliverToTopic(td, value);
         }
 

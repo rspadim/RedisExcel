@@ -486,15 +486,16 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
   bookkeeping): result-agnostic writes return `OK (fire and forget)`,
   reply-dependent writes return `OK (fire and forget: all)`.
 
-In the fire-and-forget modes an error detected after the command is dispatched
-(or a delivery failure) is only logged - the cell keeps the marker - while
-validation and host/config failures before the dispatch still surface as
-`Error:`. A publish returns the marker instead of `N readers`
+In the fire-and-forget modes the reply is discarded by StackExchange.Redis: a
+write the server rejects (WRONGTYPE, OOM, quota) is neither awaited nor detected,
+so the cell keeps the marker and nothing is logged for it. Only validation and
+host/config failures before the dispatch surface as `Error:`. A publish returns
+the marker instead of `N readers`
 (`RedisUDFChannelPublishIfChanged` reports `No change` when the payload was
 suppressed; in the fire-and-forget modes its dedup marker is recorded without
 a confirmed delivery, so an external subscriber joining later may miss an
 unchanged payload until it changes). The markers mean the write was sent, not
-confirmed by Redis.
+confirmed by Redis - use `SyncWrite: "sync"` when a write must be confirmed.
 
 `AsyncWrites: true` dispatches writes through Excel-DNA's Observe-based async
 support instead of the Excel calculation thread (no thread-pool thread is held

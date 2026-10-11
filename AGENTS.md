@@ -145,11 +145,13 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   `SetRemove`, `HashDel`, list pops) stay blocking; `fireforget-all` sends
   every write FireAndForget (reply-dependent writes return
   `OK (fire and forget: all)`). `ChannelUnsubscribe` always removes the local listeners
-  deterministically (never fire-and-forget). In fire-and-forget modes an
-  error detected after the dispatch (or a delivery failure) is only logged
-  (the cell keeps the marker) while validation/config failures before the
-  dispatch still surface as `Error:`, and publishes return the marker instead
-  of the readers count.
+  deterministically (never fire-and-forget). In fire-and-forget modes the reply
+  is DISCARDED by StackExchange.Redis, so a write the server rejects (WRONGTYPE,
+  OOM, quota) is neither awaited nor detected: the cell keeps the marker and
+  nothing is logged for it. Only validation/config failures BEFORE the dispatch
+  surface as `Error:`, and publishes return the marker instead of the readers
+  count. The marker means "sent", not "accepted" - use `SyncWrite: "sync"` when a
+  write's success must be observable.
 - `AsyncWrites` (default false) dispatches writes through Excel-DNA's
   Observe-based async support (`ExcelAsyncUtil.Observe` with a custom
   `RedisWriteObservable`, RTD-based) so the Excel thread never blocks: the cell

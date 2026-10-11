@@ -18,10 +18,27 @@ namespace RedisExcel.Tests
         private static readonly MethodInfo VerboseError =
             typeof(RedisUDF).GetMethod("VerboseError", BindingFlags.Static | BindingFlags.NonPublic);
 
+        private static readonly MethodInfo BoundContext =
+            typeof(RedisUDF).GetMethod("BoundContext", BindingFlags.Static | BindingFlags.NonPublic);
+
         private static string Format(Exception ex, string context)
         {
             Assert.NotNull(VerboseError);
             return (string)VerboseError.Invoke(null, new object[] { ex, context });
+        }
+
+        [Fact]
+        public void BoundContext_CapsALargeValueForTheLog()
+        {
+            // The call-site context embeds the value; logging it whole produced a
+            // multi-megabyte log line for a large payload. BoundContext caps it.
+            Assert.NotNull(BoundContext);
+            string huge = "value=" + new string('A', 500_000) + ", host=h";
+            string bounded = (string)BoundContext.Invoke(null, new object[] { huge });
+            Assert.True(bounded.Length < 300, "the log context must be capped, got " + bounded.Length);
+            Assert.EndsWith("...", bounded);
+            // A short context is untouched.
+            Assert.Equal("key=k", (string)BoundContext.Invoke(null, new object[] { "key=k" }));
         }
 
         [Fact]
