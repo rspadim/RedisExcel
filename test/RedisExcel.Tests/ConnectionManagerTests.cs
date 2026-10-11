@@ -141,7 +141,7 @@ namespace RedisExcel.Tests
                 started.Set();
                 try
                 {
-                    ConnectMethod.Invoke(manager, new object[] { UnreachableHost, RedisPool.UdfData });
+                    ConnectMethod.Invoke(manager, new object[] { InFlightHost, RedisPool.UdfData });
                 }
                 catch (Exception ex)
                 {
@@ -151,15 +151,14 @@ namespace RedisExcel.Tests
 
             thread.Start();
             Assert.True(started.Wait(5000));
-            // The connect is parked on ConnectionMultiplexer.Connect for the
-            // unreachable host (connectTimeout=1000ms): trip the post-create
-            // fence while it is in flight, so the in-flight connect must dispose
-            // its multiplexer and fail the caller. Wait for the observable pool
-            // entry (published by GetOrAdd before the blocking Connect) instead
-            // of a fixed sleep, so the test is not machine-speed dependent.
-            var poolDeadline = DateTime.UtcNow.AddSeconds(5);
-            while (DateTime.UtcNow < poolDeadline && UdfPool(manager).IsEmpty)
-                Thread.Sleep(10);
+            // Connect is invoked DIRECTLY here (not through GetConnection), so
+            // there is no pool entry to observe: the only signal is time. The
+            // host uses a dedicated connectTimeout=2000ms, so a 200ms wait is a
+            // 10x margin inside the blocking Connect (this unroutable TEST-NET
+            // address never answers). Trip the post-create fence while it is in
+            // flight, so the in-flight connect must dispose its multiplexer and
+            // fail the caller.
+            Thread.Sleep(200);
             SetShutdown(manager, true);
             Assert.True(thread.Join(15000), "the in-flight connect never completed after the shutdown fence was set");
 
@@ -365,6 +364,9 @@ namespace RedisExcel.Tests
         private const string DeadLocalHost = "127.0.0.1:1,connectTimeout=500,connectRetry=0";
         // RFC 5737 TEST-NET-1 address: connect parks until the 1000ms timeout.
         private const string UnreachableHost = "10.255.255.1:6379,connectTimeout=1000,connectRetry=1";
+        // A dedicated, longer connect timeout for the in-flight shutdown-fence
+        // test: it blocks on Connect for ~2s, so a short wait is safely inside.
+        private const string InFlightHost = "10.255.255.1:6379,connectTimeout=2000,connectRetry=0";
 
         private static MethodInfo ConnectMethod =>
             typeof(RedisConnectionManager)
