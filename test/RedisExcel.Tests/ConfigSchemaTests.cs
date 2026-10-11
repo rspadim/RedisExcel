@@ -49,6 +49,10 @@ namespace RedisExcel.Tests
         {
             string text = ConfigSchema.Text;
             Assert.False(string.IsNullOrWhiteSpace(text));
+            // The embedded resource (not the restrictive fallback) must ship: a
+            // fallback would drop every key and silently revert the config.
+            Assert.True(ConfigSchema.HasEmbeddedSchema,
+                "the embedded RedisExcel.schema.json was not found in the assembly");
             var schema = JObject.Parse(text);
             Assert.Equal("object", (string)schema["type"]);
             Assert.False((bool)schema["additionalProperties"]); // unknown top-level keys rejected

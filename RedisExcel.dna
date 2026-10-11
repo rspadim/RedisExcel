@@ -14,6 +14,8 @@
 	<Reference Path="NLog.dll" Pack="true" />
 	<Reference Path="ExcelDna.IntelliSense.dll" Pack="true" />
 	<Reference Path="Newtonsoft.Json.dll" Pack="true" />
+	<Reference Path="NJsonSchema.dll" Pack="true" />
+	<Reference Path="Namotion.Reflection.dll" Pack="true" />
 	<Reference Path="Microsoft.Bcl.AsyncInterfaces.dll" Pack="true" />
 	<Reference Path="Microsoft.Extensions.Logging.Abstractions.dll" Pack="true" />
 	<Reference Path="Pipelines.Sockets.Unofficial.dll" Pack="true" />

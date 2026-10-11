@@ -57,14 +57,27 @@ namespace RedisExcel
                 if (name.EndsWith(ResourceSuffix, StringComparison.Ordinal))
                 {
                     using (var stream = assembly.GetManifestResourceStream(name))
-                    using (var reader = new StreamReader(stream))
-                        return reader.ReadToEnd();
+                    {
+                        if (stream == null)
+                            break; // fall through to the restrictive fallback
+                        using (var reader = new StreamReader(stream))
+                            return reader.ReadToEnd();
+                    }
                 }
             }
-            // Fallback: a minimal object schema. Never throw at load - the config
-            // path must keep working even if the resource is somehow missing.
-            return "{\"type\":\"object\"}";
+            // The resource is embedded and a parity test + a build check guard it, so
+            // this path should never run. If it does (a broken build), fall back to a
+            // RESTRICTIVE schema (no properties, additionalProperties:false) so every
+            // key is dropped and the config degrades to defaults - never to a
+            // permissive schema that would let a wrong-typed value reach the binder
+            // and discard the whole file (the bug this class exists to prevent).
+            return "{\"type\":\"object\",\"additionalProperties\":false}";
         }
+
+        /// <summary>TRUE when the embedded schema document was found (not the
+        /// restrictive fallback). Exposed so a test can assert the resource ships.</summary>
+        internal static bool HasEmbeddedSchema =>
+            _schemaText.Value.IndexOf("RedisUpdateRateMs", StringComparison.Ordinal) >= 0;
 
         /// <summary>Parses JSON accepting // and /* */ comments (Newtonsoft discards
         /// them when loading into a JToken). Returns null when the text is not a
