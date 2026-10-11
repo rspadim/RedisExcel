@@ -377,7 +377,13 @@ subscribe/dispose churn, lock contention on every public entry point,
 `CLIENT KILL TYPE pubsub` storms, async queue/observable bursts and dedup
 re-join — and enforces the liveness bounds with a dedicated process heartbeat
 and watchdog thread: a stall past **5 s** fails the run, delivery/queue must
-resume within **30 s** and the async backlog must drain within **20 s**.
+resume within **30 s** and the async backlog must drain within **20 s**. A
+`RedisTimeoutException` on a contending synchronous UDF call is transient (the
+same class as the worker timeouts) and is tolerated: only non-timeout UDF errors
+fail the run, with the transient timeouts bounded so a collapse still fails. The
+classification matches the whole StackExchange.Redis timeout family
+(`Timeout performing ...`, `Timeout awaiting response ...`,
+`The message timed out in the backlog ...`), not just the backlog wording.
 
 With `--container <name>` the suite manages its own disposable
 `redis:7-alpine` container (started on the host's port, restarted mid-stream in

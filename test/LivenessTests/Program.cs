@@ -410,6 +410,7 @@ namespace RedisExcel.LivenessTests
             long prevDeliveries = Delivery.Count;
             long udfErrors = 0;
             long udfTimeouts = 0;
+            string firstUdfError = null;
             int latestCount = 4, pubCount = 4;
             // The runner can be a slow shared box: scale the stress workers down in
             // --quick so the artificial contention cannot starve the dedicated
@@ -472,7 +473,11 @@ namespace RedisExcel.LivenessTests
                 if (res is string s && s.StartsWith("Error:", StringComparison.Ordinal))
                 {
                     if (IsTimeout(s)) Interlocked.Increment(ref udfTimeouts);
-                    else Interlocked.Increment(ref udfErrors);
+                    else
+                    {
+                        Interlocked.Increment(ref udfErrors);
+                        if (Volatile.Read(ref firstUdfError) == null) Volatile.Write(ref firstUdfError, s);
+                    }
                 }
             }));
             workers.Add(new Worker("B-udf-pif", 1, (id, n) =>
@@ -483,7 +488,11 @@ namespace RedisExcel.LivenessTests
                 if (res is string s2 && s2.StartsWith("Error:", StringComparison.Ordinal))
                 {
                     if (IsTimeout(s2)) Interlocked.Increment(ref udfTimeouts);
-                    else Interlocked.Increment(ref udfErrors);
+                    else
+                    {
+                        Interlocked.Increment(ref udfErrors);
+                        if (Volatile.Read(ref firstUdfError) == null) Volatile.Write(ref firstUdfError, s2);
+                    }
                 }
             }));
             workers.Add(new Worker("B-udf-latest", 1, (id, n) =>
@@ -495,7 +504,11 @@ namespace RedisExcel.LivenessTests
                 if (latest != null && latest.StartsWith("Error:", StringComparison.Ordinal))
                 {
                     if (IsTimeout(latest)) Interlocked.Increment(ref udfTimeouts);
-                    else Interlocked.Increment(ref udfErrors);
+                    else
+                    {
+                        Interlocked.Increment(ref udfErrors);
+                        if (Volatile.Read(ref firstUdfError) == null) Volatile.Write(ref firstUdfError, latest);
+                    }
                 }
                 long t1 = Stopwatch.GetTimestamp();
                 RedisUDF.RedisUDFChannelUnsubscribe(ch, Host);
@@ -571,6 +584,7 @@ namespace RedisExcel.LivenessTests
             Metric("B", "workerTimeouts", timeouts);
             Metric("B", "udfErrors", udfErrors);
             Metric("B", "udfTimeouts", udfTimeouts);
+            Metric("B", "firstUdfError", firstUdfError ?? "-");
             Metric("B", "deliveryGapMs", Delivery.MaxGapMs);
             Metric("B", "deliveryResumeMs", resume);
             Metric("B", "watchdogMaxMs", Wake.MaxIterMs);
@@ -587,7 +601,8 @@ namespace RedisExcel.LivenessTests
             // Only non-timeout errors fail the run, and the transient timeouts
             // stay bounded so a pathological collapse still fails.
             Check("B.no-unexpected-errors", errors - timeouts == 0 && udfErrors == 0 && udfTimeouts <= 1000,
-                "errors=" + errors + " timeouts=" + timeouts + " udfErrors=" + udfErrors + " udfTimeouts=" + udfTimeouts);
+                "errors=" + errors + " timeouts=" + timeouts + " udfErrors=" + udfErrors + " udfTimeouts=" + udfTimeouts
+                + " firstUdfError=" + (firstUdfError ?? "-"));
             Check("B.subscribe-recovers-after-flood", recovered, "recovery subscribe succeeded once the flood stopped" + (recoverError == null ? "" : " lastError=" + recoverError));
 
             foreach (var t in leftovers) { try { t.Dispose(); } catch { } }
@@ -1946,7 +1961,19 @@ namespace RedisExcel.LivenessTests
         }
 
         private static bool IsTimeout(string text)
-            => text != null && text.IndexOf("Error: The message timed out", StringComparison.Ordinal) >= 0;
+        {
+            if (text == null) return false;
+            // StackExchange.Redis 2.x RedisTimeoutException messages:
+            // "Timeout performing {command} (...)", "Timeout awaiting response
+            // (...)" and "Timeout before awaiting for tasks (...)" (all surface
+            // here with the product's "Error: " prefix), plus the send-backlog
+            // variant "The message timed out in the backlog ...". Match that
+            // family precisely instead of only the backlog wording: otherwise a
+            // transient client timeout under load is counted as a hard UDF error
+            // and a slow runner fails an otherwise healthy run.
+            return text.IndexOf("Error: Timeout ", StringComparison.Ordinal) >= 0
+                || text.IndexOf("The message timed out", StringComparison.Ordinal) >= 0;
+        }
 
         private static void Check(string name, bool ok, string detail)
         {
