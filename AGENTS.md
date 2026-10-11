@@ -362,7 +362,7 @@ note that pausing/exiting one AV usually lets Defender re-engage, so "off" often
 means Defender-on, which the status output shows. To compare the two states,
 `test\Run-ExcelE2E-Matrix.ps1 -Tag <name>` runs the four write modes and
 `test\Compare-ExcelE2E.ps1 -TagA <on> -TagB <off>` prints them side by side
-(result, COM-retry total, SKIP count per mode).
+(result, COM-retry total, skip count per mode).
 
 For local hosts the workbook is saved to `test\RedisExcel.Test.xlsx` (committed
 sample). For remote hosts it is saved to `%TEMP%` so the host never lands in

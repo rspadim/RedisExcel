@@ -98,10 +98,12 @@ flag:
 | `fireforget-all` | ALL PASS | ~1-5 |
 | `-AsyncWrites` | ALL PASS | ~180-190 |
 
-The `-AsyncWrites` mode drives ~180 method calls, so ~1 retry each accumulates;
-its two sub-second timing checks (the pending `#N/A` before a local Redis write
-completes) can be missed regardless of security software and are reported as
-`SKIP` with the COM-retry count as the reason. Every suite (unit via a test
+The `-AsyncWrites` mode drives ~180 method calls, so ~1 retry each accumulates.
+Its pending-marker check is deterministic: it points the queued write at an
+unreachable host, so the cell stays in Excel's pending `#N/A` for the whole
+connect timeout and the marker is always observable (the local-Redis pending
+window is a diagnostic only, since it closes in microseconds). Every suite
+(unit via a test
 output line, smoke and load as `Antivirus: ...`, liveness as
 `[LIVENESS] antivirus=...`) prints the active AV state, so a result is
 attributable to the machine it ran on.
