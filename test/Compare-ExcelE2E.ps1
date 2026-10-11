@@ -5,7 +5,8 @@
 
 .DESCRIPTION
     Reads %TEMP%\e2e-<tag>-<mode>.log for the four modes and prints the result,
-    the COM-retry total (the AV fingerprint) and the SKIP count. Use the same
+    the COM-retry total (a load/health signal, not an AV fingerprint) and the
+    SKIP count. Use the same
     script for both tags so the only variable is the environment.
 
 .EXAMPLE
@@ -48,4 +49,4 @@ foreach ($mode in 'default', 'sync', 'ffall', 'async') {
         ($(if ($rb) { $rb.Status } else { '-' })), ($(if ($rb) { $rb.Retries } else { '-' })), ($(if ($rb) { $rb.Skips } else { '-' })))
 }
 Write-Host ''
-Write-Host "COM retries ~0 in a tag means a clean environment; a high total with mostly-1-retry means the AV scans every COM call. Status/SKIP differences between the tags are the AV's observable impact."
+Write-Host "COM retries is a load/health signal (Excel COM is inherently flaky; the count is the same with the AV active or paused), not an antivirus indicator. Status/SKIP differences between the tags are the environment's observable impact."

@@ -1037,8 +1037,7 @@ try {
         $outDir = Join-Path $RepoRoot 'test'
         New-Item -ItemType Directory -Force -Path $outDir | Out-Null
         $outPath = Join-Path $outDir 'RedisExcel.Test.xlsx'
-    }
-    else {
+    }    else {
         # Remote hosts never write into the repository, an async run adds
         # scratch cells (rows 50-54) that do not belong in the committed
         # sample, and -RealChannel/-RealPattern put real data into the RTD
@@ -1293,10 +1292,10 @@ else {
     Write-Host ("{0} FAILURE(S)" -f $script:Failures) -ForegroundColor Red
 }
 
-# Environment-interference summary: how often the COM layer had to retry (the
-# clearest antivirus fingerprint) and the worst single call. Zero across the
-# board means a clean environment; a large total with a 1-retry mode means
-# security software is scanning every COM call.
+# Environment-interference summary: how often the COM layer had to retry and the
+# worst single call. Excel COM is inherently flaky (every Range write rejects
+# once; the async block needs ~180 retries, with and without antivirus), so a
+# retry total is a load/health signal, not an AV fingerprint.
 $avName = if ($script:ActiveAntivirus) { $script:ActiveAntivirus } else { 'none reported' }
 Write-Host ("COM retries: total={0}, worst-single={1}; antivirus: {2}" -f `
     $script:ComRetryTotal, $script:ComRetryWorst, $avName) -ForegroundColor DarkGray

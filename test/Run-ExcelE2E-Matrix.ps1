@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
     Runs the Excel E2E in all four write modes and prints a one-line result per
-    mode plus the environment's COM-retry total (the antivirus fingerprint).
+    mode plus the environment's COM-retry total (a load/health signal, not an
+    antivirus fingerprint - Excel COM is inherently flaky).
 
 .DESCRIPTION
     Used to compare runs under different antivirus states (see

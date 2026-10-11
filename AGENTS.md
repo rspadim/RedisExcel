@@ -255,11 +255,12 @@ Outputs in `bin\Release\net48\publish\`:
 
 CI (`.github/workflows/build.yml`) runs on pull requests and main pushes; on
 `v*` tags it passes `/p:InformationalVersion=<tag>`, which is embedded in the
-Redis `ClientName` for diagnostics (shown as `dev` for local builds). The quick
-liveness step is wrapped in a bounded retry (up to 3 attempts, 5s apart): the
-shared runner can stall the whole process for a moment, which trips the
-delivery-gap/`udfErrors` bounds on infrastructure noise; the bounds themselves
-are unchanged, so a real regression fails every attempt.
+Redis `ClientName` for diagnostics (shown as `dev` for local builds). The smoke
+step retries once (2 attempts, 3s apart) and the quick liveness step up to three
+times (5s apart): a shared runner can stall the whole process or trip a
+documented best-effort race on infrastructure noise, and the bounds themselves
+are unchanged, so a real regression fails every attempt. The unit step has no
+retry (a genuine unit regression cannot be masked).
 
 ## Tests
 
@@ -307,9 +308,12 @@ add-in; CI builds it with msbuild.
 dotnet run --project test\SmokeTests -c Release -- "127.0.0.1:6379,abortConnect=False"
 ```
 
-Covers the ref-counted Pub/Sub behavior: two listeners on one channel, one
-leaves and the other keeps receiving; channel unsubscribed only after the last
-listener leaves; re-subscription works.
+Covers the ref-counted Pub/Sub behavior (two listeners on one channel, the
+last-listener unsubscribe, re-subscription, duplicate suppression, origin
+counters, argument validation) plus the concurrent-dedup regression, the real
+`SyncWrite` modes and publish markers against Redis, a live
+`RedisUDFUpdateAvailable` check and the AV banner. See `test/README.md` for the
+full list.
 
 ### 3. Excel end-to-end
 

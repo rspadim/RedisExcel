@@ -9,10 +9,10 @@
   `#ERROR` text, the `RedisRTDDefaultHost` cell and log line now masks them
   (`****`) while keeping host/port/options readable (`AppConfig.MaskHost`).
 - Verbose runtime errors in cells: a connection/command failure now names the
-  operation and the identifiers it acted on, the underlying cause and a short
-  hint (`Error: key=k, host=h: <cause> | <hint>`), instead of a bare
-  `<cause>` - the full error still goes to the log. Argument-validation
-  failures keep their terse, stable message (no hint, no context).
+  identifiers it acted on, the underlying cause and a short hint
+  (`Error: key=k, host=h: <cause> | <hint>`); the function name goes to the log,
+  not the cell. Argument-validation failures keep their terse, stable message
+  (no hint, no context).
 - Consistent fire-and-forget markers: `OK (fire and forget)` and
   `OK (fire and forget: all)`, replacing the mixed `OK FireForget` /
   `OK-FireForgetAll` pair.

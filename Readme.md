@@ -312,7 +312,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | `RedisUDFGet` | the string value | empty cell |
 | `RedisUDFType` | `string` / `list` / `set` / `zset` / `hash` / `stream` | `none` |
 | `RedisUDFExists` | `1` | `0` |
-| `RedisUDFTTL` | seconds (or `-1` when the key has no expiry) | `-2` |
+| `RedisUDFTTL` | seconds; `-1` when the key exists but has no expiry | `-1` (StackExchange.Redis maps both Redis `-1` and `-2` to null) |
 | `RedisUDFKeys` | matrix (pattern matches, SCAN) | empty cell when there is no match |
 | `RedisUDFGetMultiple` | matrix (one row per key) | `(null)` per blank/missing cell |
 | `RedisUDFHashGet` | the field value | empty cell |
@@ -343,7 +343,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | Kind | Cell |
 | --- | --- |
 | Invalid argument (blank key/field/channel, bad range shape, bad ttl, ...) | `Error: <short message>` (stable, e.g. `Error: a key is required`) |
-| Runtime/connection failure | `Error: <operation, identifiers>: <cause> | <hint>` (verbose, e.g. host unreachable, timeout, `WRONGTYPE`) |
+| Runtime/connection failure | `Error: <identifiers>: <cause> | <hint>` (verbose, e.g. host unreachable, timeout, `WRONGTYPE`); the function name is in the log, not the cell |
 
 > In the fire-and-forget modes an error detected **after** the command is
 > dispatched (or a delivery failure) is only logged, and the cell keeps the
@@ -351,6 +351,12 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 > Validation and host/config failures **before** the dispatch still surface as
 > an `Error:` cell. Matrix functions report per-row `Error:` cells for the rows
 > that failed instead of discarding the whole matrix.
+
+> **Credentials are never shown:** when the `host` argument is a full connection
+> string, its `password`/`pass`/`user`/`username` values are masked (`****`) in
+> every error cell and log line (`RedisRTDDefaultHost` masks too); the host,
+> port and options stay readable. The masking also covers the spellings
+> StackExchange.Redis accepts (whitespace around `=`, quoted values).
 
 ---
 
@@ -470,7 +476,7 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
 In the fire-and-forget modes an error detected after the command is dispatched
 (or a delivery failure) is only logged - the cell keeps the marker - while
 validation and host/config failures before the dispatch still surface as
-`Error:`. A publish returns the marker instead of `N reader(s)`
+`Error:`. A publish returns the marker instead of `N readers`
 (`RedisUDFChannelPublishIfChanged` reports `No change` when the payload was
 suppressed; in the fire-and-forget modes its dedup marker is recorded without
 a confirmed delivery, so an external subscriber joining later may miss an
