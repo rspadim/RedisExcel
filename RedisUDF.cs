@@ -72,15 +72,20 @@ namespace RedisExcel
         private static long ChannelEpoch(string key)
             => _channelEpochs.TryGetValue(key, out var epoch) ? epoch : 0;
 
+        private static long _channelEpochBumps;
+
         private static long BumpChannelEpoch(string key)
         {
             var epochs = _channelEpochs;
             long epoch = epochs.AddOrUpdate(key, 1, (_, current) => current + 1);
             // Opportunistic prune: the epoch map is only read to detect "an
             // unsubscribe/reset raced my install" while a listener exists, so an
-            // entry for a channel with no live listener is dead weight. Bounded
-            // (one sweep per 1024 bumps) and cheap.
-            if ((epoch & 1023) == 0)
+            // entry for a channel with no live listener is dead weight. The trigger
+            // is a GLOBAL bump counter, not this key's epoch: with distinct channels
+            // each entry stays at 1, so a per-key boundary (epoch & 1023) would
+            // never fire and the map grew without bound (audit round L). Bounded
+            // (one sweep per 1024 bumps total) and cheap.
+            if ((Interlocked.Increment(ref _channelEpochBumps) & 1023) == 0)
             {
                 foreach (var kv in epochs)
                 {
@@ -216,6 +221,10 @@ namespace RedisExcel
             // Drop the per-host async write queues too: the previous session's
             // pending continuations must not survive a same-process reload.
             RedisUdfAsync.ResetAfterAddInReload();
+            // The epoch map is dead weight across a reload (epochs only matter
+            // while a listener exists, and none survive) - clearing it stops the
+            // map from carrying stale entries into the new session.
+            _channelEpochs.Clear();
         }
 
         /// <summary>
