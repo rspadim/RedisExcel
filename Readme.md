@@ -15,6 +15,15 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 ### Quick Installation
 
+**Fastest path:** download `RedisExcelSetup-<version>.exe` from the
+[latest release](https://github.com/rspadim/RedisExcel/releases), run it, and
+follow the wizard (it copies the files to `C:\RedisExcel`, detects your Office
+bitness, and writes a starter `RedisExcel.json`). Then open Excel, go to
+`File > Options > Add-ins > Go... > Browse...` and select the `.xll` from
+`C:\RedisExcel\`. Prefer no installer? Do the **Manual install** below.
+
+#### Manual install
+
 Keep all the add-in files in one dedicated folder, for example
 `C:\RedisExcel\`. Excel loads the `.xll` from there, and it is the folder you
 replace when you update the add-in.

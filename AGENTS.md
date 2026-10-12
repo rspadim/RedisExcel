@@ -55,6 +55,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks; shared `StripedLocks` helper. |
 | `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
 | `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
+| `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). Built by CI; see `installer/README.md`. |
 
 ## Runtime model (why it is the way it is)
 
@@ -276,6 +277,10 @@ assets exists (an upload with `if-no-files-found: error` only fails when the who
 set is empty), and uses that CHANGELOG section as the release body. The release
 job checks out the repository so it can read `CHANGELOG.md` (the checkout runs
 before the artifact download so it cannot wipe the downloaded assets).
+The build job also installs Inno Setup and compiles `installer\RedisExcel.iss`
+on every run (a broken `.iss` fails the build, not only a tag), uploads the
+`RedisExcelSetup-<version>.exe` as a standalone artifact, and on a `v*` tag adds
+it to the release assets.
 The smoke step retries once (2 attempts, 3s apart) and the quick liveness step up
 to three times (5s apart): a shared runner can stall the whole process or trip a
 best-effort race on infrastructure noise, and the bounds themselves are

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Windows installer (`RedisExcelSetup-<version>.exe`):** an Inno Setup package
+  that copies the add-in into one folder (default `C:\RedisExcel`), detects the
+  Office bitness and keeps the matching XLL, and a short wizard writes a starter
+  `RedisExcel.json` (host/port/password). A silent "files-only" mode
+  (`/VERYSILENT /DIR=... /HOST=... /PORT=... /PASSWORD=...`) is supported. The CI
+  builds it on every run and attaches it to the release on a `v*` tag.
+- **Config lookup order:** the add-in folder (where the `.xll` lives) is now the
+  first place searched for `RedisExcel.json`, so the whole add-in + config can
+  live together in one folder; it still falls back to `%USERPROFILE%`, the Excel
+  folder and `C:\Windows`.
+
 ## v1.5.0
 
 ### Fixed

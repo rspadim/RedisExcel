@@ -119,9 +119,32 @@ jobs:
           if ("${{ github.ref_type }}" -eq "tag") { $tag = "${{ github.ref_name }}" }
           msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=$tag
 
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Build the helper installer on every run (so a broken .iss is caught here,
+      # not only on a release tag). The version is the tag without the leading
+      # 'v' (e.g. v1.5.1 -> RedisExcelSetup-1.5.1.exe), or "dev" on a branch.
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $ver = "dev"
+          if ("${{ github.ref_type }}" -eq "tag") { $ver = "${{ github.ref_name }}".TrimStart('v') }
+          iscc "/DAppVersion=$ver" "installer\RedisExcel.iss"
+          $exe = "installer\output\RedisExcelSetup-$ver.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "installer was not produced: $exe" }
+          Write-Host "installer built: $exe"
+
+      - name: Upload the installer artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: redis-excel-installer
+          path: installer/output/*.exe
+          if-no-files-found: error
+
       # Fail loudly if ANY release asset is missing: if-no-files-found only fails
       # when the whole path set matches zero files, so one missing asset among the
-      # five would otherwise upload a partial (broken) release.
+      # set would otherwise upload a partial (broken) release.
       - name: Verify the release assets exist
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
@@ -137,11 +160,14 @@ jobs:
           if ($missing.Count -gt 0) {
             throw "release assets missing: " + ($missing -join ', ')
           }
-          Write-Host ("release assets present: " + ($assets.Count) + " files")
+          if ((Get-ChildItem 'installer/output/*.exe' -ErrorAction SilentlyContinue).Count -eq 0) {
+            throw "release asset missing: installer/output/RedisExcelSetup-*.exe"
+          }
+          Write-Host ("release assets present: " + ($assets.Count + 1) + " files")
 
       # Hand the release assets to the release job. The artifact keeps the
-      # paths relative to the repository root (bin/... plus the two config
-      # files), which the release job references below.
+      # paths relative to the repository root (bin/..., the two config files and
+      # the installer), which the release job references below.
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v7
@@ -153,6 +179,7 @@ jobs:
             bin/Release/net48/publish/RedisExcel64-packed.xll
             NLog.config
             RedisExcel.json
+            installer/output/*.exe
           if-no-files-found: error
 
   release:
@@ -203,5 +230,6 @@ jobs:
             release-assets/bin/Release/net48/publish/RedisExcel64-packed.xll
             release-assets/NLog.config
             release-assets/RedisExcel.json
+            release-assets/installer/output/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
