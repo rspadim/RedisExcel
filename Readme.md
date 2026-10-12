@@ -15,19 +15,35 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 ### Quick Installation
 
-1. Download the latest release from GitHub (`.xll`, `.dll`) - [Download Releases](https://github.com/rspadim/RedisExcel/releases)
-2. Download [NLog config example files](https://github.com/rspadim/RedisExcel/blob/main/NLog.config)
-3. Download [RedisExcel.json file](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
-4. Place (`.xll`, `.dll`, `NLog.config`) files in the **same local folder**
-5. In Excel: `File > Options > Add-ins`
+Keep all the add-in files in one dedicated folder, for example
+`C:\RedisExcel\`. Excel loads the `.xll` from there, and it is the folder you
+replace when you update the add-in.
 
-   * Click **Go...**, then **Browse...**, and select the `.xll` file
+1. Create the folder `C:\RedisExcel\` (any fixed folder works; avoid `Downloads`,
+   which you may clean later).
+2. Download the latest release from GitHub (`.xll`, `.dll`) - [Download Releases](https://github.com/rspadim/RedisExcel/releases)
+3. Download [NLog config example files](https://github.com/rspadim/RedisExcel/blob/main/NLog.config)
+4. Download [RedisExcel.json file](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
+5. Put the add-in files (`.xll`, `.dll`, `NLog.config`) in that same folder,
+   e.g. `C:\RedisExcel\`. Put `RedisExcel.json` in your user folder
+   (`%USERPROFILE%`) - see the note below.
+6. In Excel: `File > Options > Add-ins`
+
+   * Click **Go...**, then **Browse...**, and select the `.xll` file from
+     `C:\RedisExcel\`
    * Match the XLL to your Office bitness: `RedisExcel-packed.xll` is 32-bit,
      `RedisExcel64-packed.xll` is 64-bit (check `File > Account > About Excel`)
 
-6. The `RedisExcel.json` file can be placed in - [Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
+> Keep the `.xll`, the `.dll` and `NLog.config` together in the same folder - the
+> `.dll` is a dependency and `NLog.config` configures the log file. When you move
+> the add-in, move that whole folder.
+
+The `RedisExcel.json` file (settings, host aliases) is where you keep the host
+config ([Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)).
+It is **not** read from the add-in folder; it is searched in this order (the
+first existing file wins):
 >
-> * The user folder (`%USERPROFILE%`) - Example: %USERPROFILE%\RedisExcel.json
+> * The user folder (`%USERPROFILE%`) - Example: `%USERPROFILE%\RedisExcel.json` (recommended)
 > * The Excel folder
 > * Or `C:\Windows\RedisExcel.json`
 
