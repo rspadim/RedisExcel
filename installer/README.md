@@ -1,4 +1,4 @@
-# RedisExcel installer
+﻿# RedisExcel installer
 
 A small [Inno Setup 6](https://jrsoftware.org/isinfo.php) installer that copies
 the add-in into one folder, writes a starter `RedisExcel.json`, and keeps both
@@ -12,10 +12,19 @@ XLLs (removing the one that does not match your Office bitness). It runs
    pick (default `C:\RedisExcel`).
 2. Detects the Office bitness and keeps only the matching XLL
    (`RedisExcel64-packed.xll` for 64-bit, `RedisExcel-packed.xll` for 32-bit).
-3. A short wizard asks for the Redis **host / port / password** and writes
-   `RedisExcel.json` next to the XLL (the add-in searches its own folder first).
-4. **Optional: installs a server.** Choose *No*, *Docker: Redis*, *Docker:
-   Valkey*, *WSL2: Redis*, *WSL2: Valkey* or *Memurai*. It runs
+3. The wizard first asks for a **mode**:
+   - **Simple** (default): only the Redis **host / port / password**;
+   - **Advanced**: a single editable page with the whole `RedisExcel.json`
+     pre-filled and **commented** (every key with its default and a one-line
+     explanation - timeouts, rates, `ExcelUpdateStyle`, `MessageCounterThreshold`,
+     `Servers` aliases, `UpdateCheck`, `SkipRepeatedMessages`,
+     `CoalesceRealtimeUpdates`, `ConflationMs`, `PublishDedupCacheSize`,
+     `SyncWrite`, `AsyncWrites`).
+
+   It writes `RedisExcel.json` next to the XLL (the add-in searches its own
+   folder first) and a final read-only page summarizes what will be written.
+4. **Optional: installs a server.** Choose *No*, *Docker: Redis (latest)*,
+   *Docker: Valkey (latest)*, *WSL2: Redis*, *WSL2: Valkey* or *Memurai*. It runs
    `scripts\install-server.ps1`, which uses Docker if available and otherwise
    falls back to WSL or points you at Memurai - so you do not need a server
    beforehand.
@@ -33,7 +42,7 @@ No wizard, no Excel prompt - just copy the files and use the given (or default)
 host:
 
 ```powershell
-RedisExcelSetup-1.5.1.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret /SERVER=none /OPENEXCEL=0
+RedisExcelSetup-1.5.2.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret /SERVER=none /OPENEXCEL=0
 ```
 
 `/HOST`, `/PORT`, `/PASSWORD`, `/SERVER` (`none`|`docker-redis`|`docker-valkey`|
@@ -82,8 +91,8 @@ choco install innosetup -y
 dotnet build RedisExcel.sln -c Release
 
 # Compile the installer (version is injected; use the tag without the 'v')
-iscc "/DAppVersion=1.5.1" "installer\RedisExcel.iss"
-# -> installer\output\RedisExcelSetup-1.5.1.exe
+iscc "/DAppVersion=1.5.2" "installer\RedisExcel.iss"
+# -> installer\output\RedisExcelSetup-1.5.2.exe
 ```
 
 CI builds the installer on every run (so a broken `.iss` fails fast) and attaches
