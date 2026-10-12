@@ -13,16 +13,32 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 ## 🧹 Installing in Excel
 
-### Quick Installation
+### One-click install (recommended)
 
-**Fastest path:** download `RedisExcelSetup-<version>.exe` from the
-[latest release](https://github.com/rspadim/RedisExcel/releases), run it, and
-follow the wizard. It copies the files to `C:\RedisExcel`, detects your Office
-bitness, writes a starter `RedisExcel.json`, can **optionally bring up a Redis
-(or Valkey) server** (Docker/WSL/Memurai) for you, and at the end **checks the
-connection** and can open a sample Excel workbook showing `Set`/`Get` working.
-Then register the `.xll` (see the wizard's last page). Prefer no installer? Do
-the **Manual install** below.
+The easiest way for a new user: **download and run the installer**, no manual
+file juggling.
+
+1. Go to the **[latest release](https://github.com/rspadim/RedisExcel/releases/latest)**
+   and, under **Assets**, click **`RedisExcelSetup-x.y.z.exe`**
+   (direct link: <https://github.com/rspadim/RedisExcel/releases/latest/download/RedisExcelSetup-1.5.1.exe>).
+2. Run it and follow the wizard:
+   - it copies the add-in to `C:\RedisExcel` and keeps only the XLL that matches
+     your Office bitness;
+   - ask it to **install a server** if you do not have one yet (Redis or Valkey
+     via Docker/WSL, or Memurai) - Docker is the simplest;
+   - it writes a starter `RedisExcel.json` with your host/port/password;
+   - at the end it **tests the connection** and can open a sample Excel workbook
+     (a live `Set`/`Get`) so you can see it working.
+3. Open Excel and (if the add-in did not load by itself) enable it:
+   `File > Options > Add-ins > Go... > Browse...` and pick
+   `RedisExcel64-packed.xll` (or `RedisExcel-packed.xll` for 32-bit Office).
+
+> Windows may show a SmartScreen warning because the XLL is not code-signed:
+> click **More info > Run anyway**. The installer itself is a normal `.exe`.
+
+The wizard is available in **English, Español and Português (Brasil)**.
+
+Prefer to install by hand? Use the **Manual install** below.
 
 #### Manual install
 
