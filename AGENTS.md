@@ -504,6 +504,7 @@ These cost real debugging time — read before writing automation.
 ## Release
 
 Push an annotated `v*` tag; the CI workflow builds and
-publishes the packed XLLs plus `NLog.config` and `RedisExcel.json` as release
-assets. Current release: `v1.5.0`; the next planned version (`v1.6.0`/`v2.0.0`)
+publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
+the installer (`RedisExcelSetup-<version>.exe`) as release assets. Current
+release: `v1.5.1`; the next planned version (`v1.6.0`/`v2.0.0`)
 is not scheduled yet (see the gitignored `DESIGN-v2.0.md`).

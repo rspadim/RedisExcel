@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.1
 
 ### Added
 
@@ -8,10 +8,12 @@
   that copies the add-in into one folder (default `C:\RedisExcel`), detects the
   Office bitness and keeps the matching XLL, and a short wizard writes a starter
   `RedisExcel.json` (host/port/user/password). It can **optionally bring up a
-  server** (Docker: Redis/Valkey, WSL2: Redis/Valkey, or Memurai) via
+  server** (Docker: Redis/Valkey `:latest`, WSL2: Redis/Valkey, or Memurai) via
   `install-server.ps1`, **registers the XLL** so Excel loads it on start, and at
   the end **tests the connection** and can open a sample Excel workbook (live
-  `Set`/`Get`) via `verify-connection.ps1`. A silent "files-only" mode
+  `Set`/`Get`) via `verify-connection.ps1`. The wizard and the uninstaller are
+  localized in **English, Spanish and Brazilian Portuguese**. A silent
+  "files-only" mode
   (`/VERYSILENT /DIR=... /HOST=... /PORT=... /SERVER=... /OPENEXCEL=0`) is
   supported. The CI builds it on every run and attaches it to the release on a
   `v*` tag.
