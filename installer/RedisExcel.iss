@@ -56,15 +56,150 @@ UninstallDisplayIcon={app}\RedisExcel64-packed.xll
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
+; All user-visible text. Order: english (default) / spanish / brazilianportuguese.
+[CustomMessages]
+english.ServerPageTitle=Redis server
+english.ServerPageSubtitle=Do you want to install a Redis-compatible server now?
+english.ServerPageDesc=RedisExcel needs a Redis (or Valkey) server. Choose an option if you do not already have one. The server is installed first, then RedisExcel, and the connection is tested at the end. Docker is the simplest.
+english.ServerNone=No - I already have a server (or will set it up later)
+english.ServerDockerRedis=Yes - Docker: Redis (redis:7-alpine)
+english.ServerDockerValkey=Yes - Docker: Valkey (valkey/valkey:8-alpine)
+english.ServerWslRedis=Yes - WSL2: Redis (apt install redis-server)
+english.ServerWslValkey=Yes - WSL2: Valkey (apt install valkey-server)
+english.ServerMemurai=Yes - Memurai (native Windows service, needs admin)
+english.ConnPageTitle=Redis connection
+english.ConnPageSubtitle=Where should RedisExcel connect?
+english.ConnPageDesc=Press Next for the default (localhost:6379). You can change this later by editing RedisExcel.json.
+english.ConnHost=Host (or host:port):
+english.ConnPort=Port:
+english.ConnUser=User (optional, for Redis 6 ACL):
+english.ConnPassword=Password (optional):
+english.OptionsPageTitle=Extra checks
+english.OptionsPageSubtitle=Almost done
+english.OptionsPageDesc=The installer tests the connection when it finishes. Optionally open a sample Excel workbook showing it working.
+english.OptionsOpenExcel=Open a sample RedisExcel workbook at the end
+english.TaskConfigDesc=Create RedisExcel.json in the install folder (host settings)
+english.TaskNlogDesc=Create NLog.config (write a log file next to the add-in)
+english.TaskAutoLoadDesc=Register the add-in so Excel loads it automatically (recommended)
+english.GroupConfig=Configuration:
+english.GroupExcel=Excel:
+english.IconUninstall=Uninstall {#AppName}
+english.HostRequired=Please enter a Redis host (for example localhost).
+english.ServerFailed=Could not set up %1 automatically (exit %2).%nYou can install a server later and point RedisExcel.json at it.
+english.ConfigWriteFailed=Could not write %1. Create it manually from the sample (RedisExcel.json).
+english.TestFailed=Installed, but the Redis at %1 did not answer a PING.%nCheck that the server is running (docker ps) and adjust RedisExcel.json if it is on another host/port.
+english.TestOk=All set! Redis answered at %1.%n%nTo use it: open Excel. If the add-in does not load automatically, go to File > Options > Add-ins > Go... > Browse... and pick the .xll in %2.
+english.FinishedText=RedisExcel is installed in:%n%2%n%nIf the add-in does not load automatically, enable it in Excel:%nFile > Options > Add-ins > Go... > Browse... and pick RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).%n%nThen try =RedisUDFGet("preco_btc") in a cell.
+english.UninstServersTitle=Servers
+english.UninstServersSubtitle=Remove Redis-compatible servers too?
+english.UninstServersDesc=These servers were found on this machine. Tick the ones you want to remove with RedisExcel.%nBy default NOTHING is removed.
+english.UninstServerFound=%1  [found]
+english.UninstKeepConfig=Keep your RedisExcel.json settings?
+english.ServerNameDockerRedis=Redis (Docker)
+english.ServerNameDockerValkey=Valkey (Docker)
+english.ServerNameWslRedis=Redis (WSL)
+english.ServerNameWslValkey=Valkey (WSL)
+english.ServerNameMemurai=Memurai
+english.ServerNameGeneric=the server
+
+spanish.ServerPageTitle=Servidor Redis
+spanish.ServerPageSubtitle=¿Desea instalar ahora un servidor compatible con Redis?
+spanish.ServerPageDesc=RedisExcel necesita un servidor Redis (o Valkey). Elija una opción si aún no tiene uno. Primero se instala el servidor, luego RedisExcel, y la conexión se prueba al final. Docker es lo más sencillo.
+spanish.ServerNone=No - ya tengo un servidor (o lo instalaré después)
+spanish.ServerDockerRedis=Sí - Docker: Redis (redis:7-alpine)
+spanish.ServerDockerValkey=Sí - Docker: Valkey (valkey/valkey:8-alpine)
+spanish.ServerWslRedis=Sí - WSL2: Redis (apt install redis-server)
+spanish.ServerWslValkey=Sí - WSL2: Valkey (apt install valkey-server)
+spanish.ServerMemurai=Sí - Memurai (servicio de Windows nativo, requiere admin)
+spanish.ConnPageTitle=Conexión a Redis
+spanish.ConnPageSubtitle=¿Dónde debe conectarse RedisExcel?
+spanish.ConnPageDesc=Pulse Siguiente para el valor predeterminado (localhost:6379). Puede cambiarlo luego editando RedisExcel.json.
+spanish.ConnHost=Host (o host:puerto):
+spanish.ConnPort=Puerto:
+spanish.ConnUser=Usuario (opcional, para ACL de Redis 6):
+spanish.ConnPassword=Contraseña (opcional):
+spanish.OptionsPageTitle=Comprobaciones
+spanish.OptionsPageSubtitle=Casi listo
+spanish.OptionsPageDesc=El instalador prueba la conexión al terminar. Opcionalmente abre un libro de Excel de ejemplo que muestra que funciona.
+spanish.OptionsOpenExcel=Abrir un libro de RedisExcel de ejemplo al final
+spanish.TaskConfigDesc=Crear RedisExcel.json en la carpeta de instalación (ajustes de host)
+spanish.TaskNlogDesc=Crear NLog.config (escribir un archivo de registro junto al complemento)
+spanish.TaskAutoLoadDesc=Registrar el complemento para que Excel lo cargue automáticamente (recomendado)
+spanish.GroupConfig=Configuración:
+spanish.GroupExcel=Excel:
+spanish.IconUninstall=Desinstalar {#AppName}
+spanish.HostRequired=Introduzca un host de Redis (por ejemplo localhost).
+spanish.ServerFailed=No se pudo configurar %1 automáticamente (salida %2).%nPuede instalar un servidor después y apuntar RedisExcel.json a él.
+spanish.ConfigWriteFailed=No se pudo escribir %1. Créelo manualmente desde el ejemplo (RedisExcel.json).
+spanish.TestFailed=Instalado, pero el Redis en %1 no respondió a PING.%nCompruebe que el servidor esté en ejecución (docker ps) y ajuste RedisExcel.json si está en otro host/puerto.
+spanish.TestOk=¡Todo listo! Redis respondió en %1.%n%nPara usarlo: abra Excel. Si el complemento no se carga solo, vaya a Archivo > Opciones > Complementos > Ir... > Examinar... y elija el .xll en %2.
+spanish.FinishedText=RedisExcel está instalado en:%n%2%n%nSi el complemento no se carga solo, actívelo en Excel:%nArchivo > Opciones > Complementos > Ir... > Examinar... y elija RedisExcel64-packed.xll (o RedisExcel-packed.xll para Office de 32 bits).%n%nLuego pruebe =RedisUDFGet("preco_btc") en una celda.
+spanish.UninstServersTitle=Servidores
+spanish.UninstServersSubtitle=¿Eliminar también los servidores compatibles con Redis?
+spanish.UninstServersDesc=Se encontraron estos servidores en esta máquina. Marque los que desee eliminar junto con RedisExcel.%nDe forma predeterminada NO se elimina nada.
+spanish.UninstServerFound=%1  [encontrado]
+spanish.UninstKeepConfig=¿Conservar su configuración RedisExcel.json?
+spanish.ServerNameDockerRedis=Redis (Docker)
+spanish.ServerNameDockerValkey=Valkey (Docker)
+spanish.ServerNameWslRedis=Redis (WSL)
+spanish.ServerNameWslValkey=Valkey (WSL)
+spanish.ServerNameMemurai=Memurai
+spanish.ServerNameGeneric=el servidor
+
+brazilianportuguese.ServerPageTitle=Servidor Redis
+brazilianportuguese.ServerPageSubtitle=Deseja instalar agora um servidor compativel com o Redis?
+brazilianportuguese.ServerPageDesc=O RedisExcel precisa de um servidor Redis (ou Valkey). Escolha uma opcao se ainda nao tiver um. O servidor e instalado primeiro, depois o RedisExcel, e a conexao e testada no final. O Docker e o mais simples.
+brazilianportuguese.ServerNone=Nao - eu ja tenho um servidor (ou vou instalar depois)
+brazilianportuguese.ServerDockerRedis=Sim - Docker: Redis (redis:7-alpine)
+brazilianportuguese.ServerDockerValkey=Sim - Docker: Valkey (valkey/valkey:8-alpine)
+brazilianportuguese.ServerWslRedis=Sim - WSL2: Redis (apt install redis-server)
+brazilianportuguese.ServerWslValkey=Sim - WSL2: Valkey (apt install valkey-server)
+brazilianportuguese.ServerMemurai=Sim - Memurai (servico do Windows nativo, precisa de admin)
+brazilianportuguese.ConnPageTitle=Conexao com o Redis
+brazilianportuguese.ConnPageSubtitle=Onde o RedisExcel deve se conectar?
+brazilianportuguese.ConnPageDesc=Clique em Avancar para o padrao (localhost:6379). Voce pode mudar depois editando o RedisExcel.json.
+brazilianportuguese.ConnHost=Host (ou host:porta):
+brazilianportuguese.ConnPort=Porta:
+brazilianportuguese.ConnUser=Usuario (opcional, para ACL do Redis 6):
+brazilianportuguese.ConnPassword=Senha (opcional):
+brazilianportuguese.OptionsPageTitle=Verificacoes
+brazilianportuguese.OptionsPageSubtitle=Quase pronto
+brazilianportuguese.OptionsPageDesc=O instalador testa a conexao ao terminar. Opcionalmente abre uma planilha de exemplo do RedisExcel mostrando que funcionou.
+brazilianportuguese.OptionsOpenExcel=Abrir uma planilha de exemplo do RedisExcel no final
+brazilianportuguese.TaskConfigDesc=Criar RedisExcel.json na pasta de instalacao (configuracao de host)
+brazilianportuguese.TaskNlogDesc=Criar NLog.config (gravar um arquivo de log junto ao add-in)
+brazilianportuguese.TaskAutoLoadDesc=Registrar o add-in para o Excel carrega-lo automaticamente (recomendado)
+brazilianportuguese.GroupConfig=Configuracao:
+brazilianportuguese.GroupExcel=Excel:
+brazilianportuguese.IconUninstall=Desinstalar {#AppName}
+brazilianportuguese.HostRequired=Informe um host do Redis (por exemplo localhost).
+brazilianportuguese.ServerFailed=Nao foi possivel configurar %1 automaticamente (saida %2).%nVoce pode instalar um servidor depois e apontar o RedisExcel.json para ele.
+brazilianportuguese.ConfigWriteFailed=Nao foi possivel gravar %1. Crie manualmente a partir do exemplo (RedisExcel.json).
+brazilianportuguese.TestFailed=Instalado, mas o Redis em %1 nao respondeu ao PING.%nConfira se o servidor esta rodando (docker ps) e ajuste o RedisExcel.json se ele estiver em outro host/porta.
+brazilianportuguese.TestOk=Tudo certo! O Redis respondeu em %1.%n%nPara usar: abra o Excel. Se o add-in nao carregar sozinho, va em Arquivo > Opcoes > Suplementos > Ir... > Procurar... e escolha o .xll em %2.
+brazilianportuguese.FinishedText=O RedisExcel foi instalado em:%n%2%n%nSe o add-in nao carregar sozinho, habilite no Excel:%nArquivo > Opcoes > Suplementos > Ir... > Procurar... e escolha RedisExcel64-packed.xll (ou RedisExcel-packed.xll para Office 32 bits).%n%nDepois teste =RedisUDFGet("preco_btc") em uma celula.
+brazilianportuguese.UninstServersTitle=Servidores
+brazilianportuguese.UninstServersSubtitle=Remover tambem os servidores compativeis com o Redis?
+brazilianportuguese.UninstServersDesc=Estes servidores foram encontrados na maquina. Marque os que deseja remover junto com o RedisExcel.%nPor padrao NADA e removido.
+brazilianportuguese.UninstServerFound=%1  [encontrado]
+brazilianportuguese.UninstKeepConfig=Manter suas configuracoes do RedisExcel.json?
+brazilianportuguese.ServerNameDockerRedis=Redis (Docker)
+brazilianportuguese.ServerNameDockerValkey=Valkey (Docker)
+brazilianportuguese.ServerNameWslRedis=Redis (WSL)
+brazilianportuguese.ServerNameWslValkey=Valkey (WSL)
+brazilianportuguese.ServerNameMemurai=Memurai
+brazilianportuguese.ServerNameGeneric=o servidor
+
 [Tasks]
-Name: "addinconfig"; Description: "Create RedisExcel.json in the install folder (host settings)"; GroupDescription: "Configuration:"
-Name: "nlogconfig";  Description: "Create NLog.config (write a log file next to the add-in)"; GroupDescription: "Configuration:"
-Name: "excelautoload"; Description: "Register the add-in so Excel loads it automatically (recommended)"; GroupDescription: "Excel:"
+Name: "addinconfig"; Description: "{cm:TaskConfigDesc}"; GroupDescription: "{cm:GroupConfig}"
+Name: "nlogconfig";  Description: "{cm:TaskNlogDesc}"; GroupDescription: "{cm:GroupConfig}"
+Name: "excelautoload"; Description: "{cm:TaskAutoLoadDesc}"; GroupDescription: "{cm:GroupExcel}"
 
 [Icons]
-Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+Name: "{group}\{cm:IconUninstall}"; Filename: "{uninstallexe}"
 
 [Files]
 Source: "{#BuildDir}\RedisExcel.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -221,38 +356,37 @@ begin
   Is64BitOffice := Detect64BitOffice();
 
   ServerPage := CreateInputOptionPage(wpSelectTasks,
-    'Redis server', 'Do you want to install a Redis-compatible server now?',
-    'RedisExcel needs a Redis (or Valkey) server. Choose an option if you do not ' +
-    'already have one - the server is installed BEFORE RedisExcel, and the ' +
-    'connection is tested at the end. Docker is the simplest.',
+    ExpandConstant('{cm:ServerPageTitle}'),
+    ExpandConstant('{cm:ServerPageSubtitle}'),
+    ExpandConstant('{cm:ServerPageDesc}'),
     True, False);
-  ServerPage.Add('No - I already have a server (or will set it up later)');
-  ServerPage.Add('Yes - Docker: Redis (redis:7-alpine)');
-  ServerPage.Add('Yes - Docker: Valkey (valkey/valkey:8-alpine)');
-  ServerPage.Add('Yes - WSL2: Redis (apt install redis-server)');
-  ServerPage.Add('Yes - WSL2: Valkey (apt install valkey-server)');
-  ServerPage.Add('Yes - Memurai (native Windows service, needs admin)');
+  ServerPage.Add(ExpandConstant('{cm:ServerNone}'));
+  ServerPage.Add(ExpandConstant('{cm:ServerDockerRedis}'));
+  ServerPage.Add(ExpandConstant('{cm:ServerDockerValkey}'));
+  ServerPage.Add(ExpandConstant('{cm:ServerWslRedis}'));
+  ServerPage.Add(ExpandConstant('{cm:ServerWslValkey}'));
+  ServerPage.Add(ExpandConstant('{cm:ServerMemurai}'));
   ServerPage.SelectedValueIndex := 0;
 
   ConnPage := CreateInputQueryPage(ServerPage.ID,
-    'Redis connection', 'Where should RedisExcel connect?',
-    'Press Next for the default (localhost:6379). You can change this later by ' +
-    'editing RedisExcel.json.');
-  ConnPage.Add('Host (or host:port):', False);
-  ConnPage.Add('Port:', False);
-  ConnPage.Add('User (optional, for Redis 6 ACL):', False);
-  ConnPage.Add('Password (optional):', True);
+    ExpandConstant('{cm:ConnPageTitle}'),
+    ExpandConstant('{cm:ConnPageSubtitle}'),
+    ExpandConstant('{cm:ConnPageDesc}'));
+  ConnPage.Add(ExpandConstant('{cm:ConnHost}'), False);
+  ConnPage.Add(ExpandConstant('{cm:ConnPort}'), False);
+  ConnPage.Add(ExpandConstant('{cm:ConnUser}'), False);
+  ConnPage.Add(ExpandConstant('{cm:ConnPassword}'), True);
   ConnPage.Values[0] := ParamOr('HOST', 'localhost');
   ConnPage.Values[1] := ParamOr('PORT', '6379');
   ConnPage.Values[2] := ParamOr('USER', '');
   ConnPage.Values[3] := ParamOr('PASSWORD', '');
 
   OptionsPage := CreateInputOptionPage(ConnPage.ID,
-    'Finish', 'Extra checks',
-    'The installer tests the connection when it finishes. Optionally open a ' +
-    'sample Excel workbook showing it working.',
+    ExpandConstant('{cm:OptionsPageTitle}'),
+    ExpandConstant('{cm:OptionsPageSubtitle}'),
+    ExpandConstant('{cm:OptionsPageDesc}'),
     False, False);
-  OptionsPage.Add('Open a sample RedisExcel workbook at the end');
+  OptionsPage.Add(ExpandConstant('{cm:OptionsOpenExcel}'));
   OptionsPage.Values[0] := (ParamOr('OPENEXCEL', '0') = '1');
 end;
 
@@ -267,7 +401,7 @@ begin
   Result := True;
   if (CurPageID = ConnPage.ID) and (Trim(ConnPage.Values[0]) = '') then
   begin
-    MsgBox('Please enter a Redis host (for example localhost).', mbError, MB_OK);
+    MsgBox(ExpandConstant('{cm:HostRequired}'), mbError, MB_OK);
     Result := False;
   end;
 end;
@@ -363,12 +497,12 @@ end;
 
 function ServerName(Kind: String): String;
 begin
-  if Kind = 'docker-redis' then Result := 'Redis (Docker)'
-  else if Kind = 'docker-valkey' then Result := 'Valkey (Docker)'
-  else if Kind = 'wsl-redis' then Result := 'Redis (WSL)'
-  else if Kind = 'wsl-valkey' then Result := 'Valkey (WSL)'
-  else if Kind = 'memurai' then Result := 'Memurai'
-  else Result := 'server';
+  if Kind = 'docker-redis' then Result := ExpandConstant('{cm:ServerNameDockerRedis}')
+  else if Kind = 'docker-valkey' then Result := ExpandConstant('{cm:ServerNameDockerValkey}')
+  else if Kind = 'wsl-redis' then Result := ExpandConstant('{cm:ServerNameWslRedis}')
+  else if Kind = 'wsl-valkey' then Result := ExpandConstant('{cm:ServerNameWslValkey}')
+  else if Kind = 'memurai' then Result := ExpandConstant('{cm:ServerNameMemurai}')
+  else Result := ExpandConstant('{cm:ServerNameGeneric}');
 end;
 
 // ---- Steps: server (before files) -> files -> config + test ---------------
@@ -393,10 +527,7 @@ begin
     ServerInstallCode := -1;
 
   if (ServerInstallCode <> 0) and (not WizardSilent()) then
-    MsgBox('Could not set up ' + ServerName(Kind) + ' automatically (exit ' +
-           IntToStr(ServerInstallCode) + ').' + #13#10 +
-           'You can install a server later and point RedisExcel.json at it.',
-           mbInformation, MB_OK);
+    MsgBox(FmtMessage(ExpandConstant('{cm:ServerFailed}'), [ServerName(Kind), IntToStr(ServerInstallCode)]), mbInformation, MB_OK);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -418,7 +549,7 @@ begin
       begin
         Lines := ConfigJson();
         if not SaveStringToFile(ConfigPath, Lines, False) then
-          MsgBox('Could not write ' + ConfigPath + '. Create it manually from the sample.',
+          MsgBox(FmtMessage(ExpandConstant('{cm:ConfigWriteFailed}'), [ConfigPath]),
                  mbInformation, MB_OK);
       end;
     end;
@@ -449,14 +580,9 @@ begin
   TestOk := (RunScript('test-connection.ps1', Args) = 0);
 
   if not TestOk then
-    Msg := 'Instalado, mas o Redis em ' + HostPort + ' nao respondeu ao PING.' + #13#10 +
-           'Verifique se o servidor esta rodando (docker ps) e ajuste o ' +
-           'RedisExcel.json se ele estiver em outro host/porta.'
+    Msg := FmtMessage(ExpandConstant('{cm:TestFailed}'), [HostPort])
   else
-    Msg := 'Tudo certo! O Redis respondeu em ' + HostPort + '.' + #13#10 + #13#10 +
-           'Para usar: abra o Excel e, se o add-in nao carregar sozinho, va em ' +
-           'File > Options > Add-ins > Go... > Browse... e escolha o .xll em ' +
-           ExpandConstant('{app}') + '.';
+    Msg := FmtMessage(ExpandConstant('{cm:TestOk}'), [HostPort, ExpandConstant('{app}')]);
 
   if not WizardSilent() then
     MsgBox(Msg, mbInformation, MB_OK);
@@ -470,11 +596,7 @@ procedure CurPageChanged(CurPageID: Integer);
 begin
   if (CurPageID = wpFinished) and (not WizardSilent()) then
     WizardForm.FinishedLabel.Caption :=
-      'RedisExcel is installed in:' + #13#10 + ExpandConstant('{app}') + #13#10 + #13#10 +
-      'If the add-in does not load automatically, enable it in Excel:' + #13#10 +
-      'File > Options > Add-ins > Go... > Browse... and pick' + #13#10 +
-      'RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).' + #13#10 + #13#10 +
-      'Then try =RedisUDFGet("preco_btc") in a cell.';
+      FmtMessage(ExpandConstant('{cm:FinishedText}'), ['', ExpandConstant('{app}')]);
 end;
 
 // ---- Uninstall: detect servers, let the user pick what to remove ----------
@@ -552,13 +674,12 @@ begin
     if Present > 0 then
     begin
       UninstallServersPage := CreateInputOptionPage(1,
-        'Servers', 'Remove Redis-compatible servers too?',
-        'These servers were found on this machine. Tick the ones you want to ' +
-        'remove with RedisExcel.' + #13#10 +
-        'By default NOTHING is removed.',
+        ExpandConstant('{cm:UninstServersTitle}'),
+        ExpandConstant('{cm:UninstServersSubtitle}'),
+        ExpandConstant('{cm:UninstServersDesc}'),
         False, True);
       for I := 0 to GetArrayLength(ServerKinds) - 1 do
-        UninstallServersPage.Add(ServerLabels[I] + '  [found]');
+        UninstallServersPage.Add(FmtMessage(ExpandConstant('{cm:UninstServerFound}'), [ServerLabels[I]]));
     end;
   except
     // Never block an uninstall on the optional server page.
@@ -592,7 +713,7 @@ begin
     RunUninstallServers();
 
     if FileExists(ExpandConstant('{app}\RedisExcel.json')) then
-      if MsgBox('Keep your RedisExcel.json settings?', mbConfirmation, MB_YESNO) = IDNO then
+      if MsgBox(ExpandConstant('{cm:UninstKeepConfig}'), mbConfirmation, MB_YESNO) = IDNO then
         DeleteFile(ExpandConstant('{app}\RedisExcel.json'));
   end;
 end;
