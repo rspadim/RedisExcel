@@ -568,13 +568,22 @@ namespace RedisExcel
         /// </summary>
         internal static void ResetAfterAddInReload()
         {
-            foreach (var server in Instances.Keys)
+            // Snapshot under the same lock ServerStart/ServerTerminate mutate the
+            // map with, so a concurrent start/terminate cannot be lost or promote a
+            // stale instance (audit round P). Teardown runs outside the lock: it
+            // never takes InstancesSync itself.
+            RedisRtd[] servers;
+            lock (InstancesSync)
+            {
+                servers = Instances.Keys.ToArray();
+            }
+            foreach (var server in servers)
                 server.Teardown();
-            // Instances is emptied per server in ServerTerminate normally; clear it
-            // and the current pointer explicitly so the status surface reflects the
-            // fresh session immediately.
-            Instances.Clear();
-            Instance = null;
+            lock (InstancesSync)
+            {
+                Instances.Clear();
+                Instance = null;
+            }
         }
 
         /// <summary>
