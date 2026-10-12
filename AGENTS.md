@@ -193,6 +193,17 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Connection counters report live multiplexers per pool only (closed/failed
   entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
   only), and shutdown does not block on closing connections.
+- Native Redis HA (Sentinel and Cluster) works through StackExchange.Redis:
+  a `host` that is a Sentinel connection string (`serviceName=`) or any node of
+  a Redis Cluster connects, follows MOVED/ASK, re-subscribes after a failover,
+  and runs every key-routed command/read/write and Pub/Sub. Server-wide
+  operations span every master: `RedisUDFKeys` (SCAN) and
+  `RedisUDFPubSubChannelsInfo` (PUBSUB CHANNELS/NUMSUB, subscriber sums) iterate
+  the cluster masters (`GetMasterServers`) instead of the first node; a Redis
+  Cluster has only database 0, so a `defaultDatabase != 0` connect is rejected
+  with a clear error; a multi-key command that spans shards (MGET/MSET/RENAME)
+  fails with the client's "single slot" error plus a hash-tag hint. Standalone
+  and Sentinel keep the single-endpoint behavior.
 - Cached multiplexer eviction (past the 512-entry cap) vetoes hosts with live
   subscription listeners (`RedisConnectionManager.SetEvictionProtection` wired
   to `RedisSubscriptionManager.HasActiveSubscribers`), reclaims entries whose

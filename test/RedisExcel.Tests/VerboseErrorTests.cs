@@ -72,6 +72,17 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void CrossSlot_ReturnsHashTagHint()
+        {
+            // StackExchange.Redis reports a multi-key command across shards with
+            // "Multi-key operations must involve a single slot ..."; the cell
+            // should point at hash tags.
+            var ex = new Exception("Multi-key operations must involve a single slot; keys can use 'hash tags' to help this");
+            string text = Format(ex, "key=k, host=h");
+            Assert.Contains("hash tag", text);
+        }
+
+        [Fact]
         public void SelfExplanatoryCause_AppendsNoHint()
         {
             string text = Format(new Exception("some plain failure"), "key=k, host=h");

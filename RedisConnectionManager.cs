@@ -497,6 +497,37 @@ namespace RedisExcel
             try
             {
                 mux = ConnectionMultiplexer.Connect(options);
+                // Redis Cluster supports only database 0. A non-zero defaultDatabase
+                // is silently ignored by the client, so reads/writes go to the wrong
+                // logical DB without an error; fail early with a clear message.
+                try
+                {
+                    if (options.DefaultDatabase.GetValueOrDefault(0) != 0)
+                    {
+                        foreach (var ep in mux.GetEndPoints())
+                        {
+                            var server = mux.GetServer(ep);
+                            if (server.ServerType == ServerType.Cluster)
+                            {
+                                DisposeConnection(mux, "Connect: disposing cluster connection with non-zero database",
+                                    closeFirst: false, allowCommandsToComplete: false);
+                                // InvalidOperationException (not ArgumentException):
+                                // the catch below rewrites ArgumentException into
+                                // "invalid Redis host" and would hide this message.
+                                throw new InvalidOperationException(
+                                    "Redis Cluster supports only database 0; remove defaultDatabase or set it to 0");
+                            }
+                        }
+                    }
+                }
+                catch (InvalidOperationException)
+                {
+                    throw; // our own clear error
+                }
+                catch
+                {
+                    // A topology probe failure must not fail an otherwise usable connect.
+                }
             }
             catch (Exception ex) when (IsInvalidHostError(ex))
             {

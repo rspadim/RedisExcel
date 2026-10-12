@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Native Redis HA: Sentinel and Cluster.** A `host` that is a Sentinel
+  connection string (`serviceName=mymaster`) or any node of a Redis Cluster now
+  works for every command: key-routed reads/writes and Pub/Sub are handled by
+  StackExchange.Redis (master discovery, MOVED/ASK, reconnect, re-subscribe).
+  Server-wide operations span every cluster master: `RedisUDFKeys` scans all
+  shards and `RedisUDFPubSubChannelsInfo` merges channels/subscriber counts.
+  A Redis Cluster (database 0 only) rejects `defaultDatabase != 0` with a clear
+  error, and a multi-key command across shards reports the "single slot" error
+  plus a hash-tag (`{tag}`) hint. Standalone and Sentinel are unchanged.
+
 ## v1.5.2
 
 ### Changed

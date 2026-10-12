@@ -587,6 +587,9 @@ namespace RedisExcel
                 return "Redis did not answer in time; raise UDF.timeout (RedisExcel.json) or check the connection";
             if (cause.IndexOf("WRONGTYPE", StringComparison.Ordinal) >= 0)
                 return "the key already holds a different Redis type; use another key or delete it first";
+            if (cause.IndexOf("single slot", StringComparison.OrdinalIgnoreCase) >= 0
+                || cause.IndexOf("CROSSSLOT", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "in a Redis Cluster these keys are on different shards; give them a shared hash tag, e.g. {user:1}:a and {user:1}:b";
             return null;
         }
 
@@ -622,6 +625,57 @@ namespace RedisExcel
         {
             var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
             return conn.GetServer(conn.GetEndPoints().First());
+        }
+
+        /// <summary>True when the connection is a Redis Cluster (a server-wide
+        /// command must then span every shard). Detected from the ClusterConfiguration
+        /// of any endpoint; falls back to false for standalone/Sentinel.</summary>
+        internal static bool IsClusterConnection(ConnectionMultiplexer conn)
+        {
+            foreach (var ep in conn.GetEndPoints())
+            {
+                try
+                {
+                    var server = conn.GetServer(ep);
+                    if (server.ServerType == ServerType.Cluster && server.ClusterConfiguration != null)
+                        return true;
+                }
+                catch
+                {
+                    // an endpoint that cannot be inspected does not decide the topology
+                }
+            }
+            return false;
+        }
+
+        /// <summary>Server-wide commands (SCAN/KEYS, PUBSUB, TIME) must span every
+        /// MASTER of a Redis Cluster; standalone/Sentinel have a single endpoint.
+        /// Masters are filtered (connected, not a replica) so the key/channel list
+        /// is the whole logical namespace.</summary>
+        internal static List<IServer> GetMasterServers(ConnectionMultiplexer conn)
+        {
+            var result = new List<IServer>();
+            if (!IsClusterConnection(conn))
+            {
+                result.Add(conn.GetServer(conn.GetEndPoints().First()));
+                return result;
+            }
+            foreach (var ep in conn.GetEndPoints())
+            {
+                try
+                {
+                    var server = conn.GetServer(ep);
+                    if (server.ServerType == ServerType.Cluster && server.IsConnected && !server.IsReplica)
+                        result.Add(server);
+                }
+                catch
+                {
+                    // skip an endpoint we cannot reach; another master still serves
+                }
+            }
+            if (result.Count == 0)
+                result.Add(conn.GetServer(conn.GetEndPoints().First())); // degraded: fall back
+            return result;
         }
 
         /// <summary>Shared "keys range" entry of the ...Multiples functions:
@@ -1341,69 +1395,83 @@ namespace RedisExcel
             try
             {
                 host = ResolveHost(optionalHost);
-                var server = GetServer(host);
+                var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
 
-                var channelsResult = server.Execute("PUBSUB", "CHANNELS");
-                if (channelsResult.Resp2Type != ResultType.Array)
+                // PUBSUB CHANNELS/NUMSUB are per node; in a Redis Cluster a channel
+                // can live on any shard, so collect the channel set and the
+                // subscriber counts across every master (a single node would show
+                // only its own channels).
+                var channelsSeen = new List<string>();
+                var channelSet = new HashSet<string>(StringComparer.Ordinal);
+                var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+                const int MaxChannelsRows = 1000000;
+                foreach (var server in GetMasterServers(conn))
+                {
+                    var channelsResult = server.Execute("PUBSUB", "CHANNELS");
+                    if (channelsResult.Resp2Type != ResultType.Array)
+                        continue;
+
+                    var channels = (RedisResult[])channelsResult;
+                    var nodeNames = new List<string>(channels.Length);
+                    for (int i = 0; i < channels.Length; i++)
+                    {
+                        string name = channels[i].ToString();
+                        nodeNames.Add(name);
+                        if (channelSet.Add(name))
+                            channelsSeen.Add(name);
+                    }
+                    if (channelSet.Count > MaxChannelsRows)
+                        throw new ArgumentException("too many channels (over " + MaxChannelsRows + "); narrow the server");
+
+                    if (nodeNames.Count == 0)
+                        continue;
+                    // One PUBSUB NUMSUB per node with the node's own channels (the
+                    // old per-channel loop paid K round-trips per node); sum the
+                    // counts of the same channel across nodes.
+                    try
+                    {
+                        var numsubArgs = new object[nodeNames.Count + 1];
+                        numsubArgs[0] = "NUMSUB";
+                        for (int i = 0; i < nodeNames.Count; i++)
+                            numsubArgs[i + 1] = nodeNames[i];
+                        var numsubResult = server.Execute("PUBSUB", numsubArgs);
+                        if (numsubResult.Resp2Type == ResultType.Array)
+                        {
+                            var flat = (RedisResult[])numsubResult;
+                            for (int i = 0; i + 1 < flat.Length; i += 2)
+                            {
+                                try
+                                {
+                                    string name = flat[i].ToString();
+                                    long value = (long)flat[i + 1];
+                                    counts[name] = counts.TryGetValue(name, out var prev) ? prev + value : value;
+                                }
+                                catch { /* keep the default 0 for this channel */ }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, PUBSUB NUMSUB batch");
+                    }
+                }
+
+                if (channelsSeen.Count == 0)
                 {
                     if (logger.IsTraceEnabled)
                         logger.Trace($"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, channels=0");
                     return new object[,] { { "Channel", "Subscribers" } };
                 }
 
-                var channels = (RedisResult[])channelsResult;
-                // Bound the server-driven list before materializing it: PUBSUB
-                // CHANNELS is not limited by the add-in, and the name array, the
-                // NUMSUB argument array and the (N+1)x2 matrix are all built on the
-                // Excel thread. The same ceiling RedisUDFKeys uses keeps a huge
-                // server channel list from allocating a matrix Excel cannot spill
-                // (audit round P).
-                const int MaxChannelsRows = 1000000;
-                if (channels.Length > MaxChannelsRows)
-                    throw new ArgumentException("too many channels (over " + MaxChannelsRows + "); narrow the server");
-                var result = new object[channels.Length + 1, 2];
+                var result = new object[channelsSeen.Count + 1, 2];
                 result[0, 0] = "Channel";
                 result[0, 1] = "Subscribers";
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, channels={channels.Length}");
-
-                var channelNames = new string[channels.Length];
-                for (int i = 0; i < channels.Length; i++)
+                    logger.Trace($"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, channels={channelsSeen.Count}");
+                for (int i = 0; i < channelsSeen.Count; i++)
                 {
-                    channelNames[i] = channels[i].ToString();
-                    result[i + 1, 0] = channelNames[i];
-                }
-                if (channelNames.Length > 0)
-                {
-                    // One PUBSUB NUMSUB with every channel: the old per-channel
-                    // loop paid K round-trips (K x SyncTimeout in the worst case)
-                    // on the Excel thread.
-                    try
-                    {
-                        var numsubArgs = new object[channelNames.Length + 1];
-                        numsubArgs[0] = "NUMSUB";
-                        for (int i = 0; i < channelNames.Length; i++)
-                            numsubArgs[i + 1] = channelNames[i];
-                        var numsubResult = server.Execute("PUBSUB", numsubArgs);
-                        var counts = new Dictionary<string, long>(StringComparer.Ordinal);
-                        if (numsubResult.Resp2Type == ResultType.Array)
-                        {
-                            var flat = (RedisResult[])numsubResult;
-                            for (int i = 0; i + 1 < flat.Length; i += 2)
-                            {
-                                try { counts[flat[i].ToString()] = (long)flat[i + 1]; }
-                                catch { /* keep the default 0 for this channel */ }
-                            }
-                        }
-                        for (int i = 0; i < channelNames.Length; i++)
-                            result[i + 1, 1] = counts.TryGetValue(channelNames[i], out var count) ? count : 0;
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, PUBSUB NUMSUB batch");
-                        for (int i = 0; i < channelNames.Length; i++)
-                            result[i + 1, 1] = $"Error: {AppConfig.MaskHost(ex.Message)}";
-                    }
+                    result[i + 1, 0] = channelsSeen[i];
+                    result[i + 1, 1] = counts.TryGetValue(channelsSeen[i], out var count) ? count : 0;
                 }
                 return result;
             }
@@ -1759,14 +1827,24 @@ namespace RedisExcel
                 }
                 // Bounded enumeration: a huge keyspace must not materialize an
                 // unbounded list (or thousands of SCAN round-trips) on the Excel
-                // thread; narrow the pattern when the cap is hit.
+                // thread; narrow the pattern when the cap is hit. In a Redis
+                // Cluster SCAN spans every master (a single node would return only
+                // its shard); the cap is global and the order is not guaranteed
+                // across shards.
                 const int MaxKeysRows = 1000000;
                 keys = new List<string>();
-                foreach (var key in server.Keys(pattern: patternStr, pageSize: hasPageSize ? pageSizeInt : 250))
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
+                foreach (var master in GetMasterServers(conn))
                 {
-                    if (keys.Count >= MaxKeysRows)
-                        throw new ArgumentException($"too many keys for pattern '{patternStr}' (over {MaxKeysRows}); narrow the pattern");
-                    keys.Add(key.ToString());
+                    foreach (var key in master.Keys(pattern: patternStr, pageSize: hasPageSize ? pageSizeInt : 250))
+                    {
+                        if (keys.Count >= MaxKeysRows)
+                            throw new ArgumentException($"too many keys for pattern '{patternStr}' (over {MaxKeysRows}); narrow the pattern");
+                        string text = key.ToString();
+                        if (seen.Add(text))
+                            keys.Add(text);
+                    }
                 }
 
                 if (logger.IsTraceEnabled)
