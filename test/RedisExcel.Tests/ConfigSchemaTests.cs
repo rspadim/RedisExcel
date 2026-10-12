@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using Newtonsoft.Json.Linq;
 using Xunit;
 
@@ -200,6 +202,60 @@ namespace RedisExcel.Tests
         public void SyncWrite_AcceptsDocumentedSpellingsCaseInsensitive(string value)
         {
             Assert.True(Accepted("{\"SyncWrite\":\"" + value + "\"}"));
+        }
+
+        [Theory]
+        [InlineData("TIMER")]
+        [InlineData("REALTIME")]
+        [InlineData("AUTOMATIC")]
+        [InlineData("TiMeR")]
+        public void ExcelUpdateStyle_AcceptSpellingsCaseInsensitiveUnderTurkishCulture(string value)
+        {
+            // The patterns use (?i) to be case-insensitive; without CultureInvariant
+            // the Turkish dotted/dotless I makes "TIMER" fail to match "Timer", so
+            // the schema drops it and the config silently reverts to Automatic.
+            using (CultureScope("tr-TR"))
+                Assert.True(Accepted("{\"RTD\":{\"ExcelUpdateStyle\":\"" + value + "\"}}"));
+        }
+
+        [Theory]
+        [InlineData("SYNC")]
+        [InlineData("FIREFORGET")]
+        [InlineData("FIREFORGET-ALL")]
+        [InlineData("FireForget-All")]
+        public void SyncWrite_AcceptSpellingsCaseInsensitiveUnderTurkishCulture(string value)
+        {
+            // Same Turkish-I hazard on the SyncWrite pattern.
+            using (CultureScope("tr-TR"))
+                Assert.True(Accepted("{\"SyncWrite\":\"" + value + "\"}"));
+        }
+
+        private static IDisposable CultureScope(string name)
+        {
+            var culture = CultureInfo.GetCultureInfo(name);
+            var saved = Thread.CurrentThread.CurrentCulture;
+            var savedDefault = CultureInfo.DefaultThreadCurrentCulture;
+            Thread.CurrentThread.CurrentCulture = culture;
+            CultureInfo.DefaultThreadCurrentCulture = culture;
+            return new RestoreCulture(saved, savedDefault);
+        }
+
+        private sealed class RestoreCulture : IDisposable
+        {
+            private readonly CultureInfo _saved;
+            private readonly CultureInfo _savedDefault;
+
+            public RestoreCulture(CultureInfo saved, CultureInfo savedDefault)
+            {
+                _saved = saved;
+                _savedDefault = savedDefault;
+            }
+
+            public void Dispose()
+            {
+                Thread.CurrentThread.CurrentCulture = _saved;
+                CultureInfo.DefaultThreadCurrentCulture = _savedDefault;
+            }
         }
 
         [Theory]

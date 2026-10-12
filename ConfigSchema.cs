@@ -105,7 +105,24 @@ namespace RedisExcel
         /// with its schema keeps the exact JSON property names.</summary>
         internal static JToken Clean(JToken root, IList<ConfigIssue> issues)
         {
-            return Prune(root, _schema.Value, "", issues);
+            // Validate under the INVARIANT culture: the schema patterns are declared
+            // case-insensitive with (?i), and .NET's (?i) folds case using the
+            // CURRENT culture. Under tr-TR the capital I folds to the dotless "ı",
+            // so `"TIMER"` no longer matches `Timer`/`REALTIME`/`FIREFORGET-ALL` and
+            // the loader would silently drop a valid value (reverting to defaults).
+            // Pinning the culture here is what makes the schema's own
+            // "case-insensitive" promise hold on every machine (audit round O).
+            var saved = System.Threading.Thread.CurrentThread.CurrentCulture;
+            try
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture =
+                    System.Globalization.CultureInfo.InvariantCulture;
+                return Prune(root, _schema.Value, "", issues);
+            }
+            finally
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture = saved;
+            }
         }
 
         private static JToken Prune(JToken value, JsonSchema schema, string path, IList<ConfigIssue> issues)

@@ -291,7 +291,7 @@ namespace RedisExcel
 
         private static readonly Regex PasswordPair = new Regex(
             @"(^|[,;])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
-            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);
 

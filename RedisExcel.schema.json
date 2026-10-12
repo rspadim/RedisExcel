@@ -13,7 +13,7 @@
         "timeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Connect and sync timeout in milliseconds." },
         "RedisUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often the poll timer reads Redis." },
         "ExcelUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often dirty values are flushed to Excel." },
-        "ExcelUpdateStyle": { "type": "string", "pattern": "(?i)^(Timer|Realtime|Automatic)$", "description": "Timer, Realtime or Automatic (case-insensitive)." },
+        "ExcelUpdateStyle": { "type": "string", "pattern": "^(?:[Tt][Ii][Mm][Ee][Rr]|[Rr][Ee][Aa][Ll][Tt][Ii][Mm][Ee]|[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ii][Cc])$", "description": "Timer, Realtime or Automatic (case-insensitive; ASCII)." },
         "MessageCounterThreshold": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "description": "Messages/second above which Automatic switches to timer delivery." },
         "UseGetMultiple": { "type": "boolean", "description": "Batch polled GET/HGET reads into one round trip." }
       }
@@ -36,7 +36,7 @@
     "CoalesceRealtimeUpdates": { "type": "boolean", "description": "Legacy real-time coalescing flag (superseded by an explicit ConflationMs)." },
     "ConflationMs": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647, "description": "Real-time conflation window in ms (0 = off, one push per message; negative clamps to 0, >3600000 caps to 3600000 via Sanitize)." },
     "PublishDedupCacheSize": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Capacity of the PublishIfChanged dedup cache (LRU)." },
-    "SyncWrite": { "type": "string", "pattern": "(?i)^(sync|fireforget|fireforget-all)$", "description": "sync, fireforget or fireforget-all (case-insensitive)." },
+    "SyncWrite": { "type": "string", "pattern": "^(?:[Ss][Yy][Nn][Cc]|[Ff][Ii][Rr][Ee][Ff][Oo][Rr][Gg][Ee][Tt]|[Ff][Ii][Rr][Ee][Ff][Oo][Rr][Gg][Ee][Tt]-[Aa][Ll][Ll])$", "description": "sync, fireforget or fireforget-all (case-insensitive; ASCII)." },
     "AsyncWrites": { "type": "boolean", "description": "Dispatch writes through Excel-DNA async so the Excel thread never blocks." }
   }
 }
