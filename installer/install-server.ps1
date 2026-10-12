@@ -4,12 +4,15 @@
   chosen port and leave it running.
 
   Kinds:
-    docker-redis    Docker Desktop container "redisexcel" running redis:7-alpine
-    docker-valkey   Docker Desktop container "redisexcel" running valkey/valkey:8-alpine
+    docker-redis    Docker Desktop container "redisexcel" running redis:latest
+    docker-valkey   Docker Desktop container "redisexcel" running valkey/valkey:latest
     wsl-redis       Redis inside the default WSL2 distro
     wsl-valkey      Valkey inside the default WSL2 distro
     memurai         Memurai (native Redis-compatible Windows service; needs admin)
     none            do nothing
+
+  Use -Image to pin a specific tag (e.g. -Image redis:7-alpine) instead of
+  latest.
 
   Exits 0 on success (or when the server already answers), 3 when the chosen
   method is not available on this machine, 1 on a hard failure. The installer
@@ -26,7 +29,9 @@ param(
   [string]$Kind = 'none',
   [int]$Port = 6379,
   [string]$ContainerName = 'redisexcel',
-  [string]$Distro = ''
+  [string]$Distro = '',
+  # Override the container image (default: latest). e.g. -Image redis:7-alpine
+  [string]$Image = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -153,8 +158,8 @@ function Memurai-Up() {
 
 switch ($Kind) {
   'none'          { Write-Step "no server requested."; exit 0 }
-  'docker-redis'  { Docker-Up 'redis:7-alpine' 'redis-cli' }
-  'docker-valkey' { Docker-Up 'valkey/valkey:8-alpine' 'valkey-cli' }
+  'docker-redis'  { Docker-Up $(if ($Image) { $Image } else { 'redis:latest' }) 'redis-cli' }
+  'docker-valkey' { Docker-Up $(if ($Image) { $Image } else { 'valkey/valkey:latest' }) 'valkey-cli' }
   'wsl-redis'     { Wsl-Up 'redis-server' }
   'wsl-valkey'    { Wsl-Up 'valkey-server' }
   'memurai'       { Memurai-Up }

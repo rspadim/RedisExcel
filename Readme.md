@@ -85,14 +85,15 @@ can also set one up for you.
 2. Open **PowerShell** and run **one** of these (Redis or Valkey - both work):
 
    ```powershell
-   # Redis
-   docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+   # Redis (latest)
+   docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:latest
    # or Valkey (open-source fork, same protocol)
-   docker run -d --name valkey -p 6379:6379 --restart unless-stopped valkey/valkey:8-alpine
+   docker run -d --name valkey -p 6379:6379 --restart unless-stopped valkey/valkey:latest
    ```
 
-   That downloads a small image, starts it in the background, exposes it on
-   `localhost:6379`, and restarts it whenever your PC reboots.
+   That downloads the current image, starts it in the background, exposes it on
+   `localhost:6379`, and restarts it whenever your PC reboots. (Pin a tag if you
+   want reproducibility, e.g. `redis:7-alpine`.)
 3. Check it is alive (use the matching name; `valkey-cli` and `redis-cli` are
    interchangeable):
 

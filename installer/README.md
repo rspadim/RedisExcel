@@ -49,7 +49,9 @@ The installer ships these under `C:\RedisExcel\` (all usable on their own):
 
 - `scripts\install-server.ps1 -Kind docker-valkey -Port 6379` - brings up a
   server (kinds: `docker-redis`, `docker-valkey`, `wsl-redis`, `wsl-valkey`,
-  `memurai`; `none` does nothing). Exit `3` means the method is unavailable here.
+  `memurai`; `none` does nothing). Uses the `:latest` Docker image by default;
+  pass `-Image redis:7-alpine` to pin a tag. Exit `3` means the method is
+  unavailable here.
 - `scripts\test-connection.ps1 -ServerHost localhost:6379 [-User u] [-Password p]` -
   PINGs the server (honours AUTH), exit `0`/`1`.
 - `scripts\verify-connection.ps1 -AddInDir "C:\RedisExcel" -ServerHost localhost:6379 -OpenExcel` -
