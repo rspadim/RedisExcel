@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Real-time delivery honors an explicit `ConflationMs`:** the push path used
+  the legacy `CoalesceRealtimeUpdates` boolean directly and ignored the resolved
+  conflation window, so a config with `ConflationMs: 200` and
+  `CoalesceRealtimeUpdates: false` pushed every message instead of one per
+  window. The push now uses the resolved window as the single source of truth
+  (`Conflation.PushImmediately`).
+- **UDF batch timeouts use `UDF.timeout`:** the `...Multiples` batch functions
+  waited on the RTD timeout, so when `UDF.timeout` was larger than `RTD.timeout`
+  a slow batch reported `Error:` even though the UDF timeout had not elapsed.
+  The wait is now derived from the UDF pool's configured timeout.
+- **`ChannelLatest` no longer leaks a subscription under churn (two audits):**
+  the per-channel epoch map that detects an unsubscribe racing a subscribe grew
+  without bound (its prune trigger was the key's own epoch, which never reaches
+  the threshold for distinct channels), and the fix's global sweep could erase a
+  brand-new key's entry while a subscribe was in flight, letting a ghost
+  listener install whose subscription was never torn down. The map is bounded by
+  a global-bump sweep that vetoes keys with an in-flight subscribe.
+- **`float` and `-0` precision in `ToRedisString`:** a `float` argument was
+  formatted by `Single.ToString()` (7 digits) and did not round-trip
+  (`16777217f` became `16777216`), and `-0.0` was written as `0`, dropping the
+  sign bit. Both now round-trip. `RedisUDFMatrixToJSON` rejects a non-finite
+  double with the same error as `RedisUDFJSONToMatrix` instead of emitting the
+  raw `NaN`/`Infinity` token (invalid JSON).
+- **Config pruning fixes:** two keys that differ only by case now MERGE their
+  valid fields instead of one discarding the other; an out-of-range
+  `ConflationMs` is accepted by the schema and clamped by `Sanitize` (matching
+  the documented "capped at 3600000") instead of being dropped before the clamp;
+  and the oversized-`RedisUDFJSONToMatrix` guard runs BEFORE parsing so a giant
+  input reports the documented size error instead of being parsed first.
+  `RedisUDFExistsMultiples`/`RedisUDFTTLMultiples` isolate a per-row error the
+  way `HashGetFieldMultipleKeys` already did.
+- **Log output is bounded:** a malformed value could put a 10 MB line in the log;
+  the interpolated context is capped and long values are shortened
+  (`BoundContext`/`ShortForLog`).
+
 ### Changed
 
 - **Config validated against a JSON Schema (NJsonSchema, comments allowed):**
@@ -72,6 +109,13 @@
   identical republish is suppressed by the duplicate-suppression seam, so a
   single racing miss made convergence look broken). Both were red CI flakes, not
   add-in defects.
+- Payload comparison for `SkipRepeatedMessages`/dedup now uses a word-at-a-time
+  `SequenceEqual` over the raw bytes (10-30x faster on large payloads, zero
+  allocation on real messages) instead of a byte loop.
+- CI release hardening: the tag-vs-CHANGELOG heading check is anchored (a short
+  tag can no longer pass against a longer heading), each of the five release
+  assets is asserted individually, and the matching CHANGELOG section is the
+  release body.
 
 ## v1.4.1
 
