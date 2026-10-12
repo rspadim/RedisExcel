@@ -20,7 +20,8 @@ file juggling.
 
 1. Go to the **[latest release](https://github.com/rspadim/RedisExcel/releases/latest)**
    and, under **Assets**, click **`RedisExcelSetup-x.y.z.exe`**
-   (direct link: <https://github.com/rspadim/RedisExcel/releases/latest/download/RedisExcelSetup-1.5.1.exe>).
+   (for v1.5.1 the direct link is
+   <https://github.com/rspadim/RedisExcel/releases/latest/download/RedisExcelSetup-1.5.1.exe>).
 2. Run it and follow the wizard:
    - it copies the add-in to `C:\RedisExcel` and keeps only the XLL that matches
      your Office bitness;
