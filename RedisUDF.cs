@@ -1634,7 +1634,7 @@ namespace RedisExcel
                 {
                     if (multipleColumns)
                         result[i, 0] = redisKeys[i].ToString();
-                    result[i, columns - 1] = values[i].HasValue ? values[i].ToString() : "(null)";
+                    result[i, columns - 1] = values[i].IsNull ? "(null)" : values[i].ToString();
                 }
                 return result;
             });

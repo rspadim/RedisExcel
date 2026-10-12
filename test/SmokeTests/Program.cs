@@ -1351,6 +1351,26 @@ internal static class Program
             db.KeyDelete(hashKey);
         }
 
+        // RedisUDFGetMultiple must distinguish a MISSING key from an existing key
+        // holding "" (RedisValue.HasValue is false for both, so the batch used to
+        // collapse them to "(null)" while the RTD path already used IsNull). This
+        // pins the fixed behaviour (audit round P).
+        string emptyKey = "smoke:multi:empty:" + runId;
+        string missingKey = "smoke:multi:missing:" + runId;
+        db.StringSet(emptyKey, "");
+        try
+        {
+            var multi = RedisUDF.RedisUDFGetMultiple(new object[,] { { missingKey }, { emptyKey } }, false, host);
+            string missingCell = Convert.ToString(multi[0, 0], CultureInfo.InvariantCulture);
+            string emptyCell = Convert.ToString(multi[1, 0], CultureInfo.InvariantCulture);
+            Check(string.Equals(missingCell, "(null)", StringComparison.Ordinal) && emptyCell == "",
+                $"GetMultiple: a missing key is '(null)' and an existing empty string is '' (got '{missingCell}' / '{emptyCell}')");
+        }
+        finally
+        {
+            db.KeyDelete(emptyKey);
+        }
+
         // RedisUDFServerTime: an ISO-8601 string within 60 s of local UTC.
         object timeResult = RedisUDF.RedisUDFServerTime(host);
         bool timeParsed = DateTime.TryParse(
