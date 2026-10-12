@@ -77,10 +77,12 @@ english.ConnHost=Host (or host:port):
 english.ConnPort=Port:
 english.ConnUser=User (optional, for Redis 6 ACL):
 english.ConnPassword=Password (optional):
+english.ConnDatabase=Database (0-15, default 0):
 english.OptionsPageTitle=Extra checks
 english.OptionsPageSubtitle=Almost done
 english.OptionsPageDesc=The installer tests the connection when it finishes. Optionally open a sample Excel workbook showing it working.
 english.OptionsOpenExcel=Open a sample RedisExcel workbook at the end
+english.OptionsUseSsl=Use SSL/TLS for the connection
 english.TaskConfigDesc=Create RedisExcel.json in the install folder (host settings)
 english.TaskNlogDesc=Create NLog.config (write a log file next to the add-in)
 english.TaskAutoLoadDesc=Register the add-in so Excel loads it automatically (recommended)
@@ -104,6 +106,29 @@ english.ServerNameWslRedis=Redis (WSL)
 english.ServerNameWslValkey=Valkey (WSL)
 english.ServerNameMemurai=Memurai
 english.ServerNameGeneric=the server
+english.ModePageTitle=Setup mode
+english.ModePageSubtitle=Simple or advanced setup?
+english.ModePageDesc=Simple asks only for the server address. Advanced lets you set the database, SSL/TLS, the write mode and the real-time update tuning. You can always edit RedisExcel.json later (or run Validate-Config.cmd).
+english.ModeSimple=Simple - just the Redis address (recommended)
+english.ModeAdvanced=Advanced - set database, SSL, write mode and update tuning
+english.AdvPageTitle=Advanced connection
+english.AdvPageDesc=This is your whole RedisExcel.json, ready to edit: every key is pre-filled with its default and a short comment. The add-in accepts // comments, so you can leave them. Change hosts, aliases, write mode, ConflationMs, AsyncWrites - everything is here.
+english.AdvPageSubtitle=Database, credentials and SSL
+english.AdvDatabase=Database (0-15):
+english.AdvUser=User (optional, Redis 6 ACL):
+english.AdvPassword=Password (optional):
+english.AdvOptPageTitle=Advanced options
+english.AdvOptPageSubtitle=Write and update behavior
+english.AdvOptPageDesc=Defaults are fine for most users. Tick SSL for a rediss server; the write-mode and update settings are explained in the README.
+english.AdvUseSsl=Use SSL/TLS for the connection
+english.AdvUpdateCheck=Check for a newer RedisExcel release (background)
+english.SummaryPageTitle=Your settings
+english.SummaryPageSubtitle=Review the connection that will be written to RedisExcel.json
+english.SummaryIntro=These values will be saved to RedisExcel.json in the install folder.
+english.SummaryLabel=Connection
+english.SummaryMode=Mode
+english.SummarySimple=Simple
+english.SummaryAdvanced=Advanced
 
 spanish.ServerPageTitle=Servidor Redis
 spanish.ServerPageSubtitle=¿Desea instalar ahora un servidor compatible con Redis?
@@ -121,10 +146,12 @@ spanish.ConnHost=Host (o host:puerto):
 spanish.ConnPort=Puerto:
 spanish.ConnUser=Usuario (opcional, para ACL de Redis 6):
 spanish.ConnPassword=Contraseña (opcional):
+spanish.ConnDatabase=Base de datos (0-15, predeterminado 0):
 spanish.OptionsPageTitle=Comprobaciones
 spanish.OptionsPageSubtitle=Casi listo
 spanish.OptionsPageDesc=El instalador prueba la conexión al terminar. Opcionalmente abre un libro de Excel de ejemplo que muestra que funciona.
 spanish.OptionsOpenExcel=Abrir un libro de RedisExcel de ejemplo al final
+spanish.OptionsUseSsl=Usar SSL/TLS para la conexion
 spanish.TaskConfigDesc=Crear RedisExcel.json en la carpeta de instalación (ajustes de host)
 spanish.TaskNlogDesc=Crear NLog.config (escribir un archivo de registro junto al complemento)
 spanish.TaskAutoLoadDesc=Registrar el complemento para que Excel lo cargue automáticamente (recomendado)
@@ -148,6 +175,29 @@ spanish.ServerNameWslRedis=Redis (WSL)
 spanish.ServerNameWslValkey=Valkey (WSL)
 spanish.ServerNameMemurai=Memurai
 spanish.ServerNameGeneric=el servidor
+spanish.ModePageTitle=Modo de instalacion
+spanish.ModePageSubtitle=Configuracion simple o avanzada?
+spanish.ModePageDesc=Simple solo pide la direccion del servidor. Avanzada permite definir la base de datos, SSL/TLS, el modo de escritura y los ajustes de tiempo real. Siempre puede editar RedisExcel.json despues (o ejecutar Validate-Config.cmd).
+spanish.ModeSimple=Simple - solo la direccion de Redis (recomendado)
+spanish.ModeAdvanced=Avanzada - base de datos, SSL, modo de escritura y ajustes
+spanish.AdvPageTitle=Conexion avanzada
+spanish.AdvPageDesc=Este es todo su RedisExcel.json, listo para editar: cada clave viene con su valor predeterminado y un comentario corto. El complemento acepta comentarios //, puede dejarlos. Cambie hosts, alias, modo de escritura, ConflationMs, AsyncWrites: todo esta aqui.
+spanish.AdvPageSubtitle=Base de datos, credenciales y SSL
+spanish.AdvDatabase=Base de datos (0-15):
+spanish.AdvUser=Usuario (opcional, ACL de Redis 6):
+spanish.AdvPassword=Contrasena (opcional):
+spanish.AdvOptPageTitle=Opciones avanzadas
+spanish.AdvOptPageSubtitle=Comportamiento de escritura y actualizacion
+spanish.AdvOptPageDesc=Los valores predeterminados sirven para casi todos. Marque SSL si su servidor es rediss; el modo de escritura y los ajustes de actualizacion se explican en el README.
+spanish.AdvUseSsl=Usar SSL/TLS para la conexion
+spanish.AdvUpdateCheck=Buscar una version mas reciente de RedisExcel (en segundo plano)
+spanish.SummaryPageTitle=Sus ajustes
+spanish.SummaryPageSubtitle=Revise la conexion que se guardara en RedisExcel.json
+spanish.SummaryIntro=Estos valores se guardaran en RedisExcel.json en la carpeta de instalacion.
+spanish.SummaryLabel=Conexion
+spanish.SummaryMode=Modo
+spanish.SummarySimple=Simple
+spanish.SummaryAdvanced=Avanzada
 
 brazilianportuguese.ServerPageTitle=Servidor Redis
 brazilianportuguese.ServerPageSubtitle=Deseja instalar agora um servidor compatível com o Redis?
@@ -165,10 +215,12 @@ brazilianportuguese.ConnHost=Host (ou host:porta):
 brazilianportuguese.ConnPort=Porta:
 brazilianportuguese.ConnUser=Usuário (opcional, para ACL do Redis 6):
 brazilianportuguese.ConnPassword=Senha (opcional):
+brazilianportuguese.ConnDatabase=Banco (0-15, padrao 0):
 brazilianportuguese.OptionsPageTitle=Verificações
 brazilianportuguese.OptionsPageSubtitle=Quase pronto
 brazilianportuguese.OptionsPageDesc=O instalador testa a conexão ao terminar. Opcionalmente abre uma planilha de exemplo do RedisExcel mostrando que funcionou.
 brazilianportuguese.OptionsOpenExcel=Abrir uma planilha de exemplo do RedisExcel no final
+brazilianportuguese.OptionsUseSsl=Usar SSL/TLS na conexao
 brazilianportuguese.TaskConfigDesc=Criar RedisExcel.json na pasta de instalação (configuração de host)
 brazilianportuguese.TaskNlogDesc=Criar NLog.config (gravar um arquivo de log junto ao add-in)
 brazilianportuguese.TaskAutoLoadDesc=Registrar o add-in para o Excel carregá-lo automaticamente (recomendado)
@@ -192,6 +244,29 @@ brazilianportuguese.ServerNameWslRedis=Redis (WSL)
 brazilianportuguese.ServerNameWslValkey=Valkey (WSL)
 brazilianportuguese.ServerNameMemurai=Memurai
 brazilianportuguese.ServerNameGeneric=o servidor
+brazilianportuguese.ModePageTitle=Modo de instalacao
+brazilianportuguese.ModePageSubtitle=Instalacao simples ou avancada?
+brazilianportuguese.ModePageDesc=O Simples pede apenas o endereco do servidor. O Avancado permite definir o banco, SSL/TLS, o modo de escrita e os ajustes de tempo real. Voce pode editar o RedisExcel.json depois (ou rodar o Validate-Config.cmd).
+brazilianportuguese.ModeSimple=Simples - apenas o endereco do Redis (recomendado)
+brazilianportuguese.ModeAdvanced=Avancado - banco, SSL, modo de escrita e ajustes
+brazilianportuguese.AdvPageTitle=Conexao avancada
+brazilianportuguese.AdvPageDesc=Este e o seu RedisExcel.json completo, pronto para editar: cada chave ja vem com o valor padrao e um comentario curto. O add-in aceita comentarios //, pode deixa-los. Ajuste hosts, aliases, modo de escrita, ConflationMs, AsyncWrites: tudo esta aqui.
+brazilianportuguese.AdvPageSubtitle=Banco, credenciais e SSL
+brazilianportuguese.AdvDatabase=Banco (0-15):
+brazilianportuguese.AdvUser=Usuario (opcional, ACL do Redis 6):
+brazilianportuguese.AdvPassword=Senha (opcional):
+brazilianportuguese.AdvOptPageTitle=Opcoes avancadas
+brazilianportuguese.AdvOptPageSubtitle=Comportamento de escrita e atualizacao
+brazilianportuguese.AdvOptPageDesc=Os padroes servem para a maioria. Marque SSL se o servidor for rediss; o modo de escrita e os ajustes de atualizacao estao explicados no README.
+brazilianportuguese.AdvUseSsl=Usar SSL/TLS na conexao
+brazilianportuguese.AdvUpdateCheck=Verificar se ha uma versao mais nova do RedisExcel (em segundo plano)
+brazilianportuguese.SummaryPageTitle=Suas configuracoes
+brazilianportuguese.SummaryPageSubtitle=Confira a conexao que sera gravada no RedisExcel.json
+brazilianportuguese.SummaryIntro=Estes valores serao salvos no RedisExcel.json na pasta de instalacao.
+brazilianportuguese.SummaryLabel=Conexao
+brazilianportuguese.SummaryMode=Modo
+brazilianportuguese.SummarySimple=Simples
+brazilianportuguese.SummaryAdvanced=Avancado
 
 [Tasks]
 Name: "addinconfig"; Description: "{cm:TaskConfigDesc}"; GroupDescription: "{cm:GroupConfig}"
@@ -232,7 +307,12 @@ var
   Is64BitOffice: Boolean;
   ConnPage: TInputQueryWizardPage;
   ServerPage: TInputOptionWizardPage;
+  ModePage: TInputOptionWizardPage;
+  AdvConfigPage: TWizardPage;
+  AdvMemo: TNewMemo;
   OptionsPage: TInputOptionWizardPage;
+  SummaryPage: TOutputMsgMemoWizardPage;
+  AdvSeeded: Boolean;
   ServerInstallCode: Integer;
   TestOk: Boolean;
   InstallCompleted: Boolean;
@@ -351,11 +431,25 @@ begin
   Result := ExpandConstant('{param:' + Param + '|' + Default + '}');
 end;
 
+function BoolToStr(b: Boolean): String;
+begin
+  if b then Result := 'true' else Result := 'false';
+end;
+
 procedure InitializeWizard();
 begin
   Is64BitOffice := Detect64BitOffice();
 
-  ServerPage := CreateInputOptionPage(wpSelectTasks,
+  ModePage := CreateInputOptionPage(wpSelectTasks,
+    ExpandConstant('{cm:ModePageTitle}'),
+    ExpandConstant('{cm:ModePageSubtitle}'),
+    ExpandConstant('{cm:ModePageDesc}'),
+    True, False);
+  ModePage.Add(ExpandConstant('{cm:ModeSimple}'));
+  ModePage.Add(ExpandConstant('{cm:ModeAdvanced}'));
+  ModePage.SelectedValueIndex := 0;
+
+  ServerPage := CreateInputOptionPage(ModePage.ID,
     ExpandConstant('{cm:ServerPageTitle}'),
     ExpandConstant('{cm:ServerPageSubtitle}'),
     ExpandConstant('{cm:ServerPageDesc}'),
@@ -368,32 +462,65 @@ begin
   ServerPage.Add(ExpandConstant('{cm:ServerMemurai}'));
   ServerPage.SelectedValueIndex := 0;
 
+  // Basic connection page (both modes): host, port, password.
   ConnPage := CreateInputQueryPage(ServerPage.ID,
     ExpandConstant('{cm:ConnPageTitle}'),
     ExpandConstant('{cm:ConnPageSubtitle}'),
     ExpandConstant('{cm:ConnPageDesc}'));
   ConnPage.Add(ExpandConstant('{cm:ConnHost}'), False);
   ConnPage.Add(ExpandConstant('{cm:ConnPort}'), False);
-  ConnPage.Add(ExpandConstant('{cm:ConnUser}'), False);
   ConnPage.Add(ExpandConstant('{cm:ConnPassword}'), True);
   ConnPage.Values[0] := ParamOr('HOST', 'localhost');
   ConnPage.Values[1] := ParamOr('PORT', '6379');
-  ConnPage.Values[2] := ParamOr('USER', '');
-  ConnPage.Values[3] := ParamOr('PASSWORD', '');
+  ConnPage.Values[2] := ParamOr('PASSWORD', '');
 
-  OptionsPage := CreateInputOptionPage(ConnPage.ID,
+  // Advanced mode: a single editable page with the whole RedisExcel.json
+  // (pre-filled with comments explaining every key). One screen, everything.
+  AdvConfigPage := CreateCustomPage(ConnPage.ID,
+    ExpandConstant('{cm:AdvPageTitle}'),
+    ExpandConstant('{cm:AdvPageDesc}'));
+  AdvMemo := TNewMemo.Create(AdvConfigPage);
+  AdvMemo.Parent := AdvConfigPage.Surface;
+  AdvMemo.Left := 0;
+  AdvMemo.Top := 0;
+  AdvMemo.Width := AdvConfigPage.SurfaceWidth;
+  AdvMemo.Height := AdvConfigPage.SurfaceHeight;
+  AdvMemo.ScrollBars := ssVertical;
+  AdvMemo.WordWrap := False;
+  AdvMemo.Font.Name := 'Consolas';
+  AdvMemo.Font.Size := 9;
+
+  OptionsPage := CreateInputOptionPage(AdvConfigPage.ID,
     ExpandConstant('{cm:OptionsPageTitle}'),
     ExpandConstant('{cm:OptionsPageSubtitle}'),
     ExpandConstant('{cm:OptionsPageDesc}'),
     False, False);
   OptionsPage.Add(ExpandConstant('{cm:OptionsOpenExcel}'));
   OptionsPage.Values[0] := (ParamOr('OPENEXCEL', '0') = '1');
+
+  // Read-only summary of what will be written to RedisExcel.json.
+  SummaryPage := CreateOutputMsgMemoPage(OptionsPage.ID,
+    ExpandConstant('{cm:SummaryPageTitle}'),
+    ExpandConstant('{cm:SummaryPageSubtitle}'),
+    ExpandConstant('{cm:SummaryIntro}'), '');
+end;
+
+function IsAdvanced(): Boolean;
+begin
+  if WizardSilent() then
+    Result := (Lowercase(ParamOr('MODE', 'simple')) = 'advanced')
+  else
+    Result := (ModePage <> nil) and (ModePage.SelectedValueIndex = 1);
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := WizardSilent() and
-            ((PageID = ServerPage.ID) or (PageID = ConnPage.ID) or (PageID = OptionsPage.ID));
+  if WizardSilent() then
+    Result := (PageID = ModePage.ID) or (PageID = ServerPage.ID) or (PageID = ConnPage.ID) or
+              (PageID = AdvConfigPage.ID) or (PageID = OptionsPage.ID)
+  else
+    // In simple mode the advanced config page is hidden.
+    Result := (not IsAdvanced()) and (PageID = AdvConfigPage.ID);
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
@@ -407,24 +534,41 @@ begin
 end;
 
 // ---- Values ---------------------------------------------------------------
-function FieldValue(Index: Integer; const ParamName, Default: String): String;
+// Reads a field from the page that is visible in the current mode.
+function Host(): String;
 begin
   if (not WizardSilent()) and (ConnPage <> nil) then
-    Result := Trim(ConnPage.Values[Index])
+    Result := Trim(ConnPage.Values[0])
   else
-    Result := ParamOr(ParamName, Default);
+    Result := ParamOr('HOST', 'localhost');
 end;
 
+function PortValue(): String;
+begin
+  if (not WizardSilent()) and (ConnPage <> nil) then
+    Result := Trim(ConnPage.Values[1])
+  else
+    Result := ParamOr('PORT', '6379');
+end;
+
+function PasswordValue(): String;
+begin
+  if (not WizardSilent()) and (ConnPage <> nil) then
+    Result := Trim(ConnPage.Values[2])
+  else
+    Result := ParamOr('PASSWORD', '');
+end;
+
+// ---- Simple-mode host string (advanced mode edits the JSON directly) ------
 function HostString(): String;
 var
-  H, Port, User, Pw: String;
+  H, Port, Pw: String;
 begin
-  H := FieldValue(0, 'HOST', 'localhost');
-  Port := FieldValue(1, 'PORT', '6379');
-  User := FieldValue(2, 'USER', '');
-  Pw := FieldValue(3, 'PASSWORD', '');
+  H := Host();
+  Port := PortValue();
+  Pw := PasswordValue();
   if (Pos(':', H) = 0) and (Port <> '') then Result := H + ':' + Port else Result := H;
-  if User <> '' then Result := Result + ',user=' + User;
+  Result := Result + ',defaultDatabase=0,ssl=False,abortConnect=False';
   if Pw <> '' then Result := Result + ',password=' + Pw;
 end;
 
@@ -453,7 +597,9 @@ begin
     Result := (OptionsPage <> nil) and OptionsPage.Values[0];
 end;
 
-function ConfigJson(): String;
+// The generated config for SIMPLE mode: minimal, with the code's defaults
+// spelled out. Advanced mode uses the editable text from the wizard.
+function SimpleConfigJson(): String;
 var HostLine: String;
 begin
   HostLine := HostString();
@@ -475,10 +621,70 @@ begin
     '  "UpdateCheck": true,' + #13#10 +
     '  "SkipRepeatedMessages": true,' + #13#10 +
     '  "CoalesceRealtimeUpdates": true,' + #13#10 +
+    '  "ConflationMs": 200,' + #13#10 +
     '  "PublishDedupCacheSize": 10000,' + #13#10 +
     '  "SyncWrite": "fireforget",' + #13#10 +
     '  "AsyncWrites": false' + #13#10 +
     '}' + #13#10;
+end;
+
+// The fully commented template the advanced page starts from. It exposes every
+// key the add-in understands, with a one-line explanation each, so the user
+// sees and can tune everything on a single screen. The loader accepts // and
+// /* */ comments, so this stays valid as-is.
+function AdvancedTemplate(): String;
+var
+  H, Port, Pw: String;
+begin
+  H := Host();
+  Port := PortValue();
+  Pw := PasswordValue();
+  if (Pos(':', H) = 0) and (Port <> '') then H := H + ':' + Port;
+  H := H + ',defaultDatabase=0,ssl=False,abortConnect=False';
+  if Pw <> '' then H := H + ',password=' + Pw;
+  Result :=
+    '{' + #13#10 +
+    '  // RedisExcel.json - comments (// and /* */) are allowed.' + #13#10 +
+    '  "RTD": {' + #13#10 +
+    '    // Default host for =RTD("RedisRtd",...). A full connection string works.' + #13#10 +
+    '    "host": "' + H + '",' + #13#10 +
+    '    "timeout": 1000,                        // connect/sync timeout (ms)' + #13#10 +
+    '    "RedisUpdateRateMs": 1000,              // how often the poll timer reads Redis' + #13#10 +
+    '    "ExcelUpdateRateMs": 100,               // how often dirty values are flushed to Excel' + #13#10 +
+    '    "ExcelUpdateStyle": "Automatic",        // Timer | Realtime | Automatic' + #13#10 +
+    '    "MessageCounterThreshold": 10000,       // Automatic: msgs/sec above which it switches to timer; <=0 disables' + #13#10 +
+    '    "UseGetMultiple": true                  // batch GET topics into one MGET per tick' + #13#10 +
+    '  },' + #13#10 +
+    '  "UDF": {' + #13#10 +
+    '    // Default host for the =RedisUDF... functions.' + #13#10 +
+    '    "host": "' + H + '",' + #13#10 +
+    '    "timeout": 1000' + #13#10 +
+    '  },' + #13#10 +
+    '  // Named host aliases usable as the host argument, e.g. "prod".' + #13#10 +
+    '  "Servers": {' + #13#10 +
+    '    // "prod": "localhost:6379,defaultDatabase=0"' + #13#10 +
+    '  },' + #13#10 +
+    '  "UpdateCheck": true,                      // background check for a newer release' + #13#10 +
+    '  "SkipRepeatedMessages": true,             // skip identical consecutive SUB/GET payloads (ordinal)' + #13#10 +
+    '  "CoalesceRealtimeUpdates": true,          // real-time: at most one push per window (superseded by ConflationMs)' + #13#10 +
+    '  "ConflationMs": 200,                      // explicit real-time window in ms (0 = off; capped at 3600000)' + #13#10 +
+    '  "PublishDedupCacheSize": 10000,           // LRU size for PublishIfChanged' + #13#10 +
+    '  "SyncWrite": "fireforget",                // sync | fireforget | fireforget-all' + #13#10 +
+    '  "AsyncWrites": false                      // dispatch writes off the Excel thread (Observe)' + #13#10 +
+    '}' + #13#10;
+end;
+
+function ConfigJson(): String;
+begin
+  if IsAdvanced() then
+  begin
+    if (not WizardSilent()) and (AdvMemo <> nil) then
+      Result := AdvMemo.Lines.Text
+    else
+      Result := AdvancedTemplate();
+  end
+  else
+    Result := SimpleConfigJson();
 end;
 
 // ---- Run PowerShell helpers ----------------------------------------------
@@ -520,7 +726,7 @@ begin
   ExtractTemporaryFile('install-server.ps1');
   Script := ExpandConstant('{tmp}\install-server.ps1');
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Kind ' + Kind +
-            ' -Port ' + FieldValue(1, 'PORT', '6379');
+            ' -Port ' + PortValue();
   if Exec('powershell.exe', Params, ExpandConstant('{tmp}'), SW_SHOW, ewWaitUntilTerminated, Code) then
     ServerInstallCode := Code
   else
@@ -593,7 +799,26 @@ begin
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
+var
+  Lines, ModeText: String;
 begin
+  // Seed the advanced editor once, from the template (only the first visit).
+  if (CurPageID = AdvConfigPage.ID) and (not WizardSilent()) and (not AdvSeeded) then
+  begin
+    AdvMemo.Lines.Text := AdvancedTemplate();
+    AdvSeeded := True;
+  end;
+
+  if (CurPageID = SummaryPage.ID) and (not WizardSilent()) then
+  begin
+    if IsAdvanced() then ModeText := ExpandConstant('{cm:SummaryAdvanced}')
+    else ModeText := ExpandConstant('{cm:SummarySimple}');
+    Lines :=
+      ExpandConstant('{cm:SummaryLabel}') + ':  ' + HostString() + #13#10 +
+      ExpandConstant('{cm:SummaryMode}') + ':  ' + ModeText;
+    SummaryPage.RichEditViewer.Lines.Text := Lines;
+  end;
+
   if (CurPageID = wpFinished) and (not WizardSilent()) then
     WizardForm.FinishedLabel.Caption :=
       FmtMessage(ExpandConstant('{cm:FinishedText}'), ['', ExpandConstant('{app}')]);

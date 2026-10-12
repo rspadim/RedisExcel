@@ -75,16 +75,48 @@ Line ''
 
 # ---- Parse (accept // and /* */ comments like the add-in) ------------------
 $raw = Get-Content -LiteralPath $Config -Raw
-# Strip comments (naive but fine for a hand-written config; keeps strings intact
-# by only removing // that are not inside quotes is overkill here - we just try
-# the raw text first, then a comment-stripped copy).
+
+# Remove comments WITHOUT touching // inside strings (so "redis://host" stays).
+function Strip-JsonComments([string]$text) {
+  $sb = New-Object System.Text.StringBuilder
+  $inString = $false
+  $inLine = $false
+  $inBlock = $false
+  $i = 0
+  $n = $text.Length
+  while ($i -lt $n) {
+    $c = $text[$i]
+    $c2 = if ($i + 1 -lt $n) { $text[$i + 1] } else { [char]0 }
+    if ($inLine) {
+      if ($c -eq "`n") { $inLine = $false; [void]$sb.Append($c) }
+      $i++
+      continue
+    }
+    if ($inBlock) {
+      if ($c -eq '*' -and $c2 -eq '/') { $inBlock = $false; $i += 2 } else { $i++ }
+      continue
+    }
+    if ($inString) {
+      [void]$sb.Append($c)
+      if ($c -eq '\') { if ($i + 1 -lt $n) { [void]$sb.Append($c2); $i += 2; continue } }
+      elseif ($c -eq '"') { $inString = $false }
+      $i++
+      continue
+    }
+    if ($c -eq '"') { $inString = $true; [void]$sb.Append($c); $i++; continue }
+    if ($c -eq '/' -and $c2 -eq '/') { $inLine = $true; $i += 2; continue }
+    if ($c -eq '/' -and $c2 -eq '*') { $inBlock = $true; $i += 2; continue }
+    [void]$sb.Append($c)
+    $i++
+  }
+  return $sb.ToString()
+}
+
 $json = $null
 try {
   $json = $raw | ConvertFrom-Json
 } catch {
-  $stripped = [regex]::Replace($raw, '/\*.*?\*/', '', 'Singleline')
-  $stripped = [regex]::Replace($stripped, '(?m)^\s*//.*$', '')
-  $stripped = [regex]::Replace($stripped, '(?m)(?<=[,\[{])\s*//.*$', '')
+  $stripped = Strip-JsonComments $raw
   try { $json = $stripped | ConvertFrom-Json }
   catch {
     Line 'FAIL: the file is not valid JSON.'

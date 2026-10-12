@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.5.2
+
+### Changed
+
+- **Installer wizard: Simple vs Advanced mode.** The wizard now first asks for a
+  mode. **Simple** (default) asks only for the Redis address and writes a
+  ready-to-use `RedisExcel.json`. **Advanced** shows a single editable page with
+  the **whole `RedisExcel.json`, pre-filled and commented** (every key with its
+  default and a one-line explanation): connection string, timeouts, the RTD/Excel
+  rates, `ExcelUpdateStyle`, `MessageCounterThreshold`, `UseGetMultiple`,
+  `Servers` aliases, `UpdateCheck`, `SkipRepeatedMessages`,
+  `CoalesceRealtimeUpdates`, `ConflationMs`, `PublishDedupCacheSize`, `SyncWrite`
+  and `AsyncWrites`. A final read-only page summarizes what will be written.
+- The generated `host` now spells out the code's `DefaultHost` shape:
+  `host:port,defaultDatabase=0,ssl=False,abortConnect=False` (plus `user=` /
+  `password=` when given); the default `ConflationMs` is **200**.
+- The **config validator** (`scripts\validate-config.ps1`) strips `//` and
+  `/* */` comments string-aware, so it accepts the commented template (and any
+  `redis://user:pass@host` value) without corrupting it.
+
 ## v1.5.1
 
 ### Added
