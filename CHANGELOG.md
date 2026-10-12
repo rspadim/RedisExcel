@@ -55,6 +55,11 @@
   the loader silently reverted them to `Automatic`/`fireforget`. Validation now
   runs under the invariant culture and the two patterns use explicit ASCII
   classes.
+- **Same-process reload tears down live RTD servers:** `AutoOpen` reset the
+  runtime and the UDF state but not the `RedisRtd` instances, so a server Excel
+  did not release (no `ServerTerminate`) kept its three timers and topic
+  registry alive across a reload (a running `System.Timers.Timer` roots its
+  target). `RedisRtd.ResetAfterAddInReload()` now tears every live instance down.
 
 ### Changed
 
