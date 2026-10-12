@@ -441,16 +441,20 @@ namespace RedisExcel.Tests
 
         [Fact]
         public void ValidateConfiguration_ByPath_ReportsOkOrProblems()
-        {            using (var temp = new TempFiles())
+        {
+            using (var temp = new TempFiles())
             {
                 string good = temp.Write("good.json", "{\"SyncWrite\":\"sync\"}");
-                string bad = temp.Write("bad.json", "{\"ConflationMs\":9999999}");
+                string bad = temp.Write("bad.json", "{\"ConflationMs\":\"soon\"}");
 
                 Assert.StartsWith("OK", AppConfig.ValidateConfiguration(good));
                 string report = AppConfig.ValidateConfiguration(bad);
                 Assert.StartsWith("Error:", report);
                 Assert.Contains("ConflationMs", report);
-                Assert.Contains("maximum", report);
+                // An out-of-range ConflationMs is VALID (Sanitize clamps it); only a
+                // wrong type is a problem.
+                string clamped = temp.Write("clamped.json", "{\"ConflationMs\":9999999}");
+                Assert.StartsWith("OK", AppConfig.ValidateConfiguration(clamped));
             }
         }
 

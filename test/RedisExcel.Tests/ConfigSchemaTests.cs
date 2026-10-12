@@ -124,18 +124,22 @@ namespace RedisExcel.Tests
         [InlineData(0)]
         [InlineData(200)]
         [InlineData(3600000)]
-        public void ConflationMs_AcceptsDocumentedRange(int value)
+        [InlineData(-1)]                  // Sanitize clamps to 0
+        [InlineData(2147483647)]          // int.MaxValue accepted; Sanitize caps to 3600000
+        public void ConflationMs_AcceptsAnyIntegerAndSanitizeClamps(int value)
         {
+            // The schema accepts any 32-bit integer (the field is int?); the value
+            // range is then CLAMPED by AppConfig.Sanitize to [0, 3600000] (the
+            // documented "capped" behaviour), so the schema must not drop it first.
             Assert.True(Accepted("{\"ConflationMs\":" + value + "}"));
         }
 
-        [Theory]
-        [InlineData(-1)]
-        [InlineData(3600001L)]
-        [InlineData(99999999999L)]
-        public void ConflationMs_RejectsOutOfRange(long value)
+        [Fact]
+        public void ConflationMs_RejectsValuesBeyondInt32()
         {
-            Assert.True(Rejected("{\"ConflationMs\":" + value + "}"));
+            // int? cannot hold more than int.MaxValue, so the schema rejects it (else
+            // the binding would overflow and discard the file).
+            Assert.True(Rejected("{\"ConflationMs\":99999999999}"));
         }
 
         [Fact]

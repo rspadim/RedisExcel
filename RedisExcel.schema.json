@@ -34,7 +34,7 @@
     "UpdateCheck": { "type": "boolean", "description": "Check GitHub for a newer release in the background." },
     "SkipRepeatedMessages": { "type": "boolean", "description": "Skip identical consecutive payloads for literal SUB and polled GET/HGET." },
     "CoalesceRealtimeUpdates": { "type": "boolean", "description": "Legacy real-time coalescing flag (superseded by an explicit ConflationMs)." },
-    "ConflationMs": { "type": "integer", "minimum": 0, "maximum": 3600000, "description": "Real-time conflation window in ms (0 = off, one push per message)." },
+    "ConflationMs": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647, "description": "Real-time conflation window in ms (0 = off, one push per message; negative clamps to 0, >3600000 caps to 3600000 via Sanitize)." },
     "PublishDedupCacheSize": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Capacity of the PublishIfChanged dedup cache (LRU)." },
     "SyncWrite": { "type": "string", "pattern": "(?i)^(sync|fireforget|fireforget-all)$", "description": "sync, fireforget or fireforget-all (case-insensitive)." },
     "AsyncWrites": { "type": "boolean", "description": "Dispatch writes through Excel-DNA async so the Excel thread never blocks." }

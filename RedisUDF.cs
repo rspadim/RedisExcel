@@ -74,6 +74,34 @@ namespace RedisExcel
 
         private static long _channelEpochBumps;
 
+        // Keys with a ChannelLatest subscribe in flight (network call not yet
+        // resolved). The epoch sweep must NOT prune one of these: deleting the
+        // entry would erase the evidence that an unsubscribe/reset raced the
+        // subscribe, and since a brand-new key's epochBefore is 0 (== a pruned,
+        // absent entry), the install re-check would wrongly pass and a ghost
+        // listener would leak. A key with a live listener is also never pruned.
+        private static readonly ConcurrentDictionary<string, int> _subscribeWatchers =
+            new ConcurrentDictionary<string, int>();
+
+        private static void BeginSubscribeWatch(string key) =>
+            _subscribeWatchers.AddOrUpdate(key, 1, (_, n) => n + 1);
+
+        private static void EndSubscribeWatch(string key)
+        {
+            while (_subscribeWatchers.TryGetValue(key, out var count))
+            {
+                if (count <= 1)
+                {
+                    if (_subscribeWatchers.TryRemove(key, out _))
+                        return;
+                }
+                else if (_subscribeWatchers.TryUpdate(key, count - 1, count))
+                {
+                    return;
+                }
+            }
+        }
+
         private static long BumpChannelEpoch(string key)
         {
             var epochs = _channelEpochs;
@@ -83,12 +111,16 @@ namespace RedisExcel
             // entry for a channel with no live listener is dead weight. The trigger
             // is a GLOBAL bump counter, not this key's epoch: with distinct channels
             // each entry stays at 1, so a per-key boundary (epoch & 1023) would
-            // never fire and the map grew without bound (audit round L). Bounded
-            // (one sweep per 1024 bumps total) and cheap.
+            // never fire and the map grew without bound (audit round L). A key with
+            // an in-flight subscribe is skipped so the sweep cannot erase the epoch
+            // a racing install still needs (audit round M). Bounded (one sweep per
+            // 1024 bumps total) and cheap.
             if ((Interlocked.Increment(ref _channelEpochBumps) & 1023) == 0)
             {
                 foreach (var kv in epochs)
                 {
+                    if (_subscribeWatchers.ContainsKey(kv.Key))
+                        continue; // a subscribe is between epochBefore and install
                     if (!_channelListeners.ContainsKey(kv.Key))
                         epochs.TryRemove(kv.Key, out _);
                 }
@@ -965,42 +997,52 @@ namespace RedisExcel
                 if (needsSubscribe)
                 {
                     var listener = new ChannelListener();
-                    // Network I/O outside the lifecycle lock.
-                    listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
-                        onMessage: message =>
-                        {
-                            lock (listener.Sync)
+                    // Mark the in-flight window so the epoch sweep cannot prune the
+                    // entry this install still checks (audit round M).
+                    BeginSubscribeWatch(key);
+                    try
+                    {
+                        // Network I/O outside the lifecycle lock.
+                        listener.Token = RedisRuntime.Subscriptions.Subscribe(host, channelStr, pattern: false,
+                            onMessage: message =>
                             {
-                                if (listener.IsClosed)
-                                    return;
-                                _latestMessages[key] = message ?? "";
-                            }
-                        }, origin: "UDF");
-                    bool installed = false;
-                    lock (LifecycleLock(key))
-                    {
-                        // Install only when no unsubscribe/reset raced the network
-                        // subscribe: an epoch change means the removal already
-                        // completed and this listener must not come back alive.
-                        if (ChannelEpoch(key) == epochBefore && _channelListeners.TryAdd(key, listener))
-                            installed = true;
+                                lock (listener.Sync)
+                                {
+                                    if (listener.IsClosed)
+                                        return;
+                                    _latestMessages[key] = message ?? "";
+                                }
+                            }, origin: "UDF");
+                        bool installed = false;
+                        lock (LifecycleLock(key))
+                        {
+                            // Install only when no unsubscribe/reset raced the network
+                            // subscribe: an epoch change means the removal already
+                            // completed and this listener must not come back alive.
+                            if (ChannelEpoch(key) == epochBefore && _channelListeners.TryAdd(key, listener))
+                                installed = true;
+                        }
+                        if (installed)
+                        {
+                            // A freshly registered listener never saw the currently
+                            // remembered payload; drop the marker so the next publish
+                            // is delivered even when the payload did not change.
+                            lock (PublishLock(key))
+                                _lastPublishedMessages.Remove(key);
+                        }
+                        else
+                        {
+                            // Lost a race (another thread registered first) or an
+                            // unsubscribe/reset won: close before disposing so this
+                            // losing listener never writes.
+                            lock (listener.Sync)
+                                listener.Close();
+                            listener.Token.Dispose();
+                        }
                     }
-                    if (installed)
+                    finally
                     {
-                        // A freshly registered listener never saw the currently
-                        // remembered payload; drop the marker so the next publish
-                        // is delivered even when the payload did not change.
-                        lock (PublishLock(key))
-                            _lastPublishedMessages.Remove(key);
-                    }
-                    else
-                    {
-                        // Lost a race (another thread registered first) or an
-                        // unsubscribe/reset won: close before disposing so this
-                        // losing listener never writes.
-                        lock (listener.Sync)
-                            listener.Close();
-                        listener.Token.Dispose();
+                        EndSubscribeWatch(key);
                     }
                 }
                 var response = _latestMessages.TryGetValue(key, out var latest) ? latest : "(null)";
