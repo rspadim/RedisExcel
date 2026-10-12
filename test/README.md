@@ -39,7 +39,7 @@ dotnet run --project test\SmokeTests -c Release -- "127.0.0.1:6379,abortConnect=
 Covers the ref-counted Pub/Sub behavior (two listeners on one channel, the
 last-listener unsubscribe, re-subscription, duplicate suppression,
 literal/pattern independence, late joiners, double dispose, origin counters,
-argument validation) plus the concurrent dedup regression (4 x 50,000 distinct
+argument validation) plus the concurrent-dedup check (4 x 50,000 distinct
 payloads against a dedicated Redis: a disposable `redis:7-alpine` container
 with a random name on a free ephemeral port when a Linux Docker daemon is
 available, else the main host). It also drives the real `SyncWrite` modes
@@ -57,7 +57,7 @@ powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1
 ```
 
 The script builds the test workbook (`RedisExcel.Test.xlsx`), asserts UDF/RTD
-values and reproduces the Pub/Sub regression scenario (workbook copy/close and
+values and covers the multi-workbook Pub/Sub scenario (workbook copy/close and
 connection blip). It also covers the write modes (`sync`/`fireforget`/
 `fireforget-all`, async on and off) and asserts that a `...NonVolatile` write
 runs once (a worksheet recalculation must not re-send it). With `-AsyncWrites`

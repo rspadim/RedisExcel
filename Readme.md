@@ -188,8 +188,8 @@ Each parameter has a specific meaning depending on the RTD command.
 > All commands support specifying either a full connection string or a named host defined in the `RedisExcel.json` file.
 
 > A `SUB`/`PSUB` topic that cannot subscribe at connect time shows `#ERROR`
-> and is retried with a 1s..30s backoff, capped per tick (v1.2.7); polled
-> commands (`GET`/`HGET`/`HGETALL`) retry on every tick. Editing the formula
+> and is retried with a 1s..30s backoff, capped per tick; polled commands
+> (`GET`/`HGET`/`HGETALL`) retry on every tick. Editing the formula
 > re-registers the topic as well.
 
 ## 💡 Available UDF Functions
@@ -212,8 +212,8 @@ Functions to use directly in Excel cells:
 > `AsyncWrites` section below). `RedisUDFChannelPublishIfChanged` guards
 > itself: it only publishes when the payload changed since the last delivery.
 > The two JSON conversion helpers (`RedisUDFMatrixToJSON` and
-> `RedisUDFJSONToMatrix`) were
-> already non-volatile: they are pure conversions with no `IsVolatile` flag and
+> `RedisUDFJSONToMatrix`) are
+> non-volatile: they are pure conversions with no `IsVolatile` flag and
 > recalculate only when their inputs change.
 >
 > **🧊 NonVolatile write twins (24):** every write function has an additive
@@ -269,7 +269,7 @@ Functions to use directly in Excel cells:
 | RedisUDFSetRemove                | Remove a set member              | key, value, optionalHost                  |
 | RedisUDFChannelPublish/...       | Pub/Sub operations               | channel, message, optionalHost            |
 | RedisUDFChannelLatest            | Latest Pub/Sub message (subscribes on first use) | channel, optionalHost       |
-| RedisUDFChannelUnsubscribe       | Unsubscribe a channel (host argument added in v1.2.6) | channel, optionalHost   |
+| RedisUDFChannelUnsubscribe       | Unsubscribe a channel | channel, optionalHost   |
 | RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
 | RedisCheckConfigFile          | Validate RedisExcel.json against its schema | optionalFilePath (blank = the config in use) |
@@ -452,7 +452,7 @@ Keys that only appear in the sample above, with their code defaults:
 | --- | ------- | ------ |
 | `SkipRepeatedMessages` | `true` | Skips identical consecutive payloads before decoding/delivering for literal `SUB` and `GET`/`HGET` polling (unchanged `HGETALL` hashes too). Patterns (`PSUB`) are never deduplicated because channels interleave. Set it to `false` for feeds that republish the same value as a liveness signal. |
 | `CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. Superseded by an explicit `ConflationMs`. |
-| `ConflationMs` | *(unset)* | Explicit real-time conflation window in milliseconds: while a topic keeps changing, Excel is updated at most once per window with the latest value (`0` = off, one push per message; capped at 3600000). When unset, `CoalesceRealtimeUpdates` decides as before, so existing files keep their behaviour. A window below ~50-100 ms barely helps because the flush rides the Excel tick. |
+| `ConflationMs` | *(unset)* | Explicit real-time conflation window in milliseconds: while a topic keeps changing, Excel is updated at most once per window with the latest value (`0` = off, one push per message; capped at 3600000). When unset, `CoalesceRealtimeUpdates` decides. A window below ~50-100 ms barely helps because the flush rides the Excel tick. |
 | `MessageCounterThreshold` | `10000` | `Automatic` `ExcelUpdateStyle` burst threshold: above this many messages in the last second, real-time delivery is disabled and the Excel tick flushes dirty values; the 1s tick re-enables it when the rate drops. `<= 0` disables the switch. The sample's `1000` is just a choice - the code default is `10000`. |
 | `ExcelUpdateStyle` | `"Automatic"` | `Automatic`, `Timer` or `Realtime`. `Timer` never pushes per message (only the Excel tick flushes); `Realtime` always pushes; `Automatic` starts real-time and switches at the threshold. An undefined/unknown value falls back to `Automatic`. |
 | `UseGetMultiple` | `true` | Batches RTD `GET` topics of a host into a single `MGET` per polling tick. `false` polls each `GET` key in the per-host pipeline with `HGET`/`HGETALL` instead. |
@@ -472,7 +472,7 @@ process. `SyncWrite` is case-insensitive; unknown or blank values fall back to
 `SyncWrite` modes:
 
 - `"sync"` - every write blocks until Redis replies and the cell shows the real
-  result or error (the pre-v1.3.0 behavior).
+  result or error.
 - `"fireforget"` (default) - result-agnostic writes (`Set`, `SetJSON`,
   `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`, `HashSetMultiple`, list
   pushes and channel publishes) are sent with FireAndForget and return the

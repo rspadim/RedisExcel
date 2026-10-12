@@ -267,7 +267,7 @@ namespace RedisExcel
         // probability per update is low and no freeze was ever observed in
         // practice; the known mitigation (batching UpdateValue on the main thread
         // via ExcelAsyncUtil.QueueAsMacro) would rework the whole delivery path,
-        // so this stays tracked as an upstream issue instead (DESIGN-v1.4.0.md).
+        // so this stays tracked as an upstream Excel-DNA issue instead.
         public void UpdateAndSendToExcel(string data)
         {
             if (Disconnected)

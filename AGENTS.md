@@ -18,7 +18,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
    `[ExcelArgument]`/`[ExcelFunction]` attributes, RTD commands
    (`GET`, `HGET`, `HGETALL`, `SUB`, `PSUB`) and the ProgId `RedisRtd`.
    Users' spreadsheets depend on every one of them. New additive functions
-   (e.g. the v1.3.0 `...NonVolatile` twins) are fine; renames, argument
+   (e.g. the `...NonVolatile` write twins) are fine; renames, argument
    changes and removals are not.
 3. Keep the `RedisExcel.json` shape backward compatible
    (`RTD` / `UDF` / `Servers`).
@@ -43,7 +43,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | File | Responsibility |
 | --- | --- |
 | `Config.cs` | `AppConfig`: loads `RedisExcel.json` once, safe defaults, host alias resolution. |
-| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates with NJsonSchema (comments accepted) and drops bad values so one mistake no longer discards the file. |
+| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates with NJsonSchema (comments accepted) and drops bad values so one mistake does not discard the file. |
 | `RedisConnectionManager.cs` | Single place that creates/caches `ConnectionMultiplexer` per host and pool (`RtdData`/`RtdSub`/`UdfData`). |
 | `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
@@ -66,23 +66,23 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 - Subscribe/unsubscribe network handoff is serialized per registry key
   (striped gates) across channel-state generations: StackExchange.Redis reuses
   its internal per-channel subscription object, so a joiner attaching while
-  the previous generation was torn down could skip the wire SUBSCRIBE and
+  the previous generation is being torn down could skip the wire SUBSCRIBE and
   leave the channel permanently deaf. The disposed-state wait in `Subscribe`
   is bounded (after 500 yields the joiner evicts the stale mapping itself),
   and a failed rollback unsubscribe poisons the state (the next Subscribe
   builds a fresh one) instead of risking a duplicate handler registration.
 - Subscription listeners carry an origin tag ("RTD"/"UDF"): the RTD status
   counters (`RedisRTDSubscriptionCount`, `RedisRTDChannelCount`) report RTD
-  listeners only, so UDF subscriptions no longer inflate them. After the RTD
+  listeners only, so UDF subscriptions do not inflate them. After the RTD
   server shuts down the RTD status helpers return `0`/`false`.
 - RTD status functions that report the default host, update rates, the
   real-time flag and the message counter reflect the LAST started RTD server;
   the counts (connections/topics/subscriptions/channels) aggregate across
   instances.
 - StackExchange.Redis re-subscribes channels automatically after a reconnect;
-  no custom resubscribe code is needed (verified live during the v1.1.0 work).
+  no custom resubscribe code is needed.
 - A `SUB`/`PSUB` RTD topic that fails to subscribe at connect time shows
-  `#ERROR` and is retried with a 1s..30s backoff, capped per tick (v1.2.7);
+  `#ERROR` and is retried with a 1s..30s backoff, capped per tick;
   blank `SUB`/`PSUB` channels are rejected at `ConnectData`; polled commands
   (`GET`/`HGET`/`HGETALL`) retry on every tick.
 - RTD push model: the poll timer (`RedisUpdateRateMs`) reads values; the Excel
@@ -107,8 +107,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   pattern subscription clears the matching channels of that host - and by an
   explicit `RedisUDFChannelUnsubscribe` that removes that host/channel's local
   listener. Generic listener leaves (for example an RTD topic disconnecting)
-  do not clear the marker. So a (re)joining local subscriber is never starved
-  by a publish it did not see. In the fire-and-forget modes the marker is
+  do not clear the marker. A (re)joining local subscriber is thereby never
+  starved by a publish it did not see. The marker matches across host
+  spellings of the same endpoint (`localhost` vs `127.0.0.1`, or the same host
+  with different options): the join purge normalizes both sides to the parsed
+  host:port before comparing. In the fire-and-forget modes the marker is
   recorded without a confirmed delivery (an external subscriber joining later
   can miss an unchanged payload until it changes); local listener (re)joins
   still clear it. The cache is safe under concurrent recalculation and
@@ -134,10 +137,10 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   `IsVolatile`): Excel evaluates it only on entry and when an argument cell
   changes - `F9`/edits do not re-run it, `Ctrl+Alt+F9` (full recalculation)
   does. Reads have no twins (`ChannelLatest` must refresh by itself), and the
-  pure JSON conversions (`RedisUDFMatrixToJSON`/`RedisUDFJSONToMatrix`) were
-  already non-volatile. Keep a reflection signature-parity test for every pair.
-- Write delivery is configurable (`SyncWrite`): `sync` blocks for every reply
-  (pre-v1.3.0 behavior); `fireforget` (default) sends result-agnostic writes
+  pure JSON conversions (`RedisUDFMatrixToJSON`/`RedisUDFJSONToMatrix`) are
+  non-volatile. Keep a reflection signature-parity test for every pair.
+- Write delivery is configurable (`SyncWrite`): `sync` blocks for every reply;
+  `fireforget` (default) sends result-agnostic writes
   (`Set`, `SetJSON`, `SetKV`/`SetKVPair`, `SetEx`, `Rename`, `HashSet`,
   `HashSetMultiple`, list pushes, channel publishes) with
   `CommandFlags.FireAndForget` and returns `OK (fire and forget)`, while
@@ -164,9 +167,9 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   duplicate `Subscribe` on the same observable never re-enqueues the write and
   still receives the queued result (one-shot guard). No
   thread-pool thread is held per pending write: the queue continuation delivers
-  `OnNext`/`OnCompleted`, so a large same-host burst no longer throttles the
-  pool (the old classic `ExcelAsyncUtil.Run` dispatch blocked one pool thread
-  per queued item). The async identity is the calling cell + resolved host +
+  `OnNext`/`OnCompleted`, so a large same-host burst cannot throttle the
+  pool (a classic per-item pool-thread dispatch would block one thread per
+  queued item). The async identity is the calling cell + resolved host +
   the UDF's own arguments (the cell reference is structurally equal across the
   completed re-call), so different cells never share one call and an argument
   change dispatches a new write. Repeated evaluations with unchanged arguments
@@ -188,17 +191,20 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   registration is logged instead of aborting `AutoOpen`.
 - Connection counters report live multiplexers per pool only (closed/failed
   entries are not counted; the RTD connection count is `RtdData` + `RtdSub`
-  only), and shutdown no longer blocks on closing connections.
+  only), and shutdown does not block on closing connections.
 - Cached multiplexer eviction (past the 512-entry cap) vetoes hosts with live
   subscription listeners (`RedisConnectionManager.SetEvictionProtection` wired
   to `RedisSubscriptionManager.HasActiveSubscribers`), reclaims entries whose
   Lazy factory never materialized, and invalidates the cached
   `IDatabase`/`ISubscriber` wrappers of the evicted multiplexer so later calls
   rebuild instead of throwing `ObjectDisposedException` forever.
-- A connect failure is memoized for 2 s per (host, pool): a burst of `SUB`
-  topics or volatile reads against a dead host pays one connect attempt
-  instead of N x ConnectTimeout; a successful connect clears the memo, and the
-  retry loops/recalculations recover after the window.
+- A connect-failure memo self-extends only on a real new attempt: the
+  fast-fail skip does not refresh the timestamp, so a host polled faster than
+  the 2 s window still retries once the window expires. A burst of `SUB`
+  topics or volatile reads against a dead host pays one connect attempt instead
+  of N x ConnectTimeout; a successful connect clears the memo, and the retry
+  loops/recalculations recover after the window. Eviction clears the memo and
+  the idle-down clock of the evicted host.
 - Every pipelined batch wait is bounded (`RedisUDF.WaitBounded` with the
   configured response timeout + 500 ms): an orphaned batch task (multiplexer
   disposed mid-execute) surfaces as a timeout instead of stalling a timer or
@@ -208,8 +214,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   changing is pushed to Excel at most once per window with the latest value
   (latest wins), instead of one push per message. The root `ConflationMs`
   (ms, `0` = off, capped at 3600000) is the explicit window; when it is absent
-  the legacy boolean decides - `true` = the Excel tick interval (the pre-existing
-  behaviour), `false` = per-message. This is the main lever against screen
+  the boolean decides - `true` = the Excel tick interval, `false` = per-message.
+  This is the main lever against screen
   flicker and the recalculation cascade of dependent formulas on fast feeds; a
   window below ~50-100 ms barely helps because the flush rides the Excel tick.
 - `RedisRuntime.ResetAfterAddInReload` supports a same-process add-in reload
@@ -267,12 +273,14 @@ Redis `ClientName` for diagnostics (shown as `dev` for local builds). On a tag i
 also: verifies the CHANGELOG top heading matches the tag (anchored, so a short
 tag cannot pass against a longer heading), asserts each of the five release
 assets exists (an upload with `if-no-files-found: error` only fails when the whole
-set is empty), and uses that CHANGELOG section as the release body. The smoke
-step retries once (2 attempts, 3s apart) and the quick liveness step up to three
-times (5s apart): a shared runner can stall the whole process or trip a
-documented best-effort race on infrastructure noise, and the bounds themselves
-are unchanged, so a real regression fails every attempt. The unit step has no
-retry (a genuine unit regression cannot be masked).
+set is empty), and uses that CHANGELOG section as the release body. The release
+job checks out the repository so it can read `CHANGELOG.md` (the checkout runs
+before the artifact download so it cannot wipe the downloaded assets).
+The smoke step retries once (2 attempts, 3s apart) and the quick liveness step up
+to three times (5s apart): a shared runner can stall the whole process or trip a
+best-effort race on infrastructure noise, and the bounds themselves are
+unchanged, so a real regression fails every attempt. The unit step has no
+retry (a unit regression cannot be masked).
 
 ## Tests
 
@@ -312,7 +320,7 @@ The unit, smoke, load and liveness test projects compile the production
 sources directly (linked `Compile` items), so a new production `.cs` needed by
 tests must be added to their `Compile` lists; a unit parity test pins the unit
 project's list (every top-level source except the intentionally excluded
-`RedisRtd.cs`). `dotnet test` no longer builds or packs the
+`RedisRtd.cs`). `dotnet test` does not build or pack the
 add-in; CI builds it with msbuild.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
@@ -323,7 +331,7 @@ dotnet run --project test\SmokeTests -c Release -- "127.0.0.1:6379,abortConnect=
 
 Covers the ref-counted Pub/Sub behavior (two listeners on one channel, the
 last-listener unsubscribe, re-subscription, duplicate suppression, origin
-counters, argument validation) plus the concurrent-dedup regression, the real
+counters, argument validation) plus the concurrent-dedup check, the real
 `SyncWrite` modes and publish markers against Redis, a live
 `RedisUDFUpdateAvailable` check and the AV banner. See `test/README.md` for the
 full list.
@@ -335,8 +343,8 @@ powershell -ExecutionPolicy Bypass -File test\Run-ExcelE2E.ps1
 ```
 
 Uses a hidden Excel instance: loads the packed XLL, builds UDF/RTD test sheets,
-asserts values against Redis, then reproduces the reported regression
-(`v1.1.0`): opens a COPY of the workbook, publishes messages, closes the copy
+asserts values against Redis, then covers the multi-workbook case: opens a COPY
+of the workbook, publishes messages, closes the copy
 and verifies the original keeps receiving; finally kills the Pub/Sub
 connections server-side and verifies automatic recovery. It also exercises the
 write modes (`sync`/`fireforget`/`fireforget-all`, async on and off) and
@@ -490,7 +498,7 @@ These cost real debugging time — read before writing automation.
 
 ## Release
 
-Push an annotated `v*` tag (from v1.2.7 on); the CI workflow builds and
+Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs plus `NLog.config` and `RedisExcel.json` as release
 assets. Current release: `v1.5.0`; the next planned version (`v1.6.0`/`v2.0.0`)
 is not scheduled yet (see the gitignored `DESIGN-v2.0.md`).
