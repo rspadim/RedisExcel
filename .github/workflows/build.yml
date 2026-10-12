@@ -163,6 +163,12 @@ jobs:
       contents: write
 
     steps:
+      # The release job needs the repository for CHANGELOG.md (the release body).
+      # Checkout MUST run before the artifact download: its default clean would
+      # otherwise wipe the downloaded release-assets directory.
+      - name: Check out the repository
+        uses: actions/checkout@v7
+
       - name: Download release assets
         uses: actions/download-artifact@v8
         with:
