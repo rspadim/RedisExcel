@@ -60,6 +60,11 @@
   did not release (no `ServerTerminate`) kept its three timers and topic
   registry alive across a reload (a running `System.Timers.Timer` roots its
   target). `RedisRtd.ResetAfterAddInReload()` now tears every live instance down.
+- **`GetMultiple` distinguishes an empty string from a missing key:** the batch
+  read used `RedisValue.HasValue`, false for both a missing key and a key
+  holding `""`, so both returned `(null)`. It now uses `IsNull` (as the RTD
+  polled path already did): an existing empty string returns an empty cell and
+  only a missing key gets `(null)`.
 
 ### Changed
 
