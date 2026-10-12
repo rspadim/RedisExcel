@@ -991,15 +991,19 @@ namespace RedisExcel
                     if (!_channelListeners.ContainsKey(key))
                     {
                         epochBefore = ChannelEpoch(key);
+                        // Register the in-flight window INSIDE the same lock as the
+                        // epoch read: the bounded global sweep does not hold this
+                        // lock, so if the watch were taken afterwards a removal +
+                        // sweep racing this window could erase the entry and make the
+                        // install re-check (ChannelEpoch == epochBefore) wrongly pass
+                        // (0 == 0), leaking a ghost listener (audit round N).
+                        BeginSubscribeWatch(key);
                         needsSubscribe = true;
                     }
                 }
                 if (needsSubscribe)
                 {
                     var listener = new ChannelListener();
-                    // Mark the in-flight window so the epoch sweep cannot prune the
-                    // entry this install still checks (audit round M).
-                    BeginSubscribeWatch(key);
                     try
                     {
                         // Network I/O outside the lifecycle lock.
