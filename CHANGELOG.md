@@ -78,6 +78,16 @@
   an unbounded matrix on the Excel thread.
 - **RTD reload snapshot is taken under the instance lock** so a concurrent
   start/terminate during a same-process reload cannot be lost.
+- **`RedisUDFExpire` returns a numeric cell:** it returned a text `"1"`/`"0"`
+  while every sibling reply-dependent write (`Del`, `HashDel`, `SetAdd`,
+  `SetRemove`) returns a number, so `ISNUMBER`/`SUM` ignored it (the same class
+  fixed for `TTLMultiples`). It now returns `1`/`0`.
+- **Credential masking covers the URI and whitespace forms:** `redis://user:SECRET@host`
+  (userinfo the `key=value` regex could not see) and a credential after
+  whitespace with no comma (`host password=SECRET`) reached error cells and logs
+  unmasked. `MaskHost` now redacts the URI userinfo and treats whitespace as a
+  pair delimiter. `HashSet`/`HashGet` no longer log the raw value (they used to
+  bypass `ShortForLog` and dump a whole PII value).
 
 ### Changed
 
