@@ -17,10 +17,12 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 
 **Fastest path:** download `RedisExcelSetup-<version>.exe` from the
 [latest release](https://github.com/rspadim/RedisExcel/releases), run it, and
-follow the wizard (it copies the files to `C:\RedisExcel`, detects your Office
-bitness, and writes a starter `RedisExcel.json`). Then open Excel, go to
-`File > Options > Add-ins > Go... > Browse...` and select the `.xll` from
-`C:\RedisExcel\`. Prefer no installer? Do the **Manual install** below.
+follow the wizard. It copies the files to `C:\RedisExcel`, detects your Office
+bitness, writes a starter `RedisExcel.json`, can **optionally bring up a Redis
+(or Valkey) server** (Docker/WSL/Memurai) for you, and at the end **checks the
+connection** and can open a sample Excel workbook showing `Set`/`Get` working.
+Then register the `.xll` (see the wizard's last page). Prefer no installer? Do
+the **Manual install** below.
 
 #### Manual install
 

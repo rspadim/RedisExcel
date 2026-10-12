@@ -7,9 +7,13 @@
 - **Windows installer (`RedisExcelSetup-<version>.exe`):** an Inno Setup package
   that copies the add-in into one folder (default `C:\RedisExcel`), detects the
   Office bitness and keeps the matching XLL, and a short wizard writes a starter
-  `RedisExcel.json` (host/port/password). A silent "files-only" mode
-  (`/VERYSILENT /DIR=... /HOST=... /PORT=... /PASSWORD=...`) is supported. The CI
-  builds it on every run and attaches it to the release on a `v*` tag.
+  `RedisExcel.json` (host/port/password). It can **optionally bring up a server**
+  (Docker: Redis/Valkey, WSL2: Redis/Valkey, or Memurai) via `install-server.ps1`,
+  and at the end **checks the connection** and can open a sample Excel workbook
+  (live `Set`/`Get`) via `verify-connection.ps1`. A silent "files-only" mode
+  (`/VERYSILENT /DIR=... /HOST=... /PORT=... /SERVER=... /OPENEXCEL=0`) is
+  supported. The CI builds it on every run and attaches it to the release on a
+  `v*` tag.
 - **Config lookup order:** the add-in folder (where the `.xll` lives) is now the
   first place searched for `RedisExcel.json`, so the whole add-in + config can
   live together in one folder; it still falls back to `%USERPROFILE%`, the Excel

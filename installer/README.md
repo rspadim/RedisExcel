@@ -14,10 +14,18 @@ XLLs (removing the one that does not match your Office bitness). It runs
    (`RedisExcel64-packed.xll` for 64-bit, `RedisExcel-packed.xll` for 32-bit).
 3. A short wizard asks for the Redis **host / port / password** and writes
    `RedisExcel.json` next to the XLL (the add-in searches its own folder first).
-4. On the last page, explains the one manual step: open Excel and add the `.xll`
-   via **File > Options > Add-ins > Go... > Browse...** (Excel exposes no safe
+4. **Optional: installs a server.** Choose *No*, *Docker: Redis*, *Docker:
+   Valkey*, *WSL2: Redis*, *WSL2: Valkey* or *Memurai*. It runs
+   `scripts\install-server.ps1`, which uses Docker if available and otherwise
+   falls back to WSL or points you at Memurai - so you do not need a server
+   beforehand.
+5. **End-of-install check.** It PINGs the server and, if you ticked the box,
+   opens a visible Excel workbook (XLL loaded) titled *"RedisExcel instalado com
+   sucesso!"* with the server time and a live `Set`/`Get` round trip.
+6. On the last page it explains the one manual step: add the `.xll` in Excel via
+   **File > Options > Add-ins > Go... > Browse...** (Excel exposes no safe
    automation for that).
-5. The uninstaller asks whether to keep your `RedisExcel.json`.
+7. The uninstaller asks whether to keep your `RedisExcel.json`.
 
 ## Silent / "files only" mode
 
@@ -25,14 +33,25 @@ No wizard, no Excel prompt - just copy the files and use the given (or default)
 host:
 
 ```powershell
-RedisExcelSetup-1.5.1.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret
+RedisExcelSetup-1.5.1.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret /SERVER=none /OPENEXCEL=0
 ```
 
-`/HOST`, `/PORT`, `/PASSWORD` are optional (defaults: `localhost`, `6379`,
-empty). The installer is a normal `.exe`, so you can also install by hand: copy
-`RedisExcel-packed.xll` (or `RedisExcel64-packed.xll`), `RedisExcel.dll`,
-`NLog.config` and `RedisExcel.json` into one folder and register the XLL from
-Excel.
+`/HOST`, `/PORT`, `/PASSWORD`, `/SERVER` (`none`|`docker-redis`|`docker-valkey`|
+`wsl-redis`|`wsl-valkey`|`memurai`) and `/OPENEXCEL` (`0`|`1`) are optional
+(defaults: `localhost`, `6379`, empty, `none`, `0`). The installer is a normal
+`.exe`, so you can also install by hand: copy `RedisExcel-packed.xll` (or
+`RedisExcel64-packed.xll`), `RedisExcel.dll`, `NLog.config` and `RedisExcel.json`
+into one folder and register the XLL from Excel.
+
+## Helper scripts
+
+The installer ships two scripts under `C:\RedisExcel\scripts\` (usable on their
+own):
+
+- `install-server.ps1 -Kind docker-valkey -Port 6379` - brings up a server
+  (Docker / WSL / Memurai).
+- `verify-connection.ps1 -AddInDir "C:\RedisExcel" -ServerHost localhost:6379 -OpenExcel` -
+  PINGs the server and opens the sample sheet.
 
 ## Build it yourself
 

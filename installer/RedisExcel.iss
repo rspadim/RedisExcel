@@ -1,28 +1,28 @@
 ; RedisExcel installer (Inno Setup 6).
 ;
-; Build:  ISCC .\installer\RedisExcel.iss
-; Or:     msbuild /t:Build; the CI builds it on a v* tag (see .github/workflows/build.yml).
+; Build:  ISCC /DAppVersion=1.5.1 .\installer\RedisExcel.iss
+; CI builds it on every run and attaches RedisExcelSetup-<version>.exe to a
+; v* tag release (see .github/workflows/build.yml).
 ;
 ; What it does:
 ;   * copies RedisExcel.dll + the runtime XLL (+ NLog.config) into a folder the
 ;     user picks (default C:\RedisExcel);
-;   * detects the Office bitness and installs the matching packed XLL
-;     (RedisExcel64-packed.xll for 64-bit Office, RedisExcel-packed.xll for 32-bit);
-;   * a small wizard asks for host / port / optional password and writes
+;   * detects the Office bitness and keeps only the matching packed XLL;
+;   * a short wizard asks for host / port / optional password and writes
 ;     RedisExcel.json next to the XLL (the add-in folder is searched first);
-;   * offers to open the Excel add-ins dialog at the end;
-;   * supports a silent "files only" mode:  RedisExcelSetup.exe /VERYSILENT
-;     (the wizard and the Excel prompt are skipped; the config uses the given
-;     or default host, see GetHost/GetPort below).
+;   * OPTIONALLY brings up a Redis-compatible server (Docker or WSL, or points
+;     at Memurai) via installer\install-server.ps1;
+;   * at the end, checks the connection and (optionally) opens a sample Excel
+;     workbook showing the status via installer\verify-connection.ps1;
+;   * silent mode:  RedisExcelSetup.exe /VERYSILENT /DIR=... /HOST=... /PORT=...
+;     /PASSWORD=... /SERVER=docker-valkey /OPENEXCEL=1
 
 #define AppName "RedisExcel"
 #define AppPublisher "rspadim"
 #define AppUrl "https://github.com/rspadim/RedisExcel"
-; Version is injected by the build (ISCC /DAppVersion=x.y.z); falls back to dev.
 #ifndef AppVersion
   #define AppVersion "dev"
 #endif
-; Source folder with the built outputs (bin\Release\net48\publish) and NLog.config.
 #ifndef BuildDir
   #define BuildDir "..\bin\Release\net48\publish"
 #endif
@@ -48,9 +48,7 @@ OutputBaseFilename=RedisExcelSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-ArchitecturesInstallIn64BitMode=
 UninstallDisplayName={#AppName} {#AppVersion}
-; The uninstaller keeps RedisExcel.json by default (user settings).
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -61,24 +59,23 @@ Name: "addinconfig"; Description: "Create RedisExcel.json in the install folder 
 Name: "nlogconfig";  Description: "Create NLog.config (write a log file next to the add-in)"; GroupDescription: "Configuration:"
 
 [Files]
-; The managed library the XLL loads.
 Source: "{#BuildDir}\RedisExcel.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Both packed XLLs are shipped; [Code] keeps/removes one after the bitness check.
 Source: "{#BuildDir}\RedisExcel64-packed.xll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\RedisExcel-packed.xll"; DestDir: "{app}"; Flags: ignoreversion
-; Default log config; a user-customised one is preserved.
 Source: "{#RepoRoot}\NLog.config"; DestDir: "{app}"; Flags: onlyifdoesntexist; Tasks: nlogconfig
+; Helper scripts (server setup + end-of-install verification).
+Source: "{#RepoRoot}\installer\install-server.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#RepoRoot}\installer\verify-connection.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 [Code]
 var
   Is64BitOffice: Boolean;
-  WizardPage: TInputQueryWizardPage;
+  ConnPage: TInputQueryWizardPage;
+  ServerPage: TInputOptionWizardPage;
+  OptionsPage: TInputOptionWizardPage;
+  InstallDone: Boolean;
 
 // ---- Office bitness -------------------------------------------------------
-// Office writes its bitness under HKCU\Software\Microsoft\Office\<ver>\Outlook\Setup
-// or ...\Common\General ("x86"/"x64"); ClickToRun exposes Platform. If nothing is
-// found we default to 64-bit (the common case) but let the user override on the
-// wizard page.
 function Detect64BitOffice(): Boolean;
 var
   Names: TArrayOfString;
@@ -86,105 +83,133 @@ var
   V, P: String;
 begin
   Result := True;
-  // ClickToRun configuration
   P := 'SOFTWARE\Microsoft\Office\ClickToRun\Configuration';
   if RegQueryStringValue(HKLM, P, 'Platform', V) then
     Result := (CompareText(V, 'x64') = 0)
   else if RegQueryStringValue(HKCU, P, 'Platform', V) then
     Result := (CompareText(V, 'x64') = 0)
-  else
+  else if RegGetSubkeyNames(HKCU, 'SOFTWARE\Microsoft\Office', Names) then
   begin
-    // Per-version "Bitness" under HKCU\Software\Microsoft\Office\<ver>\Common\General
-    if RegGetSubkeyNames(HKCU, 'SOFTWARE\Microsoft\Office', Names) then
-    begin
-      for I := 0 to GetArrayLength(Names) - 1 do
+    for I := 0 to GetArrayLength(Names) - 1 do
+      if RegQueryStringValue(HKCU,
+           'SOFTWARE\Microsoft\Office\' + Names[I] + '\Common\General', 'Bitness', V) then
       begin
-        if RegQueryStringValue(HKCU,
-             'SOFTWARE\Microsoft\Office\' + Names[I] + '\Common\General', 'Bitness', V) then
-        begin
-          Result := (CompareText(V, 'x64') = 0);
-          Exit;
-        end;
+        Result := (CompareText(V, 'x64') = 0);
+        Exit;
       end;
-    end;
   end;
 end;
 
-function GetHost(Param: String): String;
+function ParamOr(Param, Default: String): String;
 begin
-  Result := ExpandConstant('{param:HOST|localhost}');
+  Result := ExpandConstant('{param:' + Param + '|' + Default + '}');
 end;
 
-function GetPort(Param: String): String;
-begin
-  Result := ExpandConstant('{param:PORT|6379}');
-end;
-
-function GetPassword(Param: String): String;
-begin
-  Result := ExpandConstant('{param:PASSWORD|}');
-end;
-
-// ---- Wizard page (skipped in silent mode) ---------------------------------
+// ---- Wizard pages ---------------------------------------------------------
 procedure InitializeWizard();
 begin
   Is64BitOffice := Detect64BitOffice();
-  WizardPage := CreateInputQueryPage(wpSelectTasks,
+
+  ServerPage := CreateInputOptionPage(wpSelectTasks,
+    'Redis server', 'Do you want to install a Redis-compatible server now?',
+    'RedisExcel needs a Redis (or Valkey) server on localhost:6379. Choose an ' +
+    'option if you do not already have one; Docker is the simplest.',
+    True, False);
+  ServerPage.Add('No - I already have a server (or will set it up later)');
+  ServerPage.Add('Yes - Docker: Redis (redis:7-alpine)');
+  ServerPage.Add('Yes - Docker: Valkey (valkey/valkey:8-alpine)');
+  ServerPage.Add('Yes - WSL2: Redis (apt install redis-server)');
+  ServerPage.Add('Yes - WSL2: Valkey (apt install valkey-server)');
+  ServerPage.Add('Yes - Memurai (native Windows service, needs admin)');
+  ServerPage.SelectedValueIndex := 0;
+
+  ConnPage := CreateInputQueryPage(ServerPage.ID,
     'Redis connection', 'Where should RedisExcel connect?',
-    'Enter your Redis server. Press Next for the default (localhost:6379).' + #13#10 +
-    'You can change this later by editing RedisExcel.json.');
-  WizardPage.Add('Host (or host:port):', False);
-  WizardPage.Add('Port:', False);
-  WizardPage.Add('Password (optional):', True);
-  WizardPage.Values[0] := 'localhost';
-  WizardPage.Values[1] := '6379';
-  WizardPage.Values[2] := '';
+    'Press Next for the default (localhost:6379). You can change this later by ' +
+    'editing RedisExcel.json.');
+  ConnPage.Add('Host (or host:port):', False);
+  ConnPage.Add('Port:', False);
+  ConnPage.Add('Password (optional):', True);
+  ConnPage.Values[0] := ParamOr('HOST', 'localhost');
+  ConnPage.Values[1] := ParamOr('PORT', '6379');
+  ConnPage.Values[2] := ParamOr('PASSWORD', '');
+
+  OptionsPage := CreateInputOptionPage(ConnPage.ID,
+    'Finish', 'Extra checks',
+    'Optional: open an Excel workbook at the end showing the connection status.',
+    False, False);
+  OptionsPage.Add('Open a sample RedisExcel workbook when finished');
+  OptionsPage.Values[0] := (ParamOr('OPENEXCEL', '0') = '1');
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
 begin
-  Result := (PageID = WizardPage.ID) and WizardSilent();
+  Result := WizardSilent() and
+            ((PageID = ServerPage.ID) or (PageID = ConnPage.ID) or (PageID = OptionsPage.ID));
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = WizardPage.ID) and (Trim(WizardPage.Values[0]) = '') then
+  if (CurPageID = ConnPage.ID) and (Trim(ConnPage.Values[0]) = '') then
   begin
     MsgBox('Please enter a Redis host (for example localhost).', mbError, MB_OK);
     Result := False;
   end;
 end;
 
-// ---- Output the config + pick the XLL -------------------------------------
+// ---- Values ---------------------------------------------------------------
 function HostString(): String;
 var
   H, Port, Pw: String;
 begin
-  if (not WizardSilent()) and (WizardPage <> nil) and (WizardPage.Values[0] <> '') then
+  if (not WizardSilent()) and (ConnPage <> nil) then
   begin
-    H := Trim(WizardPage.Values[0]);
-    Port := Trim(WizardPage.Values[1]);
-    Pw := Trim(WizardPage.Values[2]);
+    H := Trim(ConnPage.Values[0]);
+    Port := Trim(ConnPage.Values[1]);
+    Pw := Trim(ConnPage.Values[2]);
   end
   else
   begin
-    H := GetHost('');
-    Port := GetPort('');
-    Pw := GetPassword('');
+    H := ParamOr('HOST', 'localhost');
+    Port := ParamOr('PORT', '6379');
+    Pw := ParamOr('PASSWORD', '');
   end;
-  // "host:port" when the user typed only a host.
-  if (Pos(':', H) = 0) and (Port <> '') then
-    Result := H + ':' + Port
+  if (Pos(':', H) = 0) and (Port <> '') then Result := H + ':' + Port else Result := H;
+  if Pw <> '' then Result := Result + ',password=' + Pw;
+end;
+
+function ServerKind(): String;
+var idx: Integer;
+begin
+  if WizardSilent() then
+  begin
+    Result := ParamOr('SERVER', 'none');
+    Exit;
+  end;
+  if ServerPage = nil then begin Result := 'none'; Exit; end;
+  idx := ServerPage.SelectedValueIndex;
+  case idx of
+    1: Result := 'docker-redis';
+    2: Result := 'docker-valkey';
+    3: Result := 'wsl-redis';
+    4: Result := 'wsl-valkey';
+    5: Result := 'memurai';
   else
-    Result := H;
-  if Pw <> '' then
-    Result := Result + ',password=' + Pw;
+    Result := 'none';
+  end;
+end;
+
+function OpenExcelChecked(): Boolean;
+begin
+  if WizardSilent() then
+    Result := (ParamOr('OPENEXCEL', '0') = '1')
+  else
+    Result := (OptionsPage <> nil) and OptionsPage.Values[0];
 end;
 
 function ConfigJson(): String;
-var
-  HostLine: String;
+var HostLine: String;
 begin
   HostLine := HostString();
   Result :=
@@ -211,19 +236,32 @@ begin
     '}' + #13#10;
 end;
 
+// ---- Run PowerShell helper scripts ---------------------------------------
+function RunScript(ScriptName, Args: String): Integer;
+var
+  Script, Params: String;
+  Code: Integer;
+begin
+  Script := ExpandConstant('{app}\scripts\') + ScriptName;
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" ' + Args;
+  // Visible window so WSL/Memurai prompts and any MessageBox are reachable.
+  if Exec('powershell.exe', Params, ExpandConstant('{app}'), SW_SHOW, ewWaitUntilTerminated, Code) then
+    Result := Code
+  else
+    Result := -1;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  ConfigPath, Lines: String;
+  ConfigPath, Lines, Kind: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    // Keep only the XLL matching the Office bitness.
     if Is64BitOffice then
       DeleteFile(ExpandConstant('{app}\RedisExcel-packed.xll'))
     else
       DeleteFile(ExpandConstant('{app}\RedisExcel64-packed.xll'));
 
-    // Write RedisExcel.json next to the XLL (searched first by the add-in).
     if WizardIsTaskSelected('addinconfig') then
     begin
       ConfigPath := ExpandConstant('{app}\RedisExcel.json');
@@ -235,36 +273,49 @@ begin
                  mbInformation, MB_OK);
       end;
     end;
+
+    // Optional: bring up a server before verifying.
+    Kind := ServerKind();
+    if Kind <> 'none' then
+      RunScript('install-server.ps1',
+        '-Kind ' + Kind + ' -Port ' + ParamOr('PORT', '6379'));
+
+    InstallDone := True;
   end;
 end;
 
-// ---- Finish page: offer to open Excel's add-ins dialog ---------------------
-procedure OpenAddInsDialog();
+// ---- Finish: verify + optionally open a sample workbook -------------------
+procedure DeinitializeSetup();
 var
-  ResultCode: Integer;
+  HostPort, Args: String;
 begin
-  // Best effort: open Excel (the user then browses to the XLL).
-  ShellExec('open', 'excel.exe', '', ExpandConstant('{app}'), SW_SHOWNORMAL, ewNoWait, ResultCode);
+  if not InstallDone then Exit;
+  // "host:port" (strip any credential) for the verifier.
+  HostPort := HostString();
+  if Pos(',', HostPort) > 0 then
+    HostPort := Copy(HostPort, 1, Pos(',', HostPort) - 1);
+  Args := '-AddInDir "' + ExpandConstant('{app}') + '" -ServerHost "' + HostPort + '"';
+  if OpenExcelChecked() then
+    Args := Args + ' -OpenExcel'
+  else
+    Args := Args + ' -Quiet';
+  RunScript('verify-connection.ps1', Args);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if (CurPageID = wpFinished) and (not WizardSilent()) then
     WizardForm.FinishedLabel.Caption :=
-      'RedisExcel files are installed in:' + #13#10 + ExpandConstant('{app}') + #13#10 + #13#10 +
-      'Last step (cannot be automated safely): open Excel, go to' + #13#10 +
-      'File > Options > Add-ins > Go... > Browse... and select' + #13#10 +
-      'RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).' + #13#10 + #13#10 +
-      'Put =RedisUDFGet("preco_btc") in a cell to test the connection.';
+      'RedisExcel is installed in:' + #13#10 + ExpandConstant('{app}') + #13#10 + #13#10 +
+      'To use it: open Excel, go to File > Options > Add-ins > Go... > Browse... ' +
+      'and select RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).' + #13#10 + #13#10 +
+      'Then try =RedisUDFGet("preco_btc") in a cell.';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
-  begin
     if FileExists(ExpandConstant('{app}\RedisExcel.json')) then
-      if MsgBox('Keep your RedisExcel.json settings?',
-                mbConfirmation, MB_YESNO) = IDNO then
+      if MsgBox('Keep your RedisExcel.json settings?', mbConfirmation, MB_YESNO) = IDNO then
         DeleteFile(ExpandConstant('{app}\RedisExcel.json'));
-  end;
 end;
