@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace RedisExcel.Tests
@@ -8,6 +9,27 @@ namespace RedisExcel.Tests
     [Collection("write-mode-seam")]
     public class AppConfigTests
     {
+        [Fact]
+        public void CandidatePaths_PutTheAddInFolderFirst()
+        {
+            // A user who keeps the XLL in a dedicated folder (e.g. C:\RedisExcel)
+            // can put RedisExcel.json next to it; that folder is searched first.
+            string addIn = @"C:\RedisExcel";
+            var paths = AppConfig.CandidatePaths(addIn, @"C:\ExcelFolder").Where(p => p != null).ToList();
+            Assert.Equal(Path.Combine(addIn, "RedisExcel.json"), paths[0]);
+            Assert.Contains(Path.Combine(@"C:\ExcelFolder", "RedisExcel.json"), paths);
+        }
+
+        [Fact]
+        public void CandidatePaths_NoAddInFolder_SkipsItWithoutBreakingTheRest()
+        {
+            // When the add-in/excel folder is unknown the entry is null and is
+            // skipped by the caller (LoadFromPaths ignores null/blank paths).
+            var paths = AppConfig.CandidatePaths(null, null).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+            Assert.All(paths, p => Assert.EndsWith("RedisExcel.json", p));
+            Assert.DoesNotContain(@"C:\RedisExcel", string.Join(";", paths));
+        }
+
         [Fact]
         public void Sanitize_FillsMissingSectionsWithDefaults()
         {

@@ -25,8 +25,8 @@ replace when you update the add-in.
 3. Download [NLog config example files](https://github.com/rspadim/RedisExcel/blob/main/NLog.config)
 4. Download [RedisExcel.json file](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)
 5. Put the add-in files (`.xll`, `.dll`, `NLog.config`) in that same folder,
-   e.g. `C:\RedisExcel\`. Put `RedisExcel.json` in your user folder
-   (`%USERPROFILE%`) - see the note below.
+   e.g. `C:\RedisExcel\`, and put `RedisExcel.json` there too - the add-in
+   folder is the FIRST place searched for it (see below).
 6. In Excel: `File > Options > Add-ins`
 
    * Click **Go...**, then **Browse...**, and select the `.xll` file from
@@ -38,14 +38,14 @@ replace when you update the add-in.
 > `.dll` is a dependency and `NLog.config` configures the log file. When you move
 > the add-in, move that whole folder.
 
-The `RedisExcel.json` file (settings, host aliases) is where you keep the host
-config ([Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)).
-It is **not** read from the add-in folder; it is searched in this order (the
-first existing file wins):
+The `RedisExcel.json` file (settings, host aliases) is the host config
+([Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)).
+It is searched in this order (the **first existing file wins**):
 >
-> * The user folder (`%USERPROFILE%`) - Example: `%USERPROFILE%\RedisExcel.json` (recommended)
-> * The Excel folder
-> * Or `C:\Windows\RedisExcel.json`
+> 1. The add-in folder (where the `.xll` lives, e.g. `C:\RedisExcel\`) - put it here to keep everything together
+> 2. The user folder (`%USERPROFILE%`) - Example: `%USERPROFILE%\RedisExcel.json`
+> 3. The Excel folder
+> 4. Or `C:\Windows\RedisExcel.json`
 
 > **Tip:** downloaded files may be blocked by Windows (Mark of the Web) —
 > right-click each file > Properties > check **Unblock** before loading the add-in.

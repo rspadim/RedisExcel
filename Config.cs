@@ -186,11 +186,32 @@ namespace RedisExcel
 
         private static IEnumerable<string> CandidatePaths()
         {
+            return CandidatePaths(AddInDirectory(), ExcelDirectory());
+        }
+
+        /// <summary>Pure ordering, testable without Excel: the add-in's own folder
+        /// (where the XLL lives, e.g. C:\RedisExcel) is searched first, then the
+        /// user profile, the Excel folder and C:\Windows (first existing wins).</summary>
+        internal static IEnumerable<string> CandidatePaths(string addInDirectory, string excelDirectory)
+        {
+            yield return addInDirectory == null ? null : Path.Combine(addInDirectory, ConfigFileName);
             yield return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ConfigFileName);
-            var excelDirectory = ExcelDirectory();
             yield return excelDirectory == null ? null : Path.Combine(excelDirectory, ConfigFileName);
             var windowsDirectory = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             yield return string.IsNullOrEmpty(windowsDirectory) ? null : Path.Combine(windowsDirectory, ConfigFileName);
+        }
+
+        private static string AddInDirectory()
+        {
+            try
+            {
+                var xll = ExcelDna.Integration.ExcelDnaUtil.XllPath;
+                return string.IsNullOrWhiteSpace(xll) ? null : Path.GetDirectoryName(xll);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static string ExcelDirectory()
