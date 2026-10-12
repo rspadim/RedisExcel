@@ -208,6 +208,33 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ClearForListener_MatchesTheSameEndpointSpelledDifferently()
+        {
+            // The same server is routinely spelled differently: RTD resolves one
+            // string, UDF another ('localhost:6379' vs '127.0.0.1:6379', or the
+            // same host with different options). A join under one spelling must
+            // clear the marker published under the other, or the returning
+            // listener is starved until the payload changes (audit round P).
+            const string udfHost = "127.0.0.1:6379";
+            const string rtdHost = "localhost:6379,abortConnect=False";
+            Seed(udfHost, "orders", "1");
+
+            RedisUDF.HandleListenerJoined(rtdHost, "orders", pattern: false);
+
+            Assert.False(HasMarker(udfHost, "orders"));
+        }
+
+        [Fact]
+        public void ClearForListener_DoesNotClearADifferentEndpoint()
+        {
+            // Over-clearing costs one publish, but a genuinely different endpoint
+            // must not lose its marker (that would defeat the dedup entirely).
+            Seed("10.0.0.1:6379", "orders", "1");
+            RedisUDF.HandleListenerJoined("10.0.0.2:6379", "orders", pattern: false);
+            Assert.True(HasMarker("10.0.0.1:6379", "orders"));
+        }
+
+        [Fact]
         public void ClearForListener_StarPattern_ClearsEveryMarkerOfThatHostOnly()
         {
             string host = "join-star-host";

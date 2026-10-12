@@ -287,24 +287,98 @@ namespace RedisExcel
         /// </summary>
         internal static void ClearForListener(string host, string channel, bool pattern)
         {
-            if (!pattern)
-            {
-                ClearMarker(ChannelKey(host, channel));
-                return;
-            }
-
             // Work from a snapshot: PublishIfChanged takes the per-key stripe
             // and then the cache lock, so holding the cache lock while taking
             // a stripe (the opposite order) could deadlock the two.
             string[] keys = _lastPublishedMessages.SnapshotKeys();
+            if (keys.Length == 0)
+                return;
+            string targetHost = CanonicalHost(host);
+            var canonicalByHost = new Dictionary<string, string>(StringComparer.Ordinal);
             for (int i = 0; i < keys.Length; i++)
             {
-                if (!TryParseChannelKey(keys[i], out var keyHost, out _))
+                if (!TryParseChannelKey(keys[i], out var keyHost, out var keyChannel))
                     continue; // not one of our markers: leave it alone
-                if (!string.Equals(keyHost, host, StringComparison.Ordinal))
+                if (!pattern && !string.Equals(keyChannel, channel, StringComparison.Ordinal))
+                    continue;
+                // Compare on the NORMALIZED endpoint, not the raw string: the same
+                // server is routinely spelled differently (RTD resolves
+                // 'localhost:6379', UDF resolves '127.0.0.1:6379', or the same host
+                // with different options), and a join must clear every spelling of
+                // that endpoint or a (re)joining listener stays starved until the
+                // payload changes (audit round P). Over-clearing only costs one
+                // extra publish, so matching aggressively is the safe direction.
+                if (!canonicalByHost.TryGetValue(keyHost, out var canonical))
+                {
+                    canonical = CanonicalHost(keyHost);
+                    canonicalByHost[keyHost] = canonical;
+                }
+                if (!string.Equals(canonical, targetHost, StringComparison.Ordinal))
                     continue;
                 ClearMarker(keys[i]);
             }
+        }
+
+        /// <summary>Normalizes a host string to a comparable endpoint for marker
+        /// MATCHING: the parsed host:port(s) when the connection string is
+        /// understood (so 'localhost:6379', '127.0.0.1:6379',
+        /// 'localhost:6379,abortConnect=False' and any casing collapse to one
+        /// value; the conventional loopback alias is mapped to its address),
+        /// otherwise the trimmed, lowercased original. The marker key itself keeps
+        /// the exact caller string, so the write path is unchanged; only the join
+        /// purge compares normalized values.</summary>
+        internal static string CanonicalHost(string host)
+        {
+            if (string.IsNullOrEmpty(host))
+                return "";
+            try
+            {
+                var options = ConfigurationOptions.Parse(host);
+                var endpoints = options.EndPoints;
+                if (endpoints != null && endpoints.Count > 0)
+                {
+                    var parts = new List<string>(endpoints.Count);
+                    foreach (var endpoint in endpoints)
+                    {
+                        string text = EndpointText(endpoint);
+                        if (text != null)
+                            parts.Add(text);
+                    }
+                    if (parts.Count > 0)
+                    {
+                        parts.Sort(StringComparer.Ordinal);
+                        return string.Join(",", parts);
+                    }
+                }
+            }
+            catch
+            {
+                // Not a parseable connection string: fall back to the trimmed text.
+            }
+            return host.Trim().ToLowerInvariant();
+        }
+
+        /// <summary>Host:port text for a StackExchange.Redis endpoint, with the
+        /// conventional loopback alias unified ('localhost' -> '127.0.0.1': an
+        /// over-match only costs one extra publish). Null when the endpoint cannot
+        /// be understood.</summary>
+        private static string EndpointText(System.Net.EndPoint endpoint)
+        {
+            if (endpoint is System.Net.DnsEndPoint dns)
+            {
+                string name = dns.Host.ToLowerInvariant();
+                if (name == "localhost")
+                    name = "127.0.0.1";
+                return name + ":" + dns.Port.ToString(CultureInfo.InvariantCulture);
+            }
+            if (endpoint is System.Net.IPEndPoint ip)
+            {
+                string address = ip.Address.ToString().ToLowerInvariant();
+                if (address == "::1")
+                    address = "127.0.0.1";
+                return address + ":" + ip.Port.ToString(CultureInfo.InvariantCulture);
+            }
+            return endpoint?.ToString()?.ToLowerInvariant();
         }
 
         private static void ClearMarker(string key)
