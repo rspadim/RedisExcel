@@ -38,6 +38,17 @@
 - **Log output is bounded:** a malformed value could put a 10 MB line in the log;
   the interpolated context is capped and long values are shortened
   (`BoundContext`/`ShortForLog`).
+- **Matrix conversion and batch ranges are bounded:** `RedisUDFMatrixToJSON`
+  capped the cell count but not the serialized text, so a legal 4000x4000 range
+  produced a ~128 MB string (no cell can hold it) and `SetJSON`/
+  `ChannelPublish*JSON` shipped it to Redis; the serialization now aborts past an
+  output bound. The `...Multiples`/`SetKV` flatten helpers had no size guard (an
+  `int` overflow and a multi-GB list were reachable); a shared guard rejects the
+  range first. An `ArgumentException` message no longer becomes an unbounded
+  error cell (a 100k-char invalid host produced a 100k-char cell).
+- **`ChannelLatest` install race completed:** the in-flight-subscribe watch that
+  keeps the epoch sweep from erasing a racing install's record is now taken
+  inside the same lock as the epoch read, closing the remaining window.
 
 ### Changed
 
