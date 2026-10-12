@@ -27,6 +27,11 @@ namespace RedisExcel
             // old runtime; drop the cached listeners/messages/markers so a
             // reloaded add-in resubscribes instead of answering from stale state.
             RedisUDF.ResetAfterAddInReload();
+            // Same for any RTD server Excel did not release (no ServerTerminate):
+            // a running System.Timers.Timer roots its target, so without this the
+            // old server and its topic registry survive the reload and keep
+            // polling the freshly reset runtime.
+            RedisRtd.ResetAfterAddInReload();
             // Raise the ThreadPool floor a little: the async write queue and the
             // RTD timers run continuations on the pool, and a starved pool
             // (other add-ins, hosted CLR, policy) would stall cells while the
@@ -505,12 +510,32 @@ namespace RedisExcel
         protected override void ServerTerminate()
         {
             logger.Info("ServerTerminate");
+            Teardown();
+            // Remove only THIS server; a surviving instance (last-started pointer)
+            // is promoted by HighestOrdinalInstance. ResetAfterAddInReload clears
+            // the whole map instead.
+            lock (InstancesSync)
+            {
+                Instances.TryRemove(this, out _);
+                if (ReferenceEquals(Instance, this))
+                    Instance = HighestOrdinalInstance();
+            }
+        }
 
-            // Mark every topic before disposing the timers and clearing the registries:
-            // despite its name, Timer.Dispose does not wait for an Elapsed callback that
-            // is already running, so only the Disconnected flags guarantee that such a
-            // tick stops publishing and never touches the live registries after teardown
-            // starts.
+        /// <summary>
+        /// Stops and disposes this server's timers and drops its topics and
+        /// registry entry. Idempotent: called by <see cref="ServerTerminate"/> and,
+        /// for any instance Excel did not release, by <see cref="AutoOpen"/> on a
+        /// same-process reload (audit round O - a running timer roots its target,
+        /// so a stranded server would otherwise survive the reload).
+        /// </summary>
+        private void Teardown()
+        {
+            // Mark every topic before disposing the timers and clearing the
+            // registries: despite its name, Timer.Dispose does not wait for an
+            // Elapsed callback that is already running, so only the Disconnected
+            // flags guarantee that such a tick stops publishing and never touches
+            // the live registries after teardown starts.
             foreach (var td in _polledTopics.Values.Concat(_subscribedTopics.Values))
                 td.Disconnected = true;
 
@@ -534,13 +559,22 @@ namespace RedisExcel
             }
             _subscribedTopics.Clear();
             _polledTopics.Clear();
+        }
 
-            lock (InstancesSync)
-            {
-                Instances.TryRemove(this, out _);
-                if (ReferenceEquals(Instance, this))
-                    Instance = HighestOrdinalInstance();
-            }
+        /// <summary>
+        /// Tears down every live RTD server. Called from <see cref="AutoOpen"/> on a
+        /// same-process reload so a server Excel did not terminate does not keep its
+        /// timers (and topic registry) alive across the reload.
+        /// </summary>
+        internal static void ResetAfterAddInReload()
+        {
+            foreach (var server in Instances.Keys)
+                server.Teardown();
+            // Instances is emptied per server in ServerTerminate normally; clear it
+            // and the current pointer explicitly so the status surface reflects the
+            // fresh session immediately.
+            Instances.Clear();
+            Instance = null;
         }
 
         /// <summary>
