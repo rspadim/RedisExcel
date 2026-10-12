@@ -65,6 +65,19 @@
   holding `""`, so both returned `(null)`. It now uses `IsNull` (as the RTD
   polled path already did): an existing empty string returns an empty cell and
   only a missing key gets `(null)`.
+- **Publish markers match across host spellings:** the join purge compared the
+  host ordinally, so a listener that rejoined under a different spelling of the
+  same server (`localhost` vs `127.0.0.1`) did not clear the marker and stayed
+  starved until the payload changed. Matching now normalizes to the endpoint.
+- **Connection fast-fail memo no longer self-extends and eviction leaves no
+  tombstone:** the memo was rewritten on every fast-fail skip (a host polled
+  faster than the 2s window never retried after an eviction), and an evicted
+  host kept its `_downSinceTicks`/memo entries forever.
+- **`PubSubChannelsInfo` is bounded:** the server-driven `PUBSUB CHANNELS`
+  list is capped at 1,000,000 rows like `RedisUDFKeys`, instead of materializing
+  an unbounded matrix on the Excel thread.
+- **RTD reload snapshot is taken under the instance lock** so a concurrent
+  start/terminate during a same-process reload cannot be lost.
 
 ### Changed
 
