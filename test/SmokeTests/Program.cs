@@ -1564,6 +1564,12 @@ internal static class Program
                 "SyncWrite sync: Set returns 'OK'");
             Check(Convert.ToString(RedisUDF.RedisUDFIncr(baseKey + ":i", host), CultureInfo.InvariantCulture) == "1",
                 "SyncWrite sync: Incr returns the numeric reply '1'");
+            // Expire must return a NUMERIC cell (long), like Del/HashDel/SetAdd/
+            // SetRemove - a text "1" is a TEXT cell (ISNUMBER/SUM ignore it). The
+            // same class of bug was fixed for TTLMultiples (audit round P).
+            object expireResult = RedisUDF.RedisUDFExpire(baseKey + ":s", 60, host);
+            Check(expireResult is long && (long)expireResult == 1L,
+                $"SyncWrite sync: Expire returns a numeric 1 (got {expireResult?.GetType().Name} '{expireResult}')");
             Check((string)RedisUDF.RedisUDFChannelPublish(pubChannel, "x", host) == "0 readers",
                 "SyncWrite sync: publish with no subscriber returns '0 readers'");
             try { db.KeyDelete(baseKey + ":i"); } catch { }

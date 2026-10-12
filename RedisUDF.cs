@@ -2011,7 +2011,10 @@ namespace RedisExcel
                 bool expired = GetDb(host).KeyExpire(keyStr, TimeSpan.FromSeconds(ttl));
                 if (logger.IsTraceEnabled)
                     logger.Trace($"RedisUDFExpire: key={keyStr}, ttl={ttl}s, expired={expired}, host={AppConfig.MaskHost(host)}");
-                return expired ? "1" : "0";
+                // Numeric, like Del/HashDel/SetAdd/SetRemove: a text "1" is a TEXT
+                // cell in Excel (ISNUMBER would be false and SUM would ignore it),
+                // the same defect class already fixed for TTLMultiples (round P).
+                return expired ? 1L : 0L;
             });
         }
 
@@ -2175,7 +2178,7 @@ namespace RedisExcel
                 GetDb(host).HashSet(hashKeyStr, fieldStr, valueStr ?? "", When.Always,
                     fireAndForget ? CommandFlags.FireAndForget : CommandFlags.None);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {value}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
+                    logger.Trace($"RedisUDFHashSet: {hashKeyStr}[{fieldStr}] = {ShortForLog(valueStr)}, host={AppConfig.MaskHost(host)}, fireAndForget={fireAndForget}");
                 return fireAndForget ? FireAndForgetMarker(replyDependent: false) : "OK";
             });
         }
@@ -2242,7 +2245,7 @@ namespace RedisExcel
                 string fieldStr = RequireText(field, "field");
                 var value = GetDb(host).HashGet(hashKeyStr, fieldStr);
                 if (logger.IsTraceEnabled)
-                    logger.Trace($"RedisUDFHashGet: {hashKeyStr}[{fieldStr}] = {value}, host={AppConfig.MaskHost(host)}");
+                    logger.Trace($"RedisUDFHashGet: {hashKeyStr}[{fieldStr}] = {ShortForLog(value)}, host={AppConfig.MaskHost(host)}");
                 return value.HasValue ? value.ToString() : "";
             }
             catch (Exception ex)

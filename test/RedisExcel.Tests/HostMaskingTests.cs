@@ -93,11 +93,37 @@ namespace RedisExcel.Tests
         }
 
         [Theory]
+        // A credential AFTER WHITESPACE (no comma) must be masked too: it can reach
+        // a cell or log line embedded after any whitespace (audit round P).
+        [InlineData("localhost:6379 password=SECRET")]
+        [InlineData("localhost:6379\tpassword=SECRET")]
+        public void MaskHost_MasksCredentialsAfterWhitespace(string input)
+        {
+            string masked = AppConfig.MaskHost(input);
+            Assert.DoesNotContain("SECRET", masked);
+            Assert.Contains("****", masked);
+        }
+
+        [Theory]
+        // A URI authority carries userinfo the key=value regex cannot see.
+        [InlineData("redis://user:SECRET@127.0.0.1:6379")]
+        [InlineData("rediss://:SECRET@127.0.0.1:6379")]
+        [InlineData("redis://user:SECRET@127.0.0.1:6379,abortConnect=False")]
+        public void MaskHost_MasksUriUserInfo(string input)
+        {
+            string masked = AppConfig.MaskHost(input);
+            Assert.DoesNotContain("SECRET", masked);
+            Assert.DoesNotContain("user:", masked);
+            Assert.Contains("6379", masked); // the host survives
+        }
+
+        [Theory]
         // A user key/channel/pattern that happens to contain a credential-looking
         // token must NOT be rewritten: only a value after a connection-string
         // delimiter is a real credential (audit: the old regex corrupted these).
+        // (A credential after whitespace-but-no-delimiter is a known, documented
+        // limitation: masking it would corrupt such identifiers.)
         [InlineData("key=user=abc, host=dead:1")]
-        [InlineData("key=a password=b, host=dead:1")]
         [InlineData("channel=pass=x, host=h")]
         public void MaskHost_DoesNotCorruptUserIdentifiers(string context)
         {

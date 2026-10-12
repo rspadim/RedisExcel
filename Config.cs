@@ -286,11 +286,24 @@ namespace RedisExcel
         {
             if (string.IsNullOrEmpty(host))
                 return host;
-            return PasswordPair.Replace(host, "$1$2=****");
+            // A URI authority (redis://user:pass@host) carries credentials the
+            // key=value regex cannot see; redact its userinfo first.
+            string masked = UriUserInfo.Replace(host, "****@");
+            return PasswordPair.Replace(masked, "$1$2=****");
         }
 
+        // redis://user:SECRET@host / rediss://:SECRET@host / redis://user@host:
+        // whatever sits between '//' and '@' is userinfo and must be redacted.
+        private static readonly Regex UriUserInfo = new Regex(
+            @"(?<=//)[^/@\s]+@", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // A credential keyword is preceded by the string start, a connection-string
+        // delimiter (comma/semicolon) OR whitespace: a credential can reach a cell
+        // or log line embedded after any whitespace, not only after a comma, and a
+        // leaked secret is worse than over-masking a user identifier that happens to
+        // look like "x=password=y" (audit round P).
         private static readonly Regex PasswordPair = new Regex(
-            @"(^|[,;])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
+            @"(^|[,;\s])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);
