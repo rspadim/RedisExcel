@@ -7,6 +7,8 @@ TL-DR: Read Installing in Excel and [Download Releases](https://github.com/rspad
 Integration between Redis and Excel using RTD (Real-Time Data) and UDF (User Defined Functions), developed in C# (.NET Framework 4.8) with [ExcelDna](https://github.com/Excel-DNA/ExcelDna).
 Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` commands and various UDF operations to interact with Redis.
 
+> **New to Redis?** See the beginner guide **“No Redis server yet? Run one on Windows”** below to run a server on Windows in a couple of minutes (Docker or a native build).
+
 ---
 
 ## 🧹 Installing in Excel
@@ -35,6 +37,81 @@ Supports Pub/Sub and polling with `GET`, `HGET`, `HGETALL`, `SUB`, `PSUB` comman
 > **Updates:** put `=RedisUDFUpdateAvailable()` in a cell to see TRUE when a
 > newer release exists. Toggle the check with `"UpdateCheck": true|false` in
 > `RedisExcel.json` (default on, runs in the background and never blocks Excel).
+
+---
+
+## 🧰 No Redis server yet? Run one on Windows (beginner guide)
+
+RedisExcel needs a Redis server to talk to. If you do not have one, pick one of
+the options below. Both give you a server on `localhost:6379`, which is exactly
+what the default `RedisExcel.json` expects.
+
+### Option A (recommended): Docker Desktop
+
+1. Install **Docker Desktop for Windows** from
+   <https://www.docker.com/products/docker-desktop/> and start it (the whale icon
+   in the tray turns steady). Accept the WSL2 backend when it asks.
+2. Open **PowerShell** and run:
+
+   ```powershell
+   docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+   ```
+
+   That downloads a small Redis image, starts it in the background, exposes it on
+   `localhost:6379`, and restarts it whenever your PC reboots.
+3. Check it is alive:
+
+   ```powershell
+   docker exec redis redis-cli ping
+   ```
+
+   You should see `PONG`.
+
+Handy commands later:
+
+```powershell
+docker stop redis      # stop it
+docker start redis     # start it again
+docker logs redis      # see what it is doing
+docker rm -f redis     # remove it completely
+```
+
+> Want to run it as a Windows service without Docker Desktop? Install
+> [Memurai](https://www.memurai.com/) (a Redis-compatible server for Windows):
+> download it, run the installer with the default options, and it listens on
+> `localhost:6379` automatically. No command line needed.
+
+### Option B: native Windows build (no Docker)
+
+There is no official Redis build for Windows. The community port
+[Memurai](https://www.memurai.com/) (Redis-compatible, free Developer edition)
+or the archived Microsoft port
+[redis-windows](https://github.com/tporadowski/redis/releases) both work:
+
+1. Download the `.msi` (Memurai) or `.zip` (`redis-windows`).
+2. Memurai: run the installer and keep the defaults. `redis-windows`: unzip and
+   run `redis-server.exe`.
+3. Both listen on `localhost:6379` by default. Verify with:
+
+   ```powershell
+   redis-cli ping      # the Memurai/redis-windows installer adds redis-cli
+   ```
+
+   You should see `PONG`.
+
+> Redis is designed to run natively on Linux. On Windows, prefer **Option A
+> (Docker Desktop)**: it runs the real Redis with no port quirks. Use Option B
+> only when you cannot install Docker.
+
+### Point Excel at another host or port
+
+The examples in this file use the default `localhost:6379`. To use a different
+server, put the host in `RedisExcel.json` (the `host` field under `RTD` and
+`UDF`) or pass it as the last argument of a formula, e.g.
+`=RedisUDFGet("preco_btc", "192.168.0.10:6379")`. A full StackExchange.Redis
+connection string works too, e.g.
+`"myredis.example:6379,password=secret,ssl=true"` (its credentials are masked in
+error cells and logs).
 
 ---
 
