@@ -24,6 +24,34 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void KeyRange_BeyondTheWorksheetBudget_IsRejectedBeforeAllocation()
+        {
+            // A range whose keys cannot be echoed back (count x 2 over the cell
+            // budget) or whose row count would drive one wait per row must be
+            // rejected by the shared guard, not allocated (audit round N). The
+            // helper is internal so the guard is exercised without the array.
+            Assert.Throws<ArgumentException>(() => RedisUDF.EnsureKeyRangeFits(100_000, 100_000));
+            // The input itself over the budget is also rejected.
+            Assert.Throws<ArgumentException>(() => RedisUDF.EnsureKeyRangeFits(1_048_577, 1));
+            // A normal range and the empty range pass.
+            RedisUDF.EnsureKeyRangeFits(1000, 10);
+            RedisUDF.EnsureKeyRangeFits(0, 0);
+        }
+
+        [Fact]
+        public void OversizedHostArgument_ReturnsABoundedErrorCell()
+        {
+            // A normalized "invalid Redis host '<...>'" embeds the whole argument;
+            // the cell must be bounded (Excel caps a cell at 32,767 chars), so a
+            // 100k-char host cannot produce a 100k-char error cell (audit round N).
+            string host = new string('x', 100_000);
+            object result = RedisUDF.RedisUDFGet("k", host);
+            string text = (string)result;
+            Assert.StartsWith("Error:", text);
+            Assert.True(text.Length < 1000, "the error cell must be bounded, got " + text.Length);
+        }
+
+        [Fact]
         public void GetMultiple_ExcelErrorFlag_ReturnsExcelErrorArgumentMessage()
         {
             var result = RedisUDF.RedisUDFGetMultiple(new object[,] { { "k" } }, ExcelError.ExcelErrorNA, ExcelMissing.Value);

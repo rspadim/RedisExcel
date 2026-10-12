@@ -573,7 +573,16 @@ namespace RedisExcel
             // (connection/command) failures get the verbose cell text. Both are
             // masked: an argument error can name the host (connection string).
             if (ex is ArgumentException)
-                return "Error: " + AppConfig.MaskHost(ex.Message);
+            {
+                // Bound the message: an ArgumentException can embed a huge argument
+                // (e.g. a normalized "invalid Redis host '<100k chars>'"), and Excel
+                // caps a cell at 32,767 chars - an unbounded error cell is unusable.
+                // VerboseError already bounds its cause and context (audit round N).
+                string message = AppConfig.MaskHost(ex.Message);
+                if (message.Length > ErrorContextMax)
+                    message = message.Substring(0, ErrorContextMax) + "...";
+                return "Error: " + message;
+            }
             return VerboseError(ex, context);
         }
 
@@ -640,11 +649,28 @@ namespace RedisExcel
         {
             int rows = range.GetLength(0);
             int cols = range.GetLength(1);
+            EnsureKeyRangeFits(rows, cols);
             var cells = new List<object>(rows * cols);
             for (int r = 0; r < rows; r++)
                 for (int c = 0; c < cols; c++)
                     cells.Add(range[r, c]);
             return cells;
+        }
+
+        /// <summary>Shared bound for a key/value range before it is flattened: the
+        /// input must fit the worksheet (so `rows*cols` cannot overflow and the
+        /// backing list is bounded), the echo matrix is `count x 2`, and the row
+        /// count drives one wait per row in the batch reads. Without this an
+        /// oversized range allocated a multi-GB list on the Excel thread (audit
+        /// round N). Exposed internally so the guard is testable without
+        /// allocating the huge array.</summary>
+        internal static void EnsureKeyRangeFits(int rows, int cols)
+        {
+            ExcelJson.EnsureMatrixFitsExcel(rows, cols);
+            long count = (long)rows * cols;
+            if (count == 0)
+                return;
+            ExcelJson.EnsureMatrixFitsExcel(count > int.MaxValue ? int.MaxValue : (int)count, 2);
         }
 
         /// <summary>Flattens a keys range row-major into the two-column echo
@@ -656,12 +682,14 @@ namespace RedisExcel
         {
             int rows = range.GetLength(0);
             int cols = range.GetLength(1);
-            int count = rows * cols;
-            if (count == 0)
+            EnsureKeyRangeFits(rows, cols);
+            long countL = (long)rows * cols;
+            if (countL == 0)
             {
                 result = null;
                 return null;
             }
+            int count = (int)countL;
             result = new object[count, 2];
             var keys = new List<RedisKey>(count);
             for (int r = 0; r < rows; r++)

@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace RedisExcel
@@ -30,6 +31,14 @@ namespace RedisExcel
         // largest possible cell text and stays well under the 50M-cell budget in
         // the densest encoding, so no legitimate request is rejected.
         private const int MaxJsonTextLength = 8_000_000;
+
+        /// <summary>Upper bound on the JSON text produced by the matrix
+        /// conversion. An Excel cell holds at most 32,767 characters, so a larger
+        /// result is unusable as a cell; this constant leaves generous room for the
+        /// `SetJSON`/`ChannelPublish*JSON` callers (which send the text to Redis, not
+        /// to a cell) - a matrix denser than this is almost certainly a mistake
+        /// (128 MB+ from a 4000x4000 range).</summary>
+        internal const int MaxJsonOutputLength = 32_000_000;
 
         [ExcelFunction(Description = "Converts a 2D Excel matrix to a compact JSON array of arrays.")]
         public static string RedisUDFMatrixToJSON(
@@ -86,7 +95,20 @@ namespace RedisExcel
                     // ceiling keeps both serializer settings symmetric.
                     MaxDepth = 256
                 };
-                return JsonConvert.SerializeObject(array, settings);
+                // The cell budget caps the number of CELLS, not the encoded size: a
+                // legal 4000x4000 range serializes to ~128 MB (50000x1000 to
+                // ~250 MB) with no cell able to hold it (max 32,767 chars). Serialize
+                // through a bounded writer so the conversion aborts as soon as the
+                // output passes the limit instead of allocating hundreds of MB on the
+                // Excel thread before returning a value Excel rejects anyway (audit
+                // round N).
+                var buffer = new BoundedStringWriter(MaxJsonOutputLength);
+                using (var writer = new JsonTextWriter(buffer) { Formatting = Formatting.None })
+                {
+                    var serializer = JsonSerializer.Create(settings);
+                    serializer.Serialize(writer, array);
+                }
+                return buffer.ToString();
             }
             catch (Exception ex)
             {
@@ -261,7 +283,7 @@ namespace RedisExcel
         /// matrix is allocated, so the cell shows an "Error: ..." value instead
         /// of a huge allocation.
         /// </summary>
-        private static void EnsureMatrixFitsExcel(int rows, int columns)
+        internal static void EnsureMatrixFitsExcel(int rows, int columns)
         {
             if (rows > MaxExcelRows || columns > MaxExcelColumns
                 || (long)rows * columns > MaxExcelCells)
@@ -275,6 +297,48 @@ namespace RedisExcel
         {
             if (length > MaxJsonTextLength)
                 throw new ArgumentException("JSON is too large for an Excel sheet");
+        }
+
+        /// <summary>A StringWriter that refuses to grow past a character limit, so
+        /// the serializer aborts at the bound instead of materializing a
+        /// multi-hundred-MB string on the Excel thread.</summary>
+        private sealed class BoundedStringWriter : StringWriter
+        {
+            private readonly int _limit;
+            private readonly System.Text.StringBuilder _buffer = new System.Text.StringBuilder();
+
+            public BoundedStringWriter(int limit)
+            {
+                _limit = limit;
+            }
+
+            public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+
+            public override void Write(char value)
+            {
+                if (_buffer.Length >= _limit)
+                    throw new ArgumentException("JSON is too large for an Excel cell");
+                _buffer.Append(value);
+            }
+
+            public override void Write(char[] buffer, int index, int count)
+            {
+                if (_buffer.Length + count > _limit)
+                    throw new ArgumentException("JSON is too large for an Excel cell");
+                _buffer.Append(buffer, index, count);
+            }
+
+            public override void Write(string value)
+            {
+                if (value != null)
+                {
+                    if (_buffer.Length + value.Length > _limit)
+                        throw new ArgumentException("JSON is too large for an Excel cell");
+                    _buffer.Append(value);
+                }
+            }
+
+            public override string ToString() => _buffer.ToString();
         }
     }
 }

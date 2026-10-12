@@ -328,6 +328,39 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MatrixToJSON_RejectsOutputLargerThanTheCellBudget()
+        {
+            // The cell budget caps the number of CELLS, not the encoded size: a
+            // legal 4000x4000 range (16M cells, under the budget) serializes to
+            // ~128 MB and no cell can hold it. The bounded writer aborts the
+            // serialization at the output limit instead of allocating it all.
+            // 3000 columns of a long string = enough characters to exceed the
+            // output bound without needing a multi-million-cell range.
+            int rows = 4000;
+            int cols = 3000;
+            var range = new object[rows, cols];
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cols; c++)
+                    range[r, c] = "abcdefghij"; // 12 JSON chars incl. quotes/comma
+            string json = ExcelJson.RedisUDFMatrixToJSON(range);
+            Assert.Equal("Error: JSON is too large for an Excel cell", json);
+        }
+
+        [Fact]
+        public void MatrixToJSON_StillAcceptsALargeButUsableOutput()
+        {
+            // A big-but-bounded output must still convert (the bound is generous,
+            // not a low ceiling): a 1000x1000 numeric range is ~7 MB of JSON.
+            var range = new object[1000, 1000];
+            for (int r = 0; r < 1000; r++)
+                for (int c = 0; c < 1000; c++)
+                    range[r, c] = 1;
+            string json = ExcelJson.RedisUDFMatrixToJSON(range);
+            Assert.DoesNotContain("Error", json);
+            Assert.StartsWith("[[", json);
+        }
+
+        [Fact]
         public void JSONToMatrix_InvalidJsonReturnsError()
         {
             var result = ExcelJson.RedisUDFJSONToMatrix("{oops", "");
