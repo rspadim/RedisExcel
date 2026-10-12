@@ -49,6 +49,12 @@
 - **`ChannelLatest` install race completed:** the in-flight-subscribe watch that
   keeps the epoch sweep from erasing a racing install's record is now taken
   inside the same lock as the epoch read, closing the remaining window.
+- **Case-insensitive config values under a Turkish locale:** the schema's `(?i)`
+  patterns folded case with the current culture, so on a tr-TR machine
+  `ExcelUpdateStyle: "TIMER"` and `SyncWrite: "FIREFORGET-ALL"` were rejected and
+  the loader silently reverted them to `Automatic`/`fireforget`. Validation now
+  runs under the invariant culture and the two patterns use explicit ASCII
+  classes.
 
 ### Changed
 
