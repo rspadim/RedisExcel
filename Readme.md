@@ -65,34 +65,41 @@ It is searched in this order (the **first existing file wins**):
 
 ---
 
-## 🧰 No Redis server yet? Run one on Windows (beginner guide)
+## 🧰 No server yet? Run Redis or Valkey on Windows (beginner guide)
 
-RedisExcel needs a Redis server to talk to. If you do not have one, pick one of
-the options below. Both give you a server on `localhost:6379`, which is exactly
-what the default `RedisExcel.json` expects.
+RedisExcel speaks the Redis wire protocol, so any Redis-compatible server works
+- **Redis**, **Valkey** (the open-source fork, drop-in compatible, same commands,
+  same port) or **Memurai** (a Redis-compatible Windows service). All of them
+list on `localhost:6379` by default, which is exactly what the default
+`RedisExcel.json` expects. Pick one option below.
 
-### Option A (recommended): Docker Desktop
+### Option A (recommended): Docker Desktop — Redis or Valkey
 
 1. Install **Docker Desktop for Windows** from
    <https://www.docker.com/products/docker-desktop/> and start it (the whale icon
    in the tray turns steady). Accept the WSL2 backend when it asks.
-2. Open **PowerShell** and run:
+2. Open **PowerShell** and run **one** of these (Redis or Valkey - both work):
 
    ```powershell
+   # Redis
    docker run -d --name redis -p 6379:6379 --restart unless-stopped redis:7-alpine
+   # or Valkey (open-source fork, same protocol)
+   docker run -d --name valkey -p 6379:6379 --restart unless-stopped valkey/valkey:8-alpine
    ```
 
-   That downloads a small Redis image, starts it in the background, exposes it on
+   That downloads a small image, starts it in the background, exposes it on
    `localhost:6379`, and restarts it whenever your PC reboots.
-3. Check it is alive:
+3. Check it is alive (use the matching name; `valkey-cli` and `redis-cli` are
+   interchangeable):
 
    ```powershell
-   docker exec redis redis-cli ping
+   docker exec redis  redis-cli  ping   # Redis
+   docker exec valkey valkey-cli ping   # Valkey
    ```
 
    You should see `PONG`.
 
-Handy commands later:
+Handy commands later (swap `redis`/`valkey` for the name you used):
 
 ```powershell
 docker stop redis      # stop it
@@ -101,32 +108,44 @@ docker logs redis      # see what it is doing
 docker rm -f redis     # remove it completely
 ```
 
-> Want to run it as a Windows service without Docker Desktop? Install
-> [Memurai](https://www.memurai.com/) (a Redis-compatible server for Windows):
-> download it, run the installer with the default options, and it listens on
-> `localhost:6379` automatically. No command line needed.
+> Want it to start automatically as a Windows service without Docker Desktop?
+> Install [Memurai](https://www.memurai.com/) (a Redis-compatible server for
+> Windows): run the installer with the default options and it listens on
+> `localhost:6379` as a service. No command line needed.
 
 ### Option B: native Windows build (no Docker)
 
-There is no official Redis build for Windows. The community port
-[Memurai](https://www.memurai.com/) (Redis-compatible, free Developer edition)
-or the archived Microsoft port
-[redis-windows](https://github.com/tporadowski/redis/releases) both work:
+There is no official Redis build for Windows, but these run natively and speak
+the same protocol:
 
-1. Download the `.msi` (Memurai) or `.zip` (`redis-windows`).
-2. Memurai: run the installer and keep the defaults. `redis-windows`: unzip and
-   run `redis-server.exe`.
-3. Both listen on `localhost:6379` by default. Verify with:
+1. **[Valkey for Windows](https://valkey.io/)** via WSL2 — if you already have
+   WSL, run the real thing with no port quirks:
 
    ```powershell
-   redis-cli ping      # the Memurai/redis-windows installer adds redis-cli
+   wsl --install -d Ubuntu                                     # one time, if you have no WSL distro
+   wsl sudo apt update
+   wsl sudo apt install -y valkey-server                       # or redis-server
+   wsl valkey-server                                           # listens on localhost:6379
    ```
 
-   You should see `PONG`.
+2. **[Memurai](https://www.memurai.com/)** — Redis-compatible, free Developer
+   edition, ships as a Windows service (`.msi`, default options are fine).
 
-> Redis is designed to run natively on Linux. On Windows, prefer **Option A
-> (Docker Desktop)**: it runs the real Redis with no port quirks. Use Option B
-> only when you cannot install Docker.
+3. **[redis-windows](https://github.com/tporadowski/redis/releases)** — the
+   archived Microsoft port; unzip and run `redis-server.exe` (same protocol).
+
+All three listen on `localhost:6379` by default. Verify with:
+
+```powershell
+redis-cli ping      # the installer/WSL adds redis-cli (valkey-cli also works)
+```
+
+You should see `PONG`.
+
+> Redis/Valkey are designed to run natively on Linux. On Windows, prefer
+> **Option A (Docker Desktop)** or WSL2 (Option B.1): they run the real server
+> with no port quirks. Use Memurai/redis-windows only when you cannot install
+> Docker or WSL.
 
 ### Point Excel at another host or port
 
