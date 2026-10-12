@@ -118,8 +118,19 @@ function Wsl-Up([string]$pkg) {
   if ($LASTEXITCODE -ne 0) { Write-Step "apt-get install $pkg failed (exit $LASTEXITCODE)"; exit 1 }
   $binary = if ($pkg -like 'valkey*') { 'valkey-server' } else { 'redis-server' }
   Write-Step "starting $binary in the background on port $Port"
-  & $wsl @distroArg -e sh -c "$binary --port $Port --daemonize yes"
-  if (-not (Wait-Port $Port 30)) { Write-Step "started $binary but port $Port never answered"; exit 1 }
+  # Isolate this instance: a dedicated dir avoids the "Can't handle RDB format
+  # version" clash when Redis and Valkey share the default /var/lib/redis dump,
+  # and the appendonly/save flags keep it out of the way of a service instance.
+  $dir = "/var/lib/redisexcel-$Port"
+  $start = $binary + " --port $Port --daemonize yes --dir $dir --save '' --appendonly no"
+  & $wsl @distroArg -e sudo sh -c "mkdir -p $dir"
+  & $wsl @distroArg -e sh -c $start
+  if (-not (Wait-Port $Port 30)) {
+    Write-Step "the first start failed; retrying with a clean data dir"
+    & $wsl @distroArg -e sudo sh -c "rm -f $dir/dump.rdb"
+    & $wsl @distroArg -e sh -c $start
+    if (-not (Wait-Port $Port 20)) { Write-Step "started $binary but port $Port never answered"; exit 1 }
+  }
   Write-Step "done: $pkg is serving on localhost:$Port (inside WSL)"
   exit 0
 }

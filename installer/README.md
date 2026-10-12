@@ -45,13 +45,30 @@ into one folder and register the XLL from Excel.
 
 ## Helper scripts
 
-The installer ships two scripts under `C:\RedisExcel\scripts\` (usable on their
-own):
+The installer ships these under `C:\RedisExcel\` (all usable on their own):
 
-- `install-server.ps1 -Kind docker-valkey -Port 6379` - brings up a server
-  (Docker / WSL / Memurai).
-- `verify-connection.ps1 -AddInDir "C:\RedisExcel" -ServerHost localhost:6379 -OpenExcel` -
-  PINGs the server and opens the sample sheet.
+- `scripts\install-server.ps1 -Kind docker-valkey -Port 6379` - brings up a
+  server (kinds: `docker-redis`, `docker-valkey`, `wsl-redis`, `wsl-valkey`,
+  `memurai`; `none` does nothing). Exit `3` means the method is unavailable here.
+- `scripts\test-connection.ps1 -ServerHost localhost:6379 [-User u] [-Password p]` -
+  PINGs the server (honours AUTH), exit `0`/`1`.
+- `scripts\verify-connection.ps1 -AddInDir "C:\RedisExcel" -ServerHost localhost:6379 -OpenExcel` -
+  PINGs and opens the sample sheet.
+- `scripts\validate-config.ps1` (or double-click `Validate-Config.cmd`) -
+  checks `RedisExcel.json` against the shipped `RedisExcel.schema.json` (the same
+  schema the add-in embeds) and prints an OK/FAIL report.
+- `scripts\detect-servers.ps1` / `scripts\uninstall-server.ps1` - used by the
+  uninstaller.
+
+## Uninstall
+
+Run **Start Menu > Uninstall RedisExcel** (or Apps & features). It removes the
+files, the Excel auto-load entry and the `RedisRtd` COM ProgId. It then:
+
+- offers to remove any Redis-compatible **servers** it finds (Docker container
+  `redisexcel`, Redis/Valkey in WSL2, Memurai) - **nothing is removed unless you
+  tick it** (default: keep everything);
+- asks whether to keep your `RedisExcel.json`.
 
 ## Build it yourself
 
