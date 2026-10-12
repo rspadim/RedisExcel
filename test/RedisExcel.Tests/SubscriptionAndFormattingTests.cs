@@ -108,6 +108,19 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void HashEquals_ComparesFieldNamesOrdinalCaseSensitive()
+        {
+            // Field NAMES must be compared ordinally, case-sensitively (Redis hash
+            // fields are case-sensitive). A dictionary keyed OrdinalIgnoreCase
+            // would collapse "Field" and "field" and wrongly suppress an update
+            // (audit round P - nothing pinned the name comparer).
+            var a = new[] { new HashEntry("Field", "v") };
+            var b = new[] { new HashEntry("field", "v") };
+            Assert.False(RedisResultFormatter.HashEquals(a, b));
+            Assert.True(RedisResultFormatter.HashEquals(a, new[] { new HashEntry("Field", "v") }));
+        }
+
+        [Fact]
         public void HashEquals_TreatsZeroPaddedAndNumericVariantsAsDifferent()
         {
             // Ordinal comparison: "007" and "7" are different strings (a zero-padded

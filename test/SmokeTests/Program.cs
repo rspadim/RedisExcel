@@ -406,6 +406,10 @@ internal static class Program
         // delivery to a live channel listener), no Excel involved.
         RunNonVolatileWriteSmokeTest(subscriptions, server, host);
 
+        // Behavioral delegation for EVERY twin (the offline unit test only
+        // compared 7 of 24, so a mis-wired twin stayed green there).
+        RunAllTwinDelegationChecks();
+
         // SyncWrite modes + the fire-and-forget markers and reply shapes,
         // exercised against a real Redis with no Excel (the CI-safe E2E): the
         // exact texts a cell shows per mode.
@@ -1485,6 +1489,56 @@ internal static class Program
         }
         Check(WaitUntil(() => NumSub(server, channel) == 0, 5000),
             "NonVolatile twin: channel released after cleanup");
+    }
+
+    /// <summary>
+    /// Behavioral delegation check for EVERY ...NonVolatile twin (audit round P
+    /// found the offline unit test only compared 7 of 24 pairs, so a twin wired
+    /// to the wrong base stayed green until the real-Excel E2E). Each twin is
+    /// called with the SAME args as its base and the cell text must match; the
+    /// args are an invalid host, which every write rejects before any I/O, so
+    /// this is deterministic and offline. A channel-family twin is exercised via
+    /// the async-disabled sync path so the error surfaces directly.
+    /// </summary>
+    private static void RunAllTwinDelegationChecks()
+    {
+        object bad = 42; // host must be a text value -> deterministic pre-I/O error
+        int checked_ = 0;
+        void Pair(string label, Func<object> baseCall, Func<object> twinCall)
+        {
+            string b = Convert.ToString(baseCall(), CultureInfo.InvariantCulture);
+            string t = Convert.ToString(twinCall(), CultureInfo.InvariantCulture);
+            Check(string.Equals(b, t, StringComparison.Ordinal) && b.StartsWith("Error:", StringComparison.Ordinal),
+                $"twin {label}: delegates to its base ('{b}' vs '{t}')");
+            checked_++;
+        }
+
+        Pair("Set", () => RedisUDF.RedisUDFSet("k", "v", bad), () => RedisUDF.RedisUDFSetNonVolatile("k", "v", bad));
+        Pair("SetEx", () => RedisUDF.RedisUDFSetEx("k", "v", 60, bad), () => RedisUDF.RedisUDFSetExNonVolatile("k", "v", 60, bad));
+        Pair("Del", () => RedisUDF.RedisUDFDel("k", bad), () => RedisUDF.RedisUDFDelNonVolatile("k", bad));
+        Pair("Expire", () => RedisUDF.RedisUDFExpire("k", 60, bad), () => RedisUDF.RedisUDFExpireNonVolatile("k", 60, bad));
+        Pair("Incr", () => RedisUDF.RedisUDFIncr("k", bad), () => RedisUDF.RedisUDFIncrNonVolatile("k", bad));
+        Pair("IncrBy", () => RedisUDF.RedisUDFIncrBy("k", 5, bad), () => RedisUDF.RedisUDFIncrByNonVolatile("k", 5, bad));
+        Pair("Rename", () => RedisUDF.RedisUDFRename("k", "k2", bad), () => RedisUDF.RedisUDFRenameNonVolatile("k", "k2", bad));
+        Pair("SetJSON", () => RedisUDF.RedisUDFSetJSON("k", new object[,] { { 1 } }, bad), () => RedisUDF.RedisUDFSetJSONNonVolatile("k", new object[,] { { 1 } }, bad));
+        Pair("SetKV", () => RedisUDF.RedisUDFSetKV(new object[,] { { "k" } }, new object[,] { { "v" } }, bad), () => RedisUDF.RedisUDFSetKVNonVolatile(new object[,] { { "k" } }, new object[,] { { "v" } }, bad));
+        Pair("SetKVPair", () => RedisUDF.RedisUDFSetKVPair(new object[,] { { "k", "v" } }, bad), () => RedisUDF.RedisUDFSetKVPairNonVolatile(new object[,] { { "k", "v" } }, bad));
+        Pair("HashSet", () => RedisUDF.RedisUDFHashSet("h", "f", "v", bad), () => RedisUDF.RedisUDFHashSetNonVolatile("h", "f", "v", bad));
+        Pair("HashSetMultiple", () => RedisUDF.RedisUDFHashSetMultiple("h", new object[,] { { "f", "v" } }, bad), () => RedisUDF.RedisUDFHashSetMultipleNonVolatile("h", new object[,] { { "f", "v" } }, bad));
+        Pair("HashDel", () => RedisUDF.RedisUDFHashDel("h", "f", bad), () => RedisUDF.RedisUDFHashDelNonVolatile("h", "f", bad));
+        Pair("ListPushRight", () => RedisUDF.RedisUDFListPushRight("k", "v", bad), () => RedisUDF.RedisUDFListPushRightNonVolatile("k", "v", bad));
+        Pair("ListPushLeft", () => RedisUDF.RedisUDFListPushLeft("k", "v", bad), () => RedisUDF.RedisUDFListPushLeftNonVolatile("k", "v", bad));
+        Pair("ListPopRight", () => RedisUDF.RedisUDFListPopRight("k", bad), () => RedisUDF.RedisUDFListPopRightNonVolatile("k", bad));
+        Pair("ListPopLeft", () => RedisUDF.RedisUDFListPopLeft("k", bad), () => RedisUDF.RedisUDFListPopLeftNonVolatile("k", bad));
+        Pair("SetAdd", () => RedisUDF.RedisUDFSetAdd("k", "v", bad), () => RedisUDF.RedisUDFSetAddNonVolatile("k", "v", bad));
+        Pair("SetRemove", () => RedisUDF.RedisUDFSetRemove("k", "v", bad), () => RedisUDF.RedisUDFSetRemoveNonVolatile("k", "v", bad));
+        Pair("ChannelPublish", () => RedisUDF.RedisUDFChannelPublish("c", "m", bad), () => RedisUDF.RedisUDFChannelPublishNonVolatile("c", "m", bad));
+        Pair("ChannelPublishJSON", () => RedisUDF.RedisUDFChannelPublishJSON("c", new object[,] { { 1 } }, bad), () => RedisUDF.RedisUDFChannelPublishJSONNonVolatile("c", new object[,] { { 1 } }, bad));
+        Pair("ChannelPublishIfChanged", () => RedisUDF.RedisUDFChannelPublishIfChanged("c", "m", bad), () => RedisUDF.RedisUDFChannelPublishIfChangedNonVolatile("c", "m", bad));
+        Pair("ChannelPublishIfChangedJSON", () => RedisUDF.RedisUDFChannelPublishIfChangedJSON("c", new object[,] { { 1 } }, bad), () => RedisUDF.RedisUDFChannelPublishIfChangedJSONNonVolatile("c", new object[,] { { 1 } }, bad));
+        Pair("ChannelUnsubscribe", () => RedisUDF.RedisUDFChannelUnsubscribe("c", bad), () => RedisUDF.RedisUDFChannelUnsubscribeNonVolatile("c", bad));
+
+        Check(checked_ == 24, $"twin delegation: exercised all 24 twins (got {checked_})");
     }
 
     /// <summary>

@@ -56,6 +56,7 @@ namespace RedisExcel.Tests
 
             var packed = new HashSet<string>(
                 XDocument.Load(dnaPath).Descendants("Reference")
+                    .Where(e => IsPacked(e))
                     .Select(e => (string)e.Attribute("Path"))
                     .Where(p => !string.IsNullOrEmpty(p))
                     .Select(Path.GetFileName),
@@ -72,6 +73,16 @@ namespace RedisExcel.Tests
                 + string.Join(", ", missing));
         }
 
+        /// <summary>A &lt;Reference&gt; is embedded in the XLL only when Pack is true
+        /// (ExcelDna's default is false). A dependency marked <c>Pack="false"</c> is
+        /// NOT shipped, so it must not count as packed (a mutation that flips it
+        /// would otherwise leave the parity test green - audit round P).</summary>
+        private static bool IsPacked(XElement reference)
+        {
+            var pack = (string)reference.Attribute("Pack");
+            return string.Equals(pack, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
         [Fact]
         public void DnaListsNoAssemblyThatIsNotShipped()
         {
@@ -79,6 +90,9 @@ namespace RedisExcel.Tests
             // the packer fail (or ship a wrong version).
             string repoRoot = FindRepoRoot();
             string outputDir = Path.Combine(repoRoot, "bin", "Release", "net48");
+            Assert.True(Directory.Exists(outputDir),
+                "the build output is missing; build the add-in first " +
+                "(dotnet build RedisExcel.sln -c Release); no output in " + outputDir);
             var inOutput = new HashSet<string>(
                 Directory.GetFiles(outputDir, "*.dll").Select(Path.GetFileName),
                 StringComparer.OrdinalIgnoreCase);

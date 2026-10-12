@@ -1352,6 +1352,15 @@ namespace RedisExcel
                 }
 
                 var channels = (RedisResult[])channelsResult;
+                // Bound the server-driven list before materializing it: PUBSUB
+                // CHANNELS is not limited by the add-in, and the name array, the
+                // NUMSUB argument array and the (N+1)x2 matrix are all built on the
+                // Excel thread. The same ceiling RedisUDFKeys uses keeps a huge
+                // server channel list from allocating a matrix Excel cannot spill
+                // (audit round P).
+                const int MaxChannelsRows = 1000000;
+                if (channels.Length > MaxChannelsRows)
+                    throw new ArgumentException("too many channels (over " + MaxChannelsRows + "); narrow the server");
                 var result = new object[channels.Length + 1, 2];
                 result[0, 0] = "Channel";
                 result[0, 1] = "Subscribers";
