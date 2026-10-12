@@ -352,6 +352,75 @@ namespace RedisExcel.Tests
             Assert.Equal(1, Volatile.Read(ref attempts)); // no second real connect
         }
 
+        [Fact]
+        public void GetConnection_FastFailSkip_DoesNotExtendTheMemoWindow()
+        {
+            // The fast-fail skip throws through GetConnection's catch; recording a
+            // fresh timestamp there on every poll (RTD default 1s) would extend the
+            // 2s window forever, so an evicted host read faster than the window
+            // would never retry (audit round P). The window must only restart on a
+            // REAL new attempt.
+            var manager = new RedisConnectionManager();
+            const string host = "127.0.0.1:1";
+            var pool = UdfPool(manager);
+            var failures = RecentConnectFailures(manager);
+            string memoKey = PoolKey(host, RedisPool.UdfData);
+
+            int attempts = 0;
+            pool[host] = new Lazy<ConnectionMultiplexer>(
+                () => { Interlocked.Increment(ref attempts); throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "seeded"); },
+                LazyThreadSafetyMode.ExecutionAndPublication);
+
+            Assert.Throws<RedisConnectionException>(() => manager.GetConnection(host, RedisPool.UdfData));
+            long recorded = failures[memoKey];
+
+            // A second call is a fast-fail skip; it must NOT move the timestamp.
+            Assert.Throws<RedisConnectionException>(() => manager.GetConnection(host, RedisPool.UdfData));
+            Assert.Equal(recorded, failures[memoKey]);
+            Assert.Equal(1, Volatile.Read(ref attempts));
+        }
+
+        [Fact]
+        public void Eviction_DropsTheDownClockAndMemoOfTheEvictedHost()
+        {
+            // The idle-down sweep only revisits entries still in the pool, so an
+            // evicted host used to leave a tombstone in _downSinceTicks forever
+            // (unbounded per-host map) and a stale memo that skiped its next real
+            // attempt (audit round P). Eviction must clear both.
+            var manager = new RedisConnectionManager();
+            var pool = UdfPool(manager);
+            int cap = MaxCachedConnectionsPerPool;
+
+            string target = "evict.clock:" + Guid.NewGuid().ToString("N");
+            ConnectionMultiplexer mux =
+                ConnectionMultiplexer.Connect("127.0.0.1:1,abortConnect=False,connectTimeout=100,connectRetry=0");
+            try
+            {
+                Assert.False(mux.IsConnected);
+                pool[target] = new Lazy<ConnectionMultiplexer>(() => mux, LazyThreadSafetyMode.ExecutionAndPublication);
+                Assert.Same(mux, pool[target].Value);
+                for (int i = 0; i < cap; i++)
+                    pool["evict.clock.filler:" + i] = NeverMaterializingLazy();
+
+                string memoKey = PoolKey(target, RedisPool.UdfData);
+                DownSinceTicks(manager)[memoKey] = DateTime.UtcNow.Ticks;
+                RecentConnectFailures(manager)[memoKey] = DateTime.UtcNow.Ticks;
+
+                manager.SetEvictionProtection(h => !string.Equals(h, target, StringComparison.Ordinal));
+                InvokeEviction(manager, pool, keepHost: null, RedisPool.UdfData);
+
+                Assert.False(pool.ContainsKey(target));
+                Assert.False(DownSinceTicks(manager).ContainsKey(memoKey),
+                    "the evicted host left a down-clock tombstone");
+                Assert.False(RecentConnectFailures(manager).ContainsKey(memoKey),
+                    "the evicted host left a stale fast-fail memo");
+            }
+            finally
+            {
+                try { mux.Dispose(); } catch { }
+            }
+        }
+
         /// <summary>Reads the private pool-cap constant (reflection keeps the
         /// test in sync when it changes).</summary>
         private static int MaxCachedConnectionsPerPool =>
@@ -386,6 +455,9 @@ namespace RedisExcel.Tests
 
         private static ConcurrentDictionary<string, long> RecentConnectFailures(RedisConnectionManager manager)
             => (ConcurrentDictionary<string, long>)ReadField(manager, "_recentConnectFailures");
+
+        private static ConcurrentDictionary<string, long> DownSinceTicks(RedisConnectionManager manager)
+            => (ConcurrentDictionary<string, long>)ReadField(manager, "_downSinceTicks");
 
         private static object ReadField(RedisConnectionManager manager, string name)
             => typeof(RedisConnectionManager)

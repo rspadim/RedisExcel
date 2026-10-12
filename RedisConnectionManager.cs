@@ -188,7 +188,15 @@ namespace RedisExcel
                     DisposeConnection(mux,
                         $"GetConnection: error disposing evicted connection host={AppConfig.MaskHost(kv.Key)}",
                         closeFirst: true, allowCommandsToComplete: false);
-                    InvalidateWrappers(PoolKey(kv.Key, pool));
+                    string memoKey = PoolKey(kv.Key, pool);
+                    InvalidateWrappers(memoKey);
+                    // Drop the down clock and fast-fail memo too: the sweep only
+                    // revisits entries still in the pool, so an evicted host would
+                    // otherwise leave a tombstone in _downSinceTicks forever (audit
+                    // round P). Same for the memo: stale entries must not skip the
+                    // fresh host's next real attempt.
+                    _downSinceTicks.TryRemove(memoKey, out _);
+                    _recentConnectFailures.TryRemove(memoKey, out _);
                     logger.Info($"GetConnection: evicted disconnected connection host={AppConfig.MaskHost(kv.Key)} (pool over {MaxCachedConnectionsPerPool} entries)");
                 }
             }
@@ -325,9 +333,22 @@ namespace RedisExcel
             catch
             {
                 // Record the failure so a burst of calls within the memo window
-                // fails fast instead of repeating the connect stall.
-                _recentConnectFailures[PoolKey(host, pool)] = DateTime.UtcNow.Ticks;
-                PruneConnectFailures();
+                // fails fast instead of repeating the connect stall. Do NOT
+                // overwrite an already-fresh entry: the fast-fail skip in Connect
+                // throws through here too, and refreshing its timestamp on every
+                // poll would extend the 2s window forever - a host read faster
+                // than the window (the RTD default poll is 1s) would then never
+                // retry after an eviction (audit round P). The window only
+                // restarts after a REAL new attempt, i.e. once the old entry aged
+                // out.
+                string memoKey = PoolKey(host, pool);
+                long nowTicks = DateTime.UtcNow.Ticks;
+                if (!_recentConnectFailures.TryGetValue(memoKey, out var existingFailedAt)
+                    || nowTicks - existingFailedAt >= TimeSpan.FromMilliseconds(ConnectFailureMemoMs).Ticks)
+                {
+                    _recentConnectFailures[memoKey] = nowTicks;
+                    PruneConnectFailures();
+                }
                 if (_shutdown)
                 {
                     // Shutdown won the race: Connect already refused/disposed the
