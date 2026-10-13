@@ -1504,6 +1504,13 @@ namespace RedisExcel
                 }
                 return result;
             }
+            catch (ConfigException cex)
+            {
+                // Uniform fail-closed contract: a rejected configuration shows
+                // "#CONFIG: ..." here too (this function has its own catch, so it
+                // does not go through Fail/FailMatrix).
+                return new object[,] { { "#CONFIG: " + cex.Message } };
+            }
             catch (Exception ex)
             {
                 logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}");

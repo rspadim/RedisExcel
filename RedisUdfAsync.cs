@@ -275,6 +275,12 @@ namespace RedisExcel
             {
                 return work();
             }
+            catch (ConfigException cex)
+            {
+                // Keep the fail-closed contract on the async path too: a rejected
+                // configuration must show "#CONFIG: ...", never a generic error.
+                return "#CONFIG: " + SafeMessage(cex);
+            }
             catch (Exception ex)
             {
                 logger.Error(ex, "RedisUdfAsync: queued work item failed");

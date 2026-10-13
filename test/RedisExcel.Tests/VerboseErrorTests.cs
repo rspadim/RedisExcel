@@ -100,6 +100,34 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void PubSubChannelsInfo_RejectedConfig_ReturnsConfigCell()
+        {
+            // This matrix function has its OWN catch (it does not go through
+            // Fail/FailMatrix), so the fail-closed contract must be asserted here
+            // explicitly: a rejected config -> "#CONFIG", not the legacy
+            // {"Error", "..."} shape (audit B2).
+            var original = AppConfig.CurrentOverrideForTests;
+            try
+            {
+                var rejected = AppConfig.Sanitize(new ConfigRoot());
+                rejected.Rejected = true;
+                rejected.RejectedReason = "RedisExcel.json rejected: /Timeout/connectTimeout: expected an integer";
+                AppConfig.CurrentOverrideForTests = rejected;
+
+                var grid = (object[,])RedisUDF.RedisUDFPubSubChannelsInfo(ExcelDna.Integration.ExcelMissing.Value);
+                Assert.Equal(1, grid.GetLength(0));
+                Assert.Equal(1, grid.GetLength(1));
+                string cell = grid[0, 0] as string;
+                Assert.StartsWith("#CONFIG: ", cell);
+                Assert.Contains("expected an integer", cell);
+            }
+            finally
+            {
+                AppConfig.CurrentOverrideForTests = original;
+            }
+        }
+
+        [Fact]
         public void SelfExplanatoryCause_AppendsNoHint()
         {
             string text = Format(new Exception("some plain failure"), "key=k, host=h");
