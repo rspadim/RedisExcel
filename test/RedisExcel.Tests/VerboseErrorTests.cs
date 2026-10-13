@@ -13,6 +13,7 @@ namespace RedisExcel.Tests
     /// is driven directly with synthesized exceptions, so the test is
     /// deterministic and independent of the process-wide connection cache.
     /// </summary>
+    [Collection("write-mode-seam")]
     public class VerboseErrorTests
     {
         private static readonly MethodInfo VerboseError =
@@ -115,8 +116,9 @@ namespace RedisExcel.Tests
                 AppConfig.CurrentOverrideForTests = rejected;
 
                 var grid = (object[,])RedisUDF.RedisUDFPubSubChannelsInfo(ExcelDna.Integration.ExcelMissing.Value);
-                Assert.Equal(1, grid.GetLength(0));
-                Assert.Equal(1, grid.GetLength(1));
+                Assert.True(grid.GetLength(0) == 1 && grid.GetLength(1) == 1,
+                    "expected the #CONFIG 1x1 cell, got " + grid.GetLength(0) + "x" + grid.GetLength(1)
+                    + " first=[" + grid[0, 0] + "]");
                 string cell = grid[0, 0] as string;
                 Assert.StartsWith("#CONFIG: ", cell);
                 Assert.Contains("expected an integer", cell);

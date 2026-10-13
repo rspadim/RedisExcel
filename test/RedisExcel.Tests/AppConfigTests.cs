@@ -367,6 +367,24 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void LoadFromPaths_NonObjectRoot_FailsClosed()
+        {
+            // A file whose ROOT is not a JSON object (array/number/string/bool)
+            // must fail closed too, not silently fall back to localhost (audit C3
+            // showed this branch was unpinned).
+            using (var temp = new TempFiles())
+            {
+                foreach (var root in new[] { "[1,2]", "123", "\"x\"", "true" })
+                {
+                    string file = temp.Write("bad-root.json", root);
+                    var config = AppConfig.LoadFromPaths(new[] { file });
+                    Assert.True(config.Rejected, "root " + root + " was not rejected");
+                    Assert.Contains("bad-root.json", config.RejectedReason);
+                }
+            }
+        }
+
+        [Fact]
         public void LoadFromPaths_LeadingComment_IsAccepted()
         {
             // Comments are documented as allowed anywhere; a file whose FIRST token

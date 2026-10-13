@@ -537,15 +537,8 @@ $allowClientKill = (-not $SkipClientKill) -and $isLocalHost -and [string]::IsNul
 # instead of depending on a machine-local config.
 $configPath = Join-Path $env:USERPROFILE 'RedisExcel.json'
 $configBackup = $null
-if (Test-Path -LiteralPath $configPath) {
-    $configBackup = Join-Path $env:TEMP ("RedisExcel.json.bak-" + [Guid]::NewGuid().ToString('N'))
-    Copy-Item -LiteralPath $configPath -Destination $configBackup -Force
-}
 $asyncJson = if ($AsyncWrites.IsPresent) { 'true' } else { 'false' }
 $configJson = '{"SyncWrite":"' + $SyncWrite + '","AsyncWrites":' + $asyncJson + ',"SkipRepeatedMessages":true}'
-[System.IO.File]::WriteAllText($configPath, $configJson)
-Write-Host ("Sync write: {0} (AsyncWrites: {1})" -f $SyncWrite, $AsyncWrites.IsPresent)
-Write-Host ("Config    : {0} -> {1}" -f $configPath, $configJson) -ForegroundColor DarkGray
 
 # AV/EDR visibility: report the registered antivirus products before touching
 # Excel, so a flaky run in a protected environment is identified immediately.
@@ -567,6 +560,16 @@ $udf = $null
 $rtd = $null
 
 try {
+    # Back up the user's config, then write the test config INSIDE the try, so a
+    # failure after the write (AV probe, COM, ...) still restores it in finally.
+    if (Test-Path -LiteralPath $configPath) {
+        $configBackup = Join-Path $env:TEMP ("RedisExcel.json.bak-" + [Guid]::NewGuid().ToString('N'))
+        Copy-Item -LiteralPath $configPath -Destination $configBackup -Force
+    }
+    [System.IO.File]::WriteAllText($configPath, $configJson)
+    Write-Host ("Sync write: {0} (AsyncWrites: {1})" -f $SyncWrite, $AsyncWrites.IsPresent)
+    Write-Host ("Config    : {0} -> {1}" -f $configPath, $configJson) -ForegroundColor DarkGray
+
     # Remember which EXCEL.EXE processes already existed so the cleanup waits
     # only for THIS run's hidden instance (never the user's own Excel).
     $script:ExcelPidsBefore = @(Get-Process EXCEL -ErrorAction SilentlyContinue | ForEach-Object { $_.Id })

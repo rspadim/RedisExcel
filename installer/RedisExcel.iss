@@ -1,6 +1,6 @@
 ﻿; RedisExcel installer + uninstaller (Inno Setup 6).
 ;
-; Build:  ISCC /DAppVersion=1.5.1 .\installer\RedisExcel.iss
+; Build:  ISCC /DAppVersion=<version> .\installer\RedisExcel.iss
 ; CI builds it on every run and attaches RedisExcelSetup-<version>.exe to a
 ; v* tag release (see .github/workflows/build.yml).
 ;

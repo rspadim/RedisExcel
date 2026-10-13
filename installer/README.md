@@ -42,7 +42,7 @@ No wizard, no Excel prompt - just copy the files and use the given (or default)
 host:
 
 ```powershell
-RedisExcelSetup-1.5.2.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret /SERVER=none /OPENEXCEL=0
+RedisExcelSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel" /HOST=localhost /PORT=6379 /PASSWORD=secret /SERVER=none /OPENEXCEL=0
 ```
 
 `/HOST`, `/PORT`, `/PASSWORD`, `/SERVER` (`none`|`docker-redis`|`docker-valkey`|
@@ -91,8 +91,8 @@ choco install innosetup -y
 dotnet build RedisExcel.sln -c Release
 
 # Compile the installer (version is injected; use the tag without the 'v')
-iscc "/DAppVersion=1.5.2" "installer\RedisExcel.iss"
-# -> installer\output\RedisExcelSetup-1.5.2.exe
+iscc "/DAppVersion=<version>" "installer\RedisExcel.iss"
+# -> installer\output\RedisExcelSetup-<version>.exe
 ```
 
 CI builds the installer on every run (so a broken `.iss` fails fast) and attaches

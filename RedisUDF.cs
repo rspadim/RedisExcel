@@ -1423,6 +1423,10 @@ namespace RedisExcel
             string host = null;
             try
             {
+                // Fail closed BEFORE touching the process-wide runtime, exactly like
+                // RunMatrixCore: a rejected config must yield "#CONFIG" regardless of
+                // the runtime state, and this keeps the check deterministic.
+                ThrowIfConfigRejected();
                 host = ResolveHost(optionalHost);
                 var conn = RedisRuntime.Connections.GetConnection(host, RedisPool.UdfData);
 
