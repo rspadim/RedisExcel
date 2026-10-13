@@ -305,10 +305,14 @@ namespace RedisExcel.Tests
         // ---- extra keys are warnings, not errors -------------------------------
 
         [Theory]
-        [InlineData("{\"UDF\":{\"host\":\"x\"}}")]   // the removed section is now an ERROR (a legacy key)
-        public void LegacyKeys_AreErrors(string json)
+        [InlineData("{\"UDF\":{\"host\":\"x\"}}", "/UDF")]                    // the removed section
+        [InlineData("{\"RTD\":{\"host\":\"x\"}}", "/RTD/host")]               // removed
+        [InlineData("{\"RTD\":{\"timeout\":1000}}", "/RTD/timeout")]         // removed
+        [InlineData("{\"CoalesceRealtimeUpdates\":true}", "/CoalesceRealtimeUpdates")] // moved into RTD
+        public void LegacyKeys_AreErrorsNamedInTheReason(string json, string path)
         {
-            Assert.True(Rejected(json));
+            var issues = Clean(json);
+            Assert.Contains(issues, i => i.Severity == ConfigSeverity.Error && i.Path == path);
         }
 
         [Theory]
@@ -351,47 +355,93 @@ namespace RedisExcel.Tests
             Assert.Equal("sync", bound.SyncWrite);
         }
 
-        // ---- the built schema types match the model types ---------------------
+        // ---- the built schema types match the model types (BIDIRECTIONAL) -----
 
+        /// <summary>Full parity both ways, so a config knob cannot silently become
+        /// dead config (a model field with no schema entry binds to its default
+        /// and is only logged as an unknown key) and the schema cannot grow an
+        /// orphan property. Driven by reflection over the CLR model, so a new
+        /// field fails the test until the schema declares it.</summary>
         [Fact]
-        public void SchemaTypesMatchTheModelTypes()
+        public void SchemaAndModelAgreeOnEveryProperty_BothDirections()
         {
-            var modelMap = new Dictionary<string, Type>
-            {
-                ["RedisUpdateRateMs"] = typeof(int),
-                ["ExcelUpdateRateMs"] = typeof(int),
-                ["MessageCounterThreshold"] = typeof(long),
-                ["UseGetMultiple"] = typeof(bool),
-                ["CoalesceRealtimeUpdates"] = typeof(bool),
-                ["UpdateCheck"] = typeof(bool),
-                ["SkipRepeatedMessages"] = typeof(bool),
-                ["ConflationMs"] = typeof(int?),
-                ["PublishDedupCacheSize"] = typeof(int),
-                ["AsyncWrites"] = typeof(bool),
-                ["connectTimeout"] = typeof(int?),
-                ["syncTimeout"] = typeof(int?),
-            };
             var schema = JObject.Parse(ConfigSchema.Text);
-            var all = new Dictionary<string, JToken>();
-            void Collect(JObject obj)
-            {
-                if (obj == null) return;
-                foreach (var p in obj.Properties())
-                    if (p.Value is JObject o && o["type"] != null)
-                        all[p.Name] = o["type"];
-            }
             var props = (JObject)schema["properties"];
-            Collect(props);
-            Collect((JObject)((JObject)props["RTD"])["properties"]);
-            Collect((JObject)((JObject)props["Timeout"])["properties"]);
-            foreach (var kv in modelMap)
+
+            AssertSectionParity(props, typeof(ConfigRoot), "root");
+            AssertSectionParity((JObject)((JObject)props["RTD"])["properties"], typeof(RTDConfig), "RTD");
+            AssertSectionParity((JObject)((JObject)props["Timeout"])["properties"], typeof(TimeoutConfig), "Timeout");
+
+            // A Servers value is a string or an object; the object branch is ServerDef.
+            var oneOf = (JArray)((JObject)props["Servers"])["additionalProperties"]["oneOf"];
+            var serverObj = (JObject)oneOf.First(t => (string)t["type"] == "object");
+            AssertSectionParity((JObject)serverObj["properties"], typeof(ServerDef), "ServerDef");
+            // host is the only required field (matches ServerDef.host).
+            Assert.Equal(new[] { "host" }, ((JArray)serverObj["required"]).Select(t => (string)t).ToArray());
+        }
+
+        private static void AssertSectionParity(JObject sectionProps, Type model, string label)
+        {
+            var expected = ModelSchemaNames(model);
+            var declared = sectionProps.Properties().Select(p => p.Name).ToList();
+            foreach (var kv in expected)
             {
-                Assert.True(all.TryGetValue(kv.Key, out var declared), "schema type missing for " + kv.Key);
-                string expected = kv.Value == typeof(bool) ? "boolean"
-                    : (kv.Value == typeof(int) || kv.Value == typeof(long) || kv.Value == typeof(int?)) ? "integer"
-                    : "string";
-                Assert.Equal(expected, (string)declared);
+                Assert.True(sectionProps.Property(kv.Key) != null,
+                    label + " schema is missing the model property '" + kv.Key + "'");
+                Assert.Equal(kv.Value, (string)((JObject)sectionProps[kv.Key])["type"]);
             }
+            foreach (var name in declared)
+                Assert.True(expected.ContainsKey(name),
+                    label + " schema declares '" + name + "', which has no model field (orphan)");
+        }
+
+        private static Dictionary<string, string> ModelSchemaNames(Type type)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var p in type.GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                if (p.GetCustomAttributes(typeof(Newtonsoft.Json.JsonIgnoreAttribute), true).Length > 0)
+                    continue; // [JsonIgnore]: not part of the file (Rejected/RejectedReason)
+                map[p.Name] = SchemaTypeName(p.PropertyType);
+            }
+            return map;
+        }
+
+        private static string SchemaTypeName(Type t)
+        {
+            if (t == typeof(bool)) return "boolean";
+            if (t == typeof(int) || t == typeof(long) || t == typeof(int?) || t == typeof(long?)) return "integer";
+            if (t.IsEnum) return "string";
+            if (t == typeof(string)) return "string";
+            // Any other member is a nested object (RTDConfig, TimeoutConfig,
+            // Dictionary<string, ServerDef>), validated by its own section check.
+            return "object";
+        }
+
+        /// <summary>The embedded schema (the one the add-in actually validates
+        /// with) must be byte-identical to the on-disk <c>RedisExcel.schema.json</c>,
+        /// so a stale re-embed cannot pass every other test.</summary>
+        [Fact]
+        public void EmbeddedSchemaBytesMatchTheOnDiskFile()
+        {
+            string repoRoot = FindRepoRoot();
+            string onDisk = System.IO.File.ReadAllText(System.IO.Path.Combine(repoRoot, "RedisExcel.schema.json"));
+            Assert.Equal(Normalize(onDisk), Normalize(ConfigSchema.Text));
+        }
+
+        private static string Normalize(string s) =>
+            s.Replace("\r\n", "\n").Replace("\r", "\n").Trim('\uFEFF', '\n', ' ', '\t');
+
+        private static string FindRepoRoot()
+        {
+            var dir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+            while (dir != null)
+            {
+                if (System.IO.File.Exists(System.IO.Path.Combine(dir.FullName, "RedisExcel.sln")))
+                    return dir.FullName;
+                dir = dir.Parent;
+            }
+            throw new InvalidOperationException("RedisExcel.sln not found above " + AppContext.BaseDirectory);
         }
     }
 }
