@@ -116,7 +116,11 @@ $json = $null
 try {
   $json = $raw | ConvertFrom-Json
 } catch {
+  # Strip comments (string-aware) and trailing commas. The add-in uses
+  # Newtonsoft, which accepts BOTH; the PowerShell parser does not, so the
+  # validator must normalize them or it flags a file the add-in loads fine.
   $stripped = Strip-JsonComments $raw
+  $stripped = [regex]::Replace($stripped, ',\s*([}\]])', '$1')
   try { $json = $stripped | ConvertFrom-Json }
   catch {
     Line 'FAIL: the file is not valid JSON.'
@@ -130,7 +134,10 @@ Line ''
 $schemaObj = Get-Content -LiteralPath $Schema -Raw | ConvertFrom-Json
 
 # ---- Tiny schema walker (types, ranges, enums, patterns) -------------------
+# $problems are ERRORS (the add-in rejects the whole file -> #CONFIG);
+# $warnings are tolerated (extra keys, logged only).
 $problems = New-Object System.Collections.Generic.List[string]
+$warnings = New-Object System.Collections.Generic.List[string]
 $checked  = 0
 
 function TypeOk($value, $type) {
@@ -190,7 +197,9 @@ function CheckValue($path, $value, $sub) {
       } elseif ($hasAdditional) {
         # additionalProperties: true -> anything is allowed.
       } else {
-        $script:problems.Add("$path/$name : unknown key")
+        # An extra/unknown key is only a WARNING (the add-in logs and ignores
+        # it); it does NOT reject the file.
+        $script:warnings.Add("$path/$name : unknown key (ignored by the add-in)")
       }
     }
   }
@@ -199,10 +208,43 @@ function CheckValue($path, $value, $sub) {
 # Walk top-level keys.
 $topSchema = $schemaObj
 $topProps = @($topSchema.properties.PSObject.Properties.Name)
+
+# The removed v1 keys are ERRORS in the add-in (fail-closed): mirror that so the
+# validator agrees with the loader.
+if ($json.PSObject.Properties.Name -contains 'UDF') {
+  $problems.Add("/UDF : removed in v1.6; declare servers under `"Servers`" and pick one with `"Default`"")
+}
+if ($json.PSObject.Properties.Name -contains 'CoalesceRealtimeUpdates') {
+  $problems.Add("/CoalesceRealtimeUpdates : moved into `"RTD`" in v1.6")
+}
+if ($json.RTD -and ($json.RTD.PSObject.Properties.Name -contains 'host')) {
+  $problems.Add("/RTD/host : removed in v1.6; use `"Default`" (or a `"Servers`" name)")
+}
+if ($json.RTD -and ($json.RTD.PSObject.Properties.Name -contains 'timeout')) {
+  $problems.Add("/RTD/timeout : removed in v1.6; use the server's connectTimeout/syncTimeout or the global `"Timeout`"")
+}
+
+# A dangling Default (a bare name not in Servers and not a connection string) is
+# an error in the add-in too.
+$defaultName = $null
+if ($json.Default -is [string]) { $defaultName = $json.Default.Trim() }
+if ($defaultName) {
+  $looksLikeConn = ($defaultName -match '[:,=/]') -or ($defaultName -match '\.')
+  $inServers = $false
+  if ($json.Servers) {
+    foreach ($p in $json.Servers.PSObject.Properties) {
+      if ($p.Name -eq $defaultName -or $p.Name.ToLowerInvariant() -eq $defaultName.ToLowerInvariant()) { $inServers = $true; break }
+    }
+  }
+  if (-not $looksLikeConn -and -not $inServers) {
+    $problems.Add("/Default : '$defaultName' is not defined in `"Servers`" and is not a connection string")
+  }
+}
+
 foreach ($name in $json.PSObject.Properties.Name) {
   $value = $json.$name
   if ($topProps -notcontains $name) {
-    $problems.Add("/$name : unknown key")
+    $warnings.Add("/$name : unknown key (ignored by the add-in)")
     continue
   }
   CheckValue ("/" + $name) $value $topSchema.properties.$name
@@ -212,15 +254,25 @@ foreach ($name in $json.PSObject.Properties.Name) {
 Line ''
 Line '----------------------------------------------------------------------'
 if ($problems.Count -eq 0) {
-  Line ("RESULT: OK - " + $checked + ' value(s) checked, no problems.')
+  if ($warnings.Count -eq 0) {
+    Line ("RESULT: OK - " + $checked + ' value(s) checked, no problems.')
+  } else {
+    Line ("RESULT: OK - " + $checked + ' value(s) checked, ' + $warnings.Count + ' warning(s).')
+    foreach ($w in $warnings) { Line ("  warning: " + $w) }
+  }
   Line 'Your RedisExcel.json is valid. Restart Excel if you just edited it.'
   exit 0
 } else {
   Line ("RESULT: FAIL - " + $problems.Count + ' problem(s) in ' + $checked + ' checked value(s):')
   foreach ($p in $problems) { Line ("  - " + $p) }
+  if ($warnings.Count -gt 0) {
+    Line ''
+    Line ("  " + $warnings.Count + ' warning(s) (not fatal):')
+    foreach ($w in $warnings) { Line ("  warning: " + $w) }
+  }
   Line ''
-  Line 'Fix the lines above. A wrong value is usually ignored (the add-in'
-  Line 'falls back to the default for that key), but it is listed here so you'
-  Line 'know exactly what is off.'
+  Line 'A wrong VALUE on a known key makes the add-in REJECT the whole file:'
+  Line 'every cell shows "#CONFIG" until it is fixed (there is no silent'
+  Line 'fallback). Extra/unknown keys are only warnings.'
   exit 1
 }

@@ -649,7 +649,7 @@ begin
     '  "Timeout": { "connectTimeout": 5000, "syncTimeout": 5000 },' + #13#10 +
     '  // Named servers: value is a connection string OR { host, connectTimeout, syncTimeout }.' + #13#10 +
     '  "Servers": {' + #13#10 +
-    '    "local": "' + H + '",' + #13#10 +
+    '    "local": "' + H + '"' + #13#10 +
     '    // "prod": { "host": "sentinel-a:26379,sentinel-b:26379,serviceName=mymaster", "connectTimeout": 8000, "syncTimeout": 8000 },' + #13#10 +
     '    // "cache": "node-a:6379,node-b:6379"' + #13#10 +
     '  },' + #13#10 +

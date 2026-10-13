@@ -193,8 +193,8 @@ You should see `PONG`.
 ### Point Excel at another host or port
 
 The examples in this file use the default `localhost:6379`. To use a different
-server, put the host in `RedisExcel.json` (the `host` field under `RTD` and
-`UDF`) or pass it as the last argument of a formula, e.g.
+server, put it in `RedisExcel.json` (set `Default` to a `Servers` name or to a
+raw connection string) or pass it as the last argument of a formula, e.g.
 `=RedisUDFGet("preco_btc", "192.168.0.10:6379")`. A full StackExchange.Redis
 connection string works too, e.g.
 `"myredis.example:6379,password=secret,ssl=true"` (its credentials are masked in
@@ -557,28 +557,29 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 
 ### JSON Configuration (RedisExcel.json)
 
+The server is declared **once**. `Default` names a server from `Servers` (or is
+a raw connection string); `Servers` values may be a connection string or an
+object with per-server timeouts.
+
 ```json
 {
+  "Default": "local",
+  "Timeout": { "connectTimeout": 5000, "syncTimeout": 5000 },
+  "Servers": {
+    "local": "localhost:6379,defaultDatabase=0,ssl=False,abortConnect=False",
+    "prod": { "host": "sentinel-a:26379,sentinel-b:26379,serviceName=mymaster", "connectTimeout": 8000, "syncTimeout": 8000 },
+    "cache": "node-a:6379,node-b:6379"
+  },
   "RTD": {
-    "host": "localhost:6379",
-    "timeout": 1000,
     "RedisUpdateRateMs": 1000,
     "ExcelUpdateRateMs": 100,
-    "MessageCounterThreshold": 1000,
+    "MessageCounterThreshold": 10000,
     "ExcelUpdateStyle": "Automatic",
-    "UseGetMultiple": true
-  },
-  "UDF": {
-    "host": "localhost:6379",
-    "timeout": 1000
-  },
-  "Servers": {
-    "prod": "localhost:6379,defaultDatabase=0",
-    "dev": "localhost:6379,defaultDatabase=1"
+    "UseGetMultiple": true,
+    "CoalesceRealtimeUpdates": true
   },
   "UpdateCheck": true,
   "SkipRepeatedMessages": true,
-  "CoalesceRealtimeUpdates": true,
   "ConflationMs": 200,
   "PublishDedupCacheSize": 10000,
   "SyncWrite": "fireforget",
@@ -586,12 +587,21 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 }
 ```
 
+> **Migrating from the old shape:** the previous `RTD.host` / `UDF.host` /
+> `RTD.timeout` / `UDF.timeout` and the top-level `CoalesceRealtimeUpdates` were
+> **removed**. Move the host(s) into `Servers`, point `Default` at one (or put a
+> raw connection string in `Default`), move the timeouts into
+> `Timeout`/the server object, and move `CoalesceRealtimeUpdates` inside `RTD`. A
+> file that still uses the old keys is **rejected**: every cell shows `#CONFIG`
+> until it is fixed. Use `=RedisCheckConfigFile()` / `Validate-Config.cmd` to see
+> exactly what is wrong.
+
 > **Config notes:** the file is read once per Excel process - restart Excel
-> after editing it. The first existing file wins (user profile, Excel folder,
-> `C:\Windows`); if that file is malformed, safe defaults are used instead of
-> falling through to a lower-priority file. When **no config file is found at
-> all**, the legacy no-file defaults apply: `ExcelUpdateRateMs` falls back to
-> `1000` ms (a loaded file uses `100` ms unless it sets the key explicitly).
+> after editing it. The first existing file wins (the add-in folder, then the
+> user profile, the Excel folder and `C:\Windows`); a file that exists but is
+> rejected stops the search (no fall-through to a lower-priority file). When
+> **no config file is found at all**, `ExcelUpdateRateMs` falls back to `1000`
+> ms (a loaded file uses `100` ms unless it sets the key explicitly).
 > `PublishDedupCacheSize` (default `10000`) caps the LRU cache used by
 > `RedisUDFChannelPublishIfChanged` to remember the last payload published per
 > host/channel. `ConflationMs` (unset by default) is the real-time delivery
@@ -600,9 +610,11 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 > lever against screen flicker and the recalculation cascade on fast feeds.
 
 > **Comments & validation:** the file may contain `//` and `/* */` comments. A
-> wrong-typed value (e.g. `"timeout": true` or `"AsyncWrites": "yes"`) is dropped
-> on its own instead of discarding the whole file - the rest of your settings are
-> kept. Put `=RedisCheckConfigFile()` in a cell to validate the configuration in
+> wrong value on a **known** key (e.g. `"RedisUpdateRateMs": "x"` or a bad
+> `ExcelUpdateStyle`) makes the add-in **reject the whole file**: every cell shows
+> `#CONFIG: ...` (no silent fallback) until you fix it and restart Excel. An
+> **extra/unknown** key (one the add-in does not use) is only a **warning** in the
+> log. Put `=RedisCheckConfigFile()` in a cell to validate the configuration in
 > use, or `=RedisCheckConfigFile("C:\\path\\RedisExcel.json")` for a specific
 > file: it returns `OK (...)` or one line per problem without needing the log.
 > `=RedisJsonSchemaContents()` returns the JSON Schema itself (the allowed keys
@@ -610,16 +622,19 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 
 #### Other JSON keys
 
-Keys that only appear in the sample above, with their code defaults:
+Keys in the sample above, with their code defaults:
 
 | Key | Default | Effect |
 | --- | ------- | ------ |
+| `Default` | the built-in host | The server used by RTD and UDF: a name defined in `Servers`, or a raw connection string (used as-is). |
+| `Servers` | `{}` | Named servers: `name -> "connection string"` or `name -> { "host": "...", "connectTimeout": ms, "syncTimeout": ms }`. |
+| `Timeout` | `5000` / `5000` | Global defaults (ms) for servers declared as a plain string: `connectTimeout` (handshake/AUTH) and `syncTimeout` (reply wait). |
 | `SkipRepeatedMessages` | `true` | Skips identical consecutive payloads before decoding/delivering for literal `SUB` and `GET`/`HGET` polling (unchanged `HGETALL` hashes too). Patterns (`PSUB`) are never deduplicated because channels interleave. Set it to `false` for feeds that republish the same value as a liveness signal. |
-| `CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. Superseded by an explicit `ConflationMs`. |
-| `ConflationMs` | *(unset)* | Explicit real-time conflation window in milliseconds: while a topic keeps changing, Excel is updated at most once per window with the latest value (`0` = off, one push per message; capped at 3600000). When unset, `CoalesceRealtimeUpdates` decides. A window below ~50-100 ms barely helps because the flush rides the Excel tick. |
-| `MessageCounterThreshold` | `10000` | `Automatic` `ExcelUpdateStyle` burst threshold: above this many messages in the last second, real-time delivery is disabled and the Excel tick flushes dirty values; the 1s tick re-enables it when the rate drops. `<= 0` disables the switch. The sample's `1000` is just a choice - the code default is `10000`. |
-| `ExcelUpdateStyle` | `"Automatic"` | `Automatic`, `Timer` or `Realtime`. `Timer` never pushes per message (only the Excel tick flushes); `Realtime` always pushes; `Automatic` starts real-time and switches at the threshold. An undefined/unknown value falls back to `Automatic`. |
-| `UseGetMultiple` | `true` | Batches RTD `GET` topics of a host into a single `MGET` per polling tick. `false` polls each `GET` key in the per-host pipeline with `HGET`/`HGETALL` instead. |
+| `ConflationMs` | *(unset)* | Explicit real-time conflation window in milliseconds: while a topic keeps changing, Excel is updated at most once per window with the latest value (`0` = off, one push per message; capped at 3600000). When unset, `RTD.CoalesceRealtimeUpdates` decides. A window below ~50-100 ms barely helps because the flush rides the Excel tick. |
+| `RTD.MessageCounterThreshold` | `10000` | `Automatic` `ExcelUpdateStyle` burst threshold: above this many messages in the last second, real-time delivery is disabled and the Excel tick flushes dirty values; the 1s tick re-enables it when the rate drops. `<= 0` disables the switch. |
+| `RTD.CoalesceRealtimeUpdates` | `true` | In real-time mode, sends at most one update per topic per `ExcelUpdateRateMs` window (the latest value wins) instead of one Excel update per incoming message. `false` restores per-message delivery. Superseded by an explicit `ConflationMs`. (Lives inside `RTD`.) |
+| `RTD.ExcelUpdateStyle` | `"Automatic"` | `Automatic`, `Timer` or `Realtime`. `Timer` never pushes per message (only the Excel tick flushes); `Realtime` always pushes; `Automatic` starts real-time and switches at the threshold. An undefined/unknown value falls back to `Automatic`. |
+| `RTD.UseGetMultiple` | `true` | Batches RTD `GET` topics of a host into a single `MGET` per polling tick. `false` polls each `GET` key in the per-host pipeline with `HGET`/`HGETALL` instead. |
 
 ### Write Behavior (`SyncWrite` / `AsyncWrites`)
 

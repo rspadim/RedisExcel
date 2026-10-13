@@ -45,8 +45,8 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 
 | File | Responsibility |
 | --- | --- |
-| `Config.cs` | `AppConfig`: loads `RedisExcel.json` once, safe defaults, host alias resolution. |
-| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates with NJsonSchema (comments accepted) and drops bad values so one mistake does not discard the file. |
+| `Config.cs` | `AppConfig`: loads `RedisExcel.json` once (v1.6 shape: `Default`/`Servers`/`Timeout`), safe defaults, server-name resolution. |
+| `ConfigSchema.cs` | Embedded JSON Schema for `RedisExcel.json`: validates with NJsonSchema (comments accepted); a wrong value rejects the file (fail-closed), an extra key warns; flags the removed v1 keys. |
 | `RedisConnectionManager.cs` | Single place that creates/caches `ConnectionMultiplexer` per host and pool (`RtdData`/`RtdSub`/`UdfData`). |
 | `RedisSubscriptionManager.cs` | Ref-counted Pub/Sub: one StackExchange.Redis handler per `(host, channel, pattern)` broadcasting to N listeners; channels survive reconnects (StackExchange.Redis re-subscribes automatically). |
 | `RedisRuntime.cs` | Process-wide singleton wiring connections + subscriptions; shutdown on add-in unload. |
@@ -259,17 +259,22 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   ordinals); PSUB patterns are never deduplicated because channels interleave.
   Unchanged HGETALL hashes are compared field-by-field (ordinal) and skipped too.
 - The config file is read once per Excel process (restart Excel after editing
-  it) and searched in: user profile, Excel folder, `C:\Windows` (first existing
-  wins). The file may contain `//` and `/* */` comments and is validated against
-  the embedded JSON Schema (`ConfigSchema.cs`): a wrong-typed value (e.g.
-  `"timeout": true`) is dropped on its own and the rest of the file is kept
-  (a structural failure - not JSON - still uses safe defaults, and the
-  first-existing candidate stops the search). `=RedisCheckConfigFile()` reports
-  the problems in a cell (blank = the config in use, or pass a path). When no
-  config file is found at all, the legacy no-file default for
-  `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file default of 100 ms).
-  An undefined `ExcelUpdateStyle` falls back to `Automatic`, and host aliases are
-  matched after trimming and case-insensitively (exact match first).
+  it) and searched in: the add-in folder, the user profile, the Excel folder and
+  `C:\Windows` (first existing wins). The file may contain `//` and `/* */`
+  comments and is validated against the embedded JSON Schema (`ConfigSchema.cs`)
+  in a fail-closed way: a wrong **value** on a known key rejects the **whole
+  file** (every UDF/RTD cell shows `#CONFIG: ...` until it is fixed), while an
+  extra/unknown **key** is only a log warning. The removed v1 keys
+  (`RTD.host`/`UDF.host`/`RTD.timeout`/`UDF.timeout`, root
+  `CoalesceRealtimeUpdates`) and a dangling `Default` are errors, so a pre-1.6
+  file fails closed instead of silently reverting to localhost. A structural
+  failure (not JSON) uses safe defaults, and the first-existing candidate stops
+  the search. `=RedisCheckConfigFile()` reports the problems in a cell (blank =
+  the config in use, or pass a path). When no config file is found at all, the
+  no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file
+  default of 100 ms). An undefined `ExcelUpdateStyle` falls back to `Automatic`,
+  and `Servers` names are matched after trimming and case-insensitively (exact
+  match first).
 
 ## Build
 
