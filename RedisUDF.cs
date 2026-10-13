@@ -1,4 +1,4 @@
-using ExcelDna.Integration;
+﻿using ExcelDna.Integration;
 using NLog;
 using StackExchange.Redis;
 using System;
@@ -182,23 +182,19 @@ namespace RedisExcel
             return task.GetAwaiter().GetResult();
         }
 
-        /// <summary>Response wait bound for the RTD pool: the configured RTD
-        /// timeout plus slack. Kept for the RTD batch drain.</summary>
-        internal static int ResponseTimeoutMs() => ResponseTimeoutMs(RedisPool.RtdData);
+        /// <summary>Response wait bound for the default server (syncTimeout+500).
+        /// Kept for the RTD batch drain.</summary>
+        internal static int ResponseTimeoutMs() => ResponseTimeoutMs((string)null);
 
-        /// <summary>Response wait bound for a pool: the pool's configured timeout
-        /// plus slack. The UDF batches must use the UDF timeout, not the RTD one:
-        /// the multiplexer's SyncTimeout comes from the same pool setting, so a
-        /// bound keyed off the wrong pool can abandon a reply that arrived within
-        /// the connection's own timeout.</summary>
-        internal static int ResponseTimeoutMs(RedisPool pool)
+        /// <summary>Response wait bound for a resolved server host: its
+        /// <c>syncTimeout</c> plus slack, so the bound matches the multiplexer's
+        /// own SyncTimeout (which comes from the same server). Pass the resolved
+        /// host string; null uses the Default server.</summary>
+        internal static int ResponseTimeoutMs(string host)
         {
             try
             {
-                // A single unified server timeout: the same value backs both the
-                // connection's SyncTimeout and this response bound. Read it for the
-                // pool's default server.
-                var timeouts = AppConfig.ServerTimeouts(null);
+                var timeouts = AppConfig.ServerTimeouts(host);
                 int timeout = timeouts.syncTimeout;
                 // Clamp to the int range: a configured timeout near int.MaxValue
                 // would otherwise overflow timeout+500 into a negative bound.
@@ -212,6 +208,10 @@ namespace RedisExcel
                 return 1500;
             }
         }
+
+        /// <summary>Back-compat overload: the pool no longer changes the timeout
+        /// (the server is unified), so both pools use the Default server.</summary>
+        internal static int ResponseTimeoutMs(RedisPool pool) => ResponseTimeoutMs((string)null);
 
         /// <summary>
         /// Drops the process-wide ChannelLatest state (listeners, latest messages
@@ -586,7 +586,7 @@ namespace RedisExcel
             if (ex is RedisTimeoutException
                 || cause.IndexOf("Timeout", StringComparison.Ordinal) >= 0
                 || cause.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Redis did not answer in time; raise UDF.timeout (RedisExcel.json) or check the connection";
+                return "Redis did not answer in time; raise the server syncTimeout (or the global Timeout) in RedisExcel.json, or check the connection";
             if (cause.IndexOf("WRONGTYPE", StringComparison.Ordinal) >= 0)
                 return "the key already holds a different Redis type; use another key or delete it first";
             if (cause.IndexOf("single slot", StringComparison.OrdinalIgnoreCase) >= 0
@@ -693,6 +693,12 @@ namespace RedisExcel
 
         private static string Fail(string function, Exception ex, string context)
         {
+            // A rejected configuration must show "#CONFIG: ..." everywhere, not a
+            // generic "Error:" with a misleading connection hint. This covers the
+            // functions that do not use RunCore/RunMatrixCore (the scalar reads,
+            // ChannelLatest, PubSubChannelsInfo, ...).
+            if (ex is ConfigException cex)
+                return "#CONFIG: " + cex.Message;
             // Truncate the context BEFORE logging: the call-site context embeds the
             // value (`value={ShortForLog(value)}`), so a large payload would otherwise produce a
             // multi-megabyte log line (and a full-value ERROR on a failed write).
@@ -1941,7 +1947,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyExistsAsync(k)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
+                int timeoutMs = ResponseTimeoutMs(host);
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     // Per-row try: one failing key (WRONGTYPE/timeout) must not
@@ -2219,7 +2225,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.KeyTimeToLiveAsync(k)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
+                int timeoutMs = ResponseTimeoutMs(host);
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     // Per-row try: one failing key must not discard the whole matrix.
@@ -2392,7 +2398,7 @@ namespace RedisExcel
                 var batch = GetDb(host).CreateBatch();
                 var tasks = keysList.Select(k => batch.HashGetAsync(k, fieldStr)).ToArray();
                 batch.Execute();
-                int timeoutMs = ResponseTimeoutMs(RedisPool.UdfData);
+                int timeoutMs = ResponseTimeoutMs(host);
                 for (int i = 0; i < tasks.Length; i++)
                 {
                     // Per-row try: one failing hash (e.g. WRONGTYPE) must not

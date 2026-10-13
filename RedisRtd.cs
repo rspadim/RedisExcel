@@ -643,6 +643,13 @@ namespace RedisExcel
         {
             try
             {
+                // A rejected configuration blocks every topic, like the UDFs: the
+                // cell shows "#CONFIG: ..." instead of connecting with defaults or
+                // sitting on a placeholder.
+                var rejected = AppConfig.Current;
+                if (rejected != null && rejected.Rejected)
+                    return "#CONFIG: " + (rejected.RejectedReason ?? "invalid configuration");
+
                 if (_subscribedTopics.TryGetValue(topic.TopicId, out var existingSub))
                 {
                     logger.Warn($"ConnectData: TopicId={topic.TopicId} already exists in subscriptions");

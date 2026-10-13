@@ -57,7 +57,7 @@ namespace RedisExcel.Tests
             string text = Format(ex, "key=k, host=h");
 
             Assert.Contains("Redis did not answer in time", text);
-            Assert.Contains("raise UDF.timeout", text);
+            Assert.Contains("syncTimeout", text);
         }
 
         [Fact]
@@ -80,6 +80,23 @@ namespace RedisExcel.Tests
             var ex = new Exception("Multi-key operations must involve a single slot; keys can use 'hash tags' to help this");
             string text = Format(ex, "key=k, host=h");
             Assert.Contains("hash tag", text);
+        }
+
+        [Fact]
+        public void ConfigRejected_ReturnsConfigCellNotAGenericError()
+        {
+            // A rejected configuration must show "#CONFIG" from EVERY function,
+            // including the scalar reads that use Fail() rather than RunCore.
+            var fail = typeof(RedisUDF).GetMethod("Fail", BindingFlags.Static | BindingFlags.NonPublic);
+            Assert.NotNull(fail);
+            string cell = (string)fail.Invoke(null, new object[]
+            {
+                "RedisUDFGet",
+                new ConfigException("RedisExcel.json rejected: /Timeout/connectTimeout: expected an integer"),
+                "key=k, host=h"
+            });
+            Assert.StartsWith("#CONFIG: ", cell);
+            Assert.Contains("expected an integer", cell);
         }
 
         [Fact]
