@@ -188,6 +188,20 @@ namespace RedisExcel
             }
         }
 
+        /// <summary>The property with the given name, matched the SAME way the
+        /// schema walker and the Newtonsoft binder do (case-insensitively, exact
+        /// case first). The pre-checks below must not use an ordinal lookup: the
+        /// walker merges case-variant keys, so an ordinal lookup both rejected a
+        /// valid config (a lowercase "servers") and skipped the lenient guards on
+        /// a lowercase "default"/"rtd" (audit D3).</summary>
+        private static JProperty FindRootProperty(JObject obj, string name)
+        {
+            var exact = obj.Property(name);
+            if (exact != null)
+                return exact;
+            return obj.Properties().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        }
+
         /// <summary>Flags the pre-1.6 keys that the unified shape removed, as
         /// ERRORs with the v1.6 replacement, so an old file fails closed instead of
         /// silently reverting to defaults.</summary>
@@ -197,18 +211,19 @@ namespace RedisExcel
                 return;
             void Legacy(string section, string key, string replacement)
             {
-                if (obj[section] is JObject sec && sec.Property(key) != null)
+                var sec = FindRootProperty(obj, section)?.Value as JObject;
+                if (sec != null && sec.Property(key) != null)
                     issues.Add(new ConfigIssue("/" + section + "/" + key,
                         "removed in v1.6; use " + replacement, ConfigSeverity.Error));
             }
             Legacy("RTD", "host", "\"Default\" (or a \"Servers\" name)");
             Legacy("RTD", "timeout", "the server's \"connectTimeout\"/\"syncTimeout\" (or the global \"Timeout\")");
             // The whole UDF section was removed (it only held host/timeout).
-            if (obj.Property("UDF") != null)
+            if (FindRootProperty(obj, "UDF") != null)
                 issues.Add(new ConfigIssue("/UDF",
                     "removed in v1.6; declare servers under \"Servers\" and pick one with \"Default\"", ConfigSeverity.Error));
             // The root-level boolean moved into RTD.
-            if (obj.Property("CoalesceRealtimeUpdates") != null)
+            if (FindRootProperty(obj, "CoalesceRealtimeUpdates") != null)
                 issues.Add(new ConfigIssue("/CoalesceRealtimeUpdates",
                     "moved into \"RTD\" in v1.6", ConfigSeverity.Error));
         }
@@ -222,7 +237,7 @@ namespace RedisExcel
         {
             if (issues == null || !(root is JObject obj))
                 return;
-            var defaultToken = obj.Property("Default")?.Value;
+            var defaultToken = FindRootProperty(obj, "Default")?.Value;
             if (defaultToken == null || defaultToken.Type != JTokenType.String)
                 return;
             string name = (string)defaultToken;
@@ -231,7 +246,8 @@ namespace RedisExcel
             // A raw connection string is allowed ("host", "host:port", "host,opt=..").
             if (LooksLikeConnectionString(name))
                 return;
-            if (obj["Servers"] is JObject servers
+            var servers = FindRootProperty(obj, "Servers")?.Value as JObject;
+            if (servers != null
                 && (servers.Property(name) != null
                     || servers.Properties().Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))))
                 return;

@@ -309,10 +309,26 @@ namespace RedisExcel.Tests
         [InlineData("{\"RTD\":{\"host\":\"x\"}}", "/RTD/host")]               // removed
         [InlineData("{\"RTD\":{\"timeout\":1000}}", "/RTD/timeout")]         // removed
         [InlineData("{\"CoalesceRealtimeUpdates\":true}", "/CoalesceRealtimeUpdates")] // moved into RTD
+        // Case-variant section headers must be caught too: the walker/binder are
+        // case-insensitive, so a lowercase pre-1.6 file must NOT slip through on
+        // defaults (audit D3 A3).
+        [InlineData("{\"rtd\":{\"host\":\"myhost:6379\"}}", "/RTD/host")]
+        [InlineData("{\"udf\":{\"host\":\"myhost:6379\"}}", "/UDF")]
         public void LegacyKeys_AreErrorsNamedInTheReason(string json, string path)
         {
             var issues = Clean(json);
             Assert.Contains(issues, i => i.Severity == ConfigSeverity.Error && i.Path == path);
+        }
+
+        [Fact]
+        public void DanglingDefault_IsCaseInsensitiveLikeTheWalker()
+        {
+            // A lowercase "servers" still defines the server (the walker/binder are
+            // case-insensitive), so a valid config must NOT be rejected (D3 A1).
+            Assert.False(Rejected("{\"Default\":\"prod\",\"servers\":{\"prod\":\"h:1\"}}"));
+            // A lowercase "default" must still be validated as dangling (D3 A2).
+            Assert.True(Rejected("{\"default\":\"typo\"}"));
+            Assert.True(Rejected("{\"DEFAULT\":\"typo\"}"));
         }
 
         [Theory]
