@@ -37,7 +37,18 @@ file juggling.
 > Windows may show a SmartScreen warning because the XLL is not code-signed:
 > click **More info > Run anyway**. The installer itself is a normal `.exe`.
 
-The wizard is available in **English, Español and Português (Brasil)**.
+The wizard is available in **10 languages**: English, 简体中文 (Chinese
+Simplified), 繁體中文 (Chinese Traditional), Português (Brasil), Español,
+Русский, Français, 한국어, Deutsch and 日本語. (Install-time only - the add-in
+itself always uses **English** inside Excel, so function results and volatile
+recalculation behave identically regardless of the Windows/Excel language; see
+the note below.)
+
+> **Why the add-in is English-only inside Excel:** mixing localized text into
+> cell results would make volatile functions (`RedisUDFGet`, RTD cells, ...)
+> return different strings depending on the machine locale, breaking spreadsheets
+> that compare values or parse results. The installer is localized for usability;
+> the formulas and their outputs are not.
 
 Prefer to install by hand? Use the **Manual install** below.
 

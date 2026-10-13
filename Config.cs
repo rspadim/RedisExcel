@@ -477,11 +477,14 @@ namespace RedisExcel
         {
             if (string.IsNullOrEmpty(host))
                 return host;
-            // A URI authority (redis://user:pass@host) carries credentials the
-            // key=value regex cannot see; redact its userinfo first.
+            // Order matters: URI userinfo, then the authoritative key=value form
+            // (which allows '=' values containing '@', e.g. password=admin@s3cr3t),
+            // and only THEN a bare "user:pass@host" without a scheme. Running the
+            // bare rule first consumed the '@' inside a password value and leaked
+            // the tail (audit G2).
             string masked = UriUserInfo.Replace(host, "****@");
-            masked = BareUserInfo.Replace(masked, "****@");
-            return PasswordPair.Replace(masked, "$1$2=****");
+            masked = PasswordPair.Replace(masked, "$1$2=****");
+            return BareUserInfo.Replace(masked, "****@");
         }
 
         // redis://user:SECRET@host / rediss://:SECRET@host / redis://user@host:
@@ -493,11 +496,12 @@ namespace RedisExcel
         private static readonly Regex UriUserInfo = new Regex(
             @"(?<=//)[^/\s]*@(?=[^@/\s]*$|/)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        // A bare "user:pass@host" or "user@host" (no scheme) also carries
-        // userinfo that the key=value regex cannot see; it reaches the cell/log
-        // through the same MaskHost chokepoint (audit F1).
+        // A bare "user:pass@host" (no scheme) also carries userinfo the key=value
+        // regex cannot see (audit F1). A COLON is required before the '@' so a
+        // legitimate value without a password ("key=a@b", an email) is not
+        // corrupted; the value after a '=' is handled by PasswordPair above this.
         private static readonly Regex BareUserInfo = new Regex(
-            @"(^|[,\s])[^@,;/\s]*@(?=[^@/\s]*$|[,;\s])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            @"(^|[,\s])[^@,;/\s]*:[^@,;:/\s]*@(?=[^@/\s]*$|[,;\s])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A credential keyword is preceded by the string start, a connection-string
         // delimiter (comma/semicolon) OR whitespace: a credential can reach a cell

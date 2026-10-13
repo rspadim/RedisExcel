@@ -52,6 +52,24 @@ RedisExcelSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel"
 `RedisExcel64-packed.xll`), `RedisExcel.dll`, `NLog.config` and `RedisExcel.json`
 into one folder and register the XLL from Excel.
 
+### Languages
+
+The wizard is localized in 10 languages (English - the default, 简体中文,
+繁體中文, Português do Brasil, Español, Русский, Français, 한국어, Deutsch,
+日本語); it picks the language of your Windows or you can change it on the first
+screen. This is **install-time only**: the add-in always uses English inside
+Excel, so volatile functions return the same strings on every machine.
+
+The silent uninstaller can also remove a server it can still see. It only
+removes what you name:
+
+```powershell
+unins000.exe /VERYSILENT /REMOVESERVERS=docker-redis,docker-valkey
+```
+
+(Interactive uninstalls show a page with the detected servers instead; by default
+nothing is removed.)
+
 ## Helper scripts
 
 The installer ships these under `C:\RedisExcel\` (all usable on their own):

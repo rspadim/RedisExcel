@@ -58,7 +58,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks; shared `StripedLocks` helper. |
 | `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
 | `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
-| `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). Built by CI; see `installer/README.md`. |
+| `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). The wizard ships **10 languages** (English, both Chinese, pt-BR, es, ru, fr, ko, de, ja; the two Chinese `.isl` live in `installer/languages/`, the rest come with Inno). The add-in inside Excel is **English-only** on purpose (localized cell text would make volatile functions locale-dependent). Built by CI; see `installer/README.md`. |
 
 ## Runtime model (why it is the way it is)
 

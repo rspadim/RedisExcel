@@ -182,13 +182,39 @@ namespace RedisExcel.Tests
         }
 
         [Theory]
+        // A connection-string password may contain '@'; the key=value rule must
+        // mask the WHOLE value even when a bare-userinfo-looking token follows
+        // (audit G2: the bare rule ran first and leaked the tail).
+        [InlineData("host:6379,password=admin@S3cret!", "host:6379,password=****")]
+        [InlineData("host:6379,password=@topsecret", "host:6379,password=****")]
+        [InlineData("local:6379,password=a@SECRET,ssl=true", "local:6379,password=****,ssl=true")]
+        [InlineData("host:6379,password=p@ssword", "host:6379,password=****")]
+        [InlineData("host:6379,password='p@ss'", "host:6379,password=****")]
+        [InlineData("host:6379 user=admin@S3cret!", "host:6379 user=****")]
+        public void MaskHost_MasksAKeyValueValueThatContainsAt(string input, string expected)
+        {
+            Assert.Equal(expected, AppConfig.MaskHost(input));
+        }
+
+        [Theory]
+        // A bare user:pass@host (no scheme) is still masked, but a value with no
+        // colon before '@' (an email, "key=a@b") must NOT be corrupted (audit G2).
+        [InlineData("user:secret@127.0.0.1:6379", "****@127.0.0.1:6379")]
+        [InlineData("key=a@b", "key=a@b")]
+        [InlineData("someone@example.com", "someone@example.com")]
+        public void MaskHost_BareUserInfoNeedsAColon(string input, string expected)
+        {
+            Assert.Equal(expected, AppConfig.MaskHost(input));
+        }
+
+        [Theory]
         // A URI authority carries userinfo the key=value regex cannot see. The
         // full userinfo must be redacted even when it contains its own '@'
         // (audit D2: the old regex stopped at the first '@' and leaked the rest).
         [InlineData("redis://user:p@leakpart@127.0.0.1:6379")]
         [InlineData("redis://user:secret@127.0.0.1:6379,abortConnect=False")]
         [InlineData("user:secret@127.0.0.1:6379")]   // bare, no scheme (audit F1)
-        [InlineData("MY PASSWORD@127.0.0.1:6379")]
+        [InlineData(":secret@127.0.0.1:6379")]        // password only
         public void MaskHost_MasksTheWholeUriUserInfo(string input)
         {
             string masked = AppConfig.MaskHost(input);
