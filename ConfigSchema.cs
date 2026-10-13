@@ -210,6 +210,25 @@ namespace RedisExcel
             return obj.Properties().FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
         }
 
+        /// <summary>Every property whose name matches <paramref name="name"/>
+        /// case-insensitively (exact case first). The pre-checks below must inspect
+        /// ALL of them: a document can carry two case-variant sections
+        /// (`rtd` and `RTD`), and checking only the first let a pre-1.6 key hide in
+        /// the other (audit H1/D1).</summary>
+        private static IEnumerable<JProperty> FindProperties(JObject obj, string name)
+        {
+            var exact = obj.Property(name);
+            if (exact != null)
+                yield return exact;
+            foreach (var p in obj.Properties())
+            {
+                if (p == exact)
+                    continue;
+                if (string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))
+                    yield return p;
+            }
+        }
+
         /// <summary>Flags the pre-1.6 keys that the unified shape removed, as
         /// ERRORs with the v1.6 replacement, so an old file fails closed instead of
         /// silently reverting to defaults.</summary>
@@ -219,19 +238,20 @@ namespace RedisExcel
                 return;
             void Legacy(string section, string key, string replacement)
             {
-                var sec = FindProperty(obj, section)?.Value as JObject;
-                if (sec != null && FindProperty(sec, key) != null)
-                    issues.Add(new ConfigIssue("/" + section + "/" + key,
-                        "removed in v1.6; use " + replacement, ConfigSeverity.Error));
+                // Every case-variant spelling of the section may carry the key.
+                foreach (var sectionProp in FindProperties(obj, section))
+                    if (sectionProp.Value is JObject sec && FindProperty(sec, key) != null)
+                        issues.Add(new ConfigIssue("/" + section + "/" + key,
+                            "removed in v1.6; use " + replacement, ConfigSeverity.Error));
             }
             Legacy("RTD", "host", "\"Default\" (or a \"Servers\" name)");
             Legacy("RTD", "timeout", "the server's \"connectTimeout\"/\"syncTimeout\" (or the global \"Timeout\")");
             // The whole UDF section was removed (it only held host/timeout).
-            if (FindProperty(obj, "UDF") != null)
+            if (FindProperties(obj, "UDF").Any())
                 issues.Add(new ConfigIssue("/UDF",
                     "removed in v1.6; declare servers under \"Servers\" and pick one with \"Default\"", ConfigSeverity.Error));
-            // The root-level boolean moved into RTD.
-            if (FindProperty(obj, "CoalesceRealtimeUpdates") != null)
+            // The root-level boolean moved into RTD (any casing).
+            if (FindProperties(obj, "CoalesceRealtimeUpdates").Any())
                 issues.Add(new ConfigIssue("/CoalesceRealtimeUpdates",
                     "moved into \"RTD\" in v1.6", ConfigSeverity.Error));
         }
@@ -256,10 +276,12 @@ namespace RedisExcel
             // A raw connection string is allowed ("host", "host:port", "host,opt=..").
             if (LooksLikeConnectionString(name))
                 return;
-            var servers = FindProperty(obj, "Servers")?.Value as JObject;
-            if (servers != null
-                && (FindProperty(servers, name) != null))
-                return;
+            // A name may be defined in ANY case-variant "Servers" map (the walker
+            // merges them), so scan them all before calling it dangling (audit
+            // H1/D3).
+            foreach (var serversProp in FindProperties(obj, "Servers"))
+                if (serversProp.Value is JObject servers && FindProperty(servers, name) != null)
+                    return;
             issues.Add(new ConfigIssue("/Default",
                 "'" + name + "' is not defined in \"Servers\" and is not a connection string; using it as a host",
                 ConfigSeverity.Warning));

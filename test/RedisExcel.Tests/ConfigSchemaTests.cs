@@ -329,10 +329,26 @@ namespace RedisExcel.Tests
         // defaults (audit D3 A3).
         [InlineData("{\"rtd\":{\"host\":\"myhost:6379\"}}", "/RTD/host")]
         [InlineData("{\"udf\":{\"host\":\"myhost:6379\"}}", "/UDF")]
+        // A legacy key hidden in a case-variant SIBLING section must still be an
+        // error (audit H1/D1): {"rtd":{host}, "RTD":{...}}.
+        [InlineData("{\"rtd\":{\"host\":\"h:6379\"},\"RTD\":{\"RedisUpdateRateMs\":500}}", "/RTD/host")]
+        [InlineData("{\"RTD\":{\"RedisUpdateRateMs\":500},\"rtd\":{\"host\":\"h:6379\"}}", "/RTD/host")]
+        [InlineData("{\"rtd\":{\"timeout\":1000},\"RTD\":{\"RedisUpdateRateMs\":500}}", "/RTD/timeout")]
+        [InlineData("{\"coalescerealtimeupdates\":true}", "/CoalesceRealtimeUpdates")]
         public void LegacyKeys_AreErrorsNamedInTheReason(string json, string path)
         {
             var issues = Clean(json);
             Assert.Contains(issues, i => i.Severity == ConfigSeverity.Error && i.Path == path);
+        }
+
+        [Fact]
+        public void DanglingDefault_FindsANameInACaseVariantServersMap()
+        {
+            // "b" is defined in the lowercase "servers" map (the walker merges the
+            // maps), so it must NOT be reported dangling (audit H1/D3). A duplicate
+            // case-variant key may still warn, but not about /Default.
+            var issues = Clean("{\"Default\":\"b\",\"Servers\":{\"a\":\"h1\"},\"servers\":{\"b\":\"h2\"}}");
+            Assert.DoesNotContain(issues, i => i.Path == "/Default");
         }
 
         [Fact]
