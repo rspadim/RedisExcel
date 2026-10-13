@@ -20,8 +20,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
    Users' spreadsheets depend on every one of them. New additive functions
    (e.g. the `...NonVolatile` write twins) are fine; renames, argument
    changes and removals are not.
-3. Keep the `RedisExcel.json` shape backward compatible
-   (`RTD` / `UDF` / `Servers`).
+3. The `RedisExcel.json` shape is **v1.6**: the server is declared once
+   (`Default` + `Servers`, each server a string or `{ host, connectTimeout,
+   syncTimeout }`; `Timeout` holds the global defaults). RTD owns its rates plus
+   `CoalesceRealtimeUpdates`. A wrong VALUE on a known key rejects the whole file
+   (`#CONFIG`); an extra/unknown key is a log warning only.
 4. All Redis access goes through `RedisRuntime`
    (`RedisConnectionManager` / `RedisSubscriptionManager`). Never create a
    `ConnectionMultiplexer` anywhere else.

@@ -1,4 +1,4 @@
-using ExcelDna.ComInterop;
+﻿using ExcelDna.ComInterop;
 using ExcelDna.Integration;
 using ExcelDna.Integration.Rtd;
 using NLog;
@@ -476,14 +476,16 @@ namespace RedisExcel
             }
 
             var config = AppConfig.Current.RTD;
-            _defaultHost = config.host;
+            // The server is unified: RTD uses the Default server (a named server
+            // or a raw connection string), resolved once.
+            _defaultHost = AppConfig.ResolveServerHost(null);
             _excelUpdateRateMs = config.ExcelUpdateRateMs;
             _redisUpdateRateMs = config.RedisUpdateRateMs;
             _excelUpdateStyle = config.ExcelUpdateStyle;
             _messageCounterThreshold = config.MessageCounterThreshold;
             _useGetMultiple = config.UseGetMultiple;
             _skipRepeatedMessages = AppConfig.Current.SkipRepeatedMessages;
-            _coalesceRealtimeUpdates = AppConfig.Current.CoalesceRealtimeUpdates;
+            _coalesceRealtimeUpdates = config.CoalesceRealtimeUpdates;
             // Explicit ConflationMs wins; absent falls back to the legacy
             // CoalesceRealtimeUpdates boolean (true = the Excel tick window),
             // so an unchanged config keeps its previous behaviour.
@@ -672,7 +674,7 @@ namespace RedisExcel
                             throw new Exception($"{command} requires a key as the second argument");
                         // Documented arguments: key + optional host.
                         RejectExtraArguments(command, topicInfo, 3);
-                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveServerHost(param3));
                         RedisConnectionManager.ParseOptions(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
@@ -683,7 +685,7 @@ namespace RedisExcel
                             throw new Exception("HGET requires a field as the third argument");
                         // Documented arguments: key + field + optional host.
                         RejectExtraArguments(command, topicInfo, 4);
-                        td = new TopicData(topic, command, param2, param3, AppConfig.ResolveRtdHost(param4));
+                        td = new TopicData(topic, command, param2, param3, AppConfig.ResolveServerHost(param4));
                         RedisConnectionManager.ParseOptions(td.Host);
                         _polledTopics[topic.TopicId] = td;
                         break;
@@ -697,7 +699,7 @@ namespace RedisExcel
                             throw new Exception($"{command} requires a channel as the second argument");
                         // Documented arguments: channel + optional host.
                         RejectExtraArguments(command, topicInfo, 3);
-                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveRtdHost(param3));
+                        td = new TopicData(topic, command, param2, null, AppConfig.ResolveServerHost(param3));
                         // A malformed host can never subscribe successfully, so
                         // reject it up front instead of retrying it forever.
                         RedisConnectionManager.ParseOptions(td.Host);

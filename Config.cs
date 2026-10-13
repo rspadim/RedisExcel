@@ -5,6 +5,7 @@ using NLog;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace RedisExcel
@@ -17,40 +18,94 @@ namespace RedisExcel
         Automatic = 2
     }
 
-    public class ConfigSection
+    /// <summary>Timeout defaults used when a server does not declare its own.</summary>
+    public class TimeoutConfig
     {
-        public string host { get; set; }
-        public int timeout { get; set; }
+        /// <summary>Handshake/AUTH timeout (ms). A slow or VPN link needs more
+        /// than the old 1s; default 5000.</summary>
+        public int? connectTimeout { get; set; }
+        /// <summary>Wait for a command reply (ms). Default 5000.</summary>
+        public int? syncTimeout { get; set; }
     }
 
-    public class RTDConfig : ConfigSection
+    /// <summary>A named server: a connection string plus optional per-server
+    /// timeouts. In JSON, a value in "Servers" may be a plain string (shorthand,
+    /// equivalent to this object with only <see cref="host"/>) or an object.</summary>
+    [JsonConverter(typeof(ServerDefConverter))]
+    public class ServerDef
+    {
+        public string host { get; set; }
+        public int? connectTimeout { get; set; }
+        public int? syncTimeout { get; set; }
+    }
+
+    /// <summary>Reads a "Servers" value that may be a string or an object.</summary>
+    public class ServerDefConverter : JsonConverter
+    {
+        public override bool CanWrite => false;
+
+        public override bool CanConvert(Type objectType) => objectType == typeof(ServerDef);
+
+        public override object ReadJson(JsonReader reader, Type objectType, object existingValue, JsonSerializer serializer)
+        {
+            if (reader.TokenType == JsonToken.String)
+                return new ServerDef { host = (string)reader.Value };
+            if (reader.TokenType == JsonToken.StartObject)
+            {
+                // JObject.Load (not serializer.Deserialize) avoids recursing back
+                // into this converter.
+                var obj = JObject.Load(reader);
+                return new ServerDef
+                {
+                    host = (string)obj["host"],
+                    connectTimeout = (int?)obj["connectTimeout"],
+                    syncTimeout = (int?)obj["syncTimeout"],
+                };
+            }
+            throw new JsonSerializationException("a Servers value must be a string or an object");
+        }
+
+        public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
+            => throw new NotSupportedException();
+    }
+
+    public class RTDConfig
     {
         public int RedisUpdateRateMs { get; set; } = 1000;
         public int ExcelUpdateRateMs { get; set; } = 100;
         public ENUMExcelUpdateStyle ExcelUpdateStyle { get; set; } = ENUMExcelUpdateStyle.Automatic;
         public long MessageCounterThreshold { get; set; } = 10000;
         public bool UseGetMultiple { get; set; } = true;
+        /// <summary>In real-time mode, send at most one update per topic per
+        /// ExcelUpdateRateMs window instead of one per incoming message
+        /// (RTD-only, so it lives here). Default on. Superseded by an explicit
+        /// <see cref="ConfigRoot.ConflationMs"/>.</summary>
+        public bool CoalesceRealtimeUpdates { get; set; } = true;
     }
 
     public class ConfigRoot
     {
+        /// <summary>The default server: a name defined in <see cref="Servers"/>,
+        /// or a raw connection string used as-is. RTD and UDF both use it (there
+        /// is no per-section host).</summary>
+        public string Default { get; set; }
+        /// <summary>Global timeout defaults for servers declared as a plain
+        /// string (or that omit a field).</summary>
+        public TimeoutConfig Timeout { get; set; }
+        /// <summary>Named servers: each a string (shorthand) or an object.</summary>
+        public Dictionary<string, ServerDef> Servers { get; set; }
+
         public RTDConfig RTD { get; set; }
-        public ConfigSection UDF { get; set; }
-        public Dictionary<string, string> Servers { get; set; }
+
         public bool UpdateCheck { get; set; } = true;
         /// <summary>Skip identical consecutive payloads before decoding/delivering
         /// (feeds republish unchanged values constantly). Default on.</summary>
         public bool SkipRepeatedMessages { get; set; } = true;
-        /// <summary>In real-time mode, send at most one update per topic per
-        /// ExcelUpdateRateMs window instead of one per incoming message.
-        /// Default on (the more performant option). Superseded by an explicit
-        /// <see cref="ConflationMs"/>.</summary>
-        public bool CoalesceRealtimeUpdates { get; set; } = true;
         /// <summary>Explicit real-time conflation window in milliseconds: the
         /// latest value of a topic is pushed to Excel at most once per window
         /// (0 = off, one push per message). When absent (null), the legacy
-        /// <see cref="CoalesceRealtimeUpdates"/> boolean decides. Sanitized to
-        /// [0, Conflation.MaxWindowMs].</summary>
+        /// <see cref="RTDConfig.CoalesceRealtimeUpdates"/> boolean decides.
+        /// Sanitized to [0, Conflation.MaxWindowMs].</summary>
         public int? ConflationMs { get; set; }
         /// <summary>Maximum number of host/channel entries remembered by the
         /// PublishIfChanged deduplication cache (LRU). Default 10000.</summary>
@@ -61,6 +116,24 @@ namespace RedisExcel
         public string SyncWrite { get; set; } = "fireforget";
         /// <summary>Whether writes are dispatched asynchronously. Default off.</summary>
         public bool AsyncWrites { get; set; } = false;
+
+        /// <summary>Set by the loader when the file failed schema validation
+        /// (a wrong VALUE on a known key). When true no Redis access happens and
+        /// every UDF/RTD call returns this <see cref="RejectedReason"/> as a
+        /// "#CONFIG" error. Not part of the JSON.</summary>
+        [JsonIgnore]
+        public bool Rejected { get; set; }
+        /// <summary>Human-readable reason shown in the "#CONFIG" cell when
+        /// <see cref="Rejected"/> is true.</summary>
+        [JsonIgnore]
+        public string RejectedReason { get; set; }
+    }
+
+    /// <summary>Raised for a configuration-level failure (rejected file); the
+    /// cell shows a "#CONFIG: ..." line instead of a generic error.</summary>
+    public sealed class ConfigException : Exception
+    {
+        public ConfigException(string message) : base(message) { }
     }
 
     /// <summary>Write mode names accepted by <see cref="ConfigRoot.SyncWrite"/>.</summary>
@@ -119,6 +192,17 @@ namespace RedisExcel
             {
                 foreach (var issue in collected)
                     onError(new FormatException(issue.ToString()));
+            }
+            // Fail-closed on a wrong VALUE (error severity): the whole file is
+            // rejected and every UDF/RTD call returns the "#CONFIG" reason. Unknown
+            // /extra keys are warnings and do not reject (they are pruned anyway).
+            var firstError = collected.FirstOrDefault(i => i.Severity == ConfigSeverity.Error);
+            if (firstError != null)
+            {
+                var rejected = Sanitize(new ConfigRoot());
+                rejected.Rejected = true;
+                rejected.RejectedReason = firstError.ToString();
+                return rejected;
             }
             if (cleaned == null)
                 return null;
@@ -226,15 +310,20 @@ namespace RedisExcel
             }
         }
 
+        public const int DefaultConnectTimeoutMs = 5000;
+        public const int DefaultSyncTimeoutMs = 5000;
+
         internal static ConfigRoot Sanitize(ConfigRoot config)
         {
             config = config ?? new ConfigRoot();
             config.RTD = config.RTD ?? new RTDConfig();
-            config.UDF = config.UDF ?? new ConfigSection();
-            if (string.IsNullOrWhiteSpace(config.RTD.host)) config.RTD.host = DefaultHost;
-            if (string.IsNullOrWhiteSpace(config.UDF.host)) config.UDF.host = DefaultHost;
-            if (config.RTD.timeout <= 0) config.RTD.timeout = 1000;
-            if (config.UDF.timeout <= 0) config.UDF.timeout = 1000;
+            if (string.IsNullOrWhiteSpace(config.Default)) config.Default = DefaultHost;
+            config.Timeout = config.Timeout ?? new TimeoutConfig();
+            config.Servers = config.Servers ?? new Dictionary<string, ServerDef>(StringComparer.Ordinal);
+            // Drop server entries that carry no host (a bad object): they can never
+            // be resolved, so a name pointing at one is a dangling reference.
+            foreach (var key in config.Servers.Where(kv => kv.Value == null || string.IsNullOrWhiteSpace(kv.Value.host)).Select(kv => kv.Key).ToList())
+                config.Servers.Remove(key);
             if (config.RTD.RedisUpdateRateMs <= 0) config.RTD.RedisUpdateRateMs = 1000;
             if (config.RTD.ExcelUpdateRateMs <= 0) config.RTD.ExcelUpdateRateMs = 100;
             if (config.PublishDedupCacheSize <= 0) config.PublishDedupCacheSize = 10000;
@@ -244,6 +333,64 @@ namespace RedisExcel
                 config.ConflationMs = Conflation.Sanitize(config.ConflationMs.Value);
             config.SyncWrite = NormalizeSyncWrite(config.SyncWrite);
             return config;
+        }
+
+        /// <summary>Resolves a server reference (a "Servers" name or a raw
+        /// connection string) to its connection string. Null/blank falls back to
+        /// the configured default. Never throws.</summary>
+        public static string ResolveServerHost(string reference)
+        {
+            return ResolveServer(Current, reference)?.host ?? DefaultHost;
+        }
+
+        /// <summary>The server definition for a reference (a name in "Servers" or
+        /// a raw connection string), or the Default server when the reference is
+        /// blank. Returns null when a NAME is used but not defined (dangling).</summary>
+        internal static ServerDef ResolveServer(ConfigRoot config, string reference)
+        {
+            string name = string.IsNullOrWhiteSpace(reference) ? config?.Default : reference.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+                return new ServerDef { host = DefaultHost };
+
+            // A name defined in Servers?
+            var def = FindServer(config?.Servers, name);
+            if (def != null)
+                return def;
+
+            // Otherwise treat it as a raw connection string.
+            return new ServerDef { host = name };
+        }
+
+        private static ServerDef FindServer(IDictionary<string, ServerDef> servers, string name)
+        {
+            if (servers == null)
+                return null;
+            if (servers.TryGetValue(name, out var exact) && exact != null)
+                return exact;
+            foreach (var kv in servers)
+            {
+                if (string.Equals(kv.Key, name, StringComparison.OrdinalIgnoreCase) && kv.Value != null)
+                    return kv.Value;
+            }
+            return null;
+        }
+
+        /// <summary>Both timeouts (ms) for a resolved server: the server's own
+        /// value, else the global <c>Timeout</c> block, else the built-in default
+        /// (5000 ms).</summary>
+        public static (int connectTimeout, int syncTimeout) ServerTimeouts(string reference)
+        {
+            var config = Current;
+            var def = ResolveServer(config, reference);
+            int connect = def?.connectTimeout
+                ?? config.Timeout?.connectTimeout
+                ?? DefaultConnectTimeoutMs;
+            int sync = def?.syncTimeout
+                ?? config.Timeout?.syncTimeout
+                ?? DefaultSyncTimeoutMs;
+            if (connect <= 0) connect = DefaultConnectTimeoutMs;
+            if (sync <= 0) sync = DefaultSyncTimeoutMs;
+            return (connect, sync);
         }
 
         /// <summary>Normalizes a SyncWrite mode to its lowercase form; unknown
@@ -257,35 +404,6 @@ namespace RedisExcel
                 case SyncWriteModes.FireForgetAll: return SyncWriteModes.FireForgetAll;
                 default: return SyncWriteModes.FireForget;
             }
-        }
-
-        /// <summary>Pure alias/default resolution (kept internal for unit tests).</summary>
-        internal static string ResolveHostCore(string host, string defaultHost, IDictionary<string, string> servers)
-        {
-            string candidate = string.IsNullOrWhiteSpace(host) ? defaultHost : host.Trim();
-            if (candidate == null)
-                return null;
-            if (servers != null)
-            {
-                if (servers.TryGetValue(candidate, out var mapped) && !string.IsNullOrWhiteSpace(mapped))
-                    return mapped;
-                // "PROD"/" prod " should still hit the "prod" alias: fall back
-                // to a case-insensitive scan (the exact match stays first, so a
-                // config with two spellings keeps its own priority).
-                foreach (var kv in servers)
-                {
-                    if (string.Equals(kv.Key, candidate, StringComparison.OrdinalIgnoreCase)
-                        && !string.IsNullOrWhiteSpace(kv.Value))
-                        return kv.Value;
-                }
-            }
-            return candidate;
-        }
-
-        /// <summary>Resolves aliases ("prod", "dev") defined in Servers; a blank host uses the provided default.</summary>
-        public static string ResolveHost(string host, string defaultHost)
-        {
-            return ResolveHostCore(host, defaultHost, Current.Servers);
         }
 
         /// <summary>
@@ -327,10 +445,6 @@ namespace RedisExcel
             @"(^|[,;\s])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        public static string ResolveRtdHost(string host) => ResolveHost(host, Current.RTD.host);
-
-        public static string ResolveUdfHost(string host) => ResolveHost(host, Current.UDF.host);
-
         /// <summary>
         /// Validates a RedisExcel.json and returns a short report for a cell.
         /// <paramref name="path"/> = null/blank validates the configuration this
@@ -368,12 +482,23 @@ namespace RedisExcel
 
                 var issues = new List<ConfigIssue>();
                 ConfigSchema.Clean(root, issues);
-                if (issues.Count == 0)
-                    return "OK (" + path + ")";
+                var errors = issues.Where(i => i.Severity == ConfigSeverity.Error).ToList();
+                if (errors.Count == 0)
+                {
+                    if (issues.Count == 0)
+                        return "OK (" + path + ")";
+                    // Only warnings (e.g. unknown keys): the config still loads.
+                    var warnLines = new List<string> { "OK (with " + issues.Count + " warning(s)) - " + path };
+                    foreach (var issue in issues)
+                        warnLines.Add("  warning: " + issue.ToString());
+                    return string.Join("\n", warnLines);
+                }
 
-                var lines = new List<string> { "Error: " + issues.Count + " problem(s) in " + path };
-                foreach (var issue in issues)
+                var lines = new List<string> { "Error: " + errors.Count + " problem(s) in " + path };
+                foreach (var issue in errors)
                     lines.Add(issue.ToString());
+                foreach (var issue in issues.Where(i => i.Severity == ConfigSeverity.Warning))
+                    lines.Add("  warning: " + issue.ToString());
                 return string.Join("\n", lines);
             }
             catch (Exception ex)

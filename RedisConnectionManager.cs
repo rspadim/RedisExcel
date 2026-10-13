@@ -238,6 +238,17 @@ namespace RedisExcel
             return new InvalidOperationException("RedisConnectionManager is shutting down");
         }
 
+        /// <summary>Rejects every Redis access when the loaded configuration was
+        /// rejected by the schema (a wrong value on a known key): the cell shows a
+        /// "#CONFIG" line instead of silently connecting with defaults.</summary>
+        private static void ThrowIfConfigRejected()
+        {
+            var config = AppConfig.Current;
+            if (config != null && config.Rejected)
+                throw new ConfigException("RedisExcel.json rejected: " + (config.RejectedReason ?? "invalid configuration")
+                    + " (fix the file, then restart Excel)");
+        }
+
         private static bool RemoveConnectionEntry(ConcurrentDictionary<string, Lazy<ConnectionMultiplexer>> dictionary, string host, Lazy<ConnectionMultiplexer> lazy)
         {
             return ((ICollection<KeyValuePair<string, Lazy<ConnectionMultiplexer>>>)dictionary)
@@ -306,6 +317,7 @@ namespace RedisExcel
 
         public ConnectionMultiplexer GetConnection(string host, RedisPool pool)
         {
+            ThrowIfConfigRejected();
             // Shutdown fence: a cached multiplexer is already being closed by
             // Shutdown, so never hand it out once the flag is set.
             if (_shutdown)
@@ -478,21 +490,19 @@ namespace RedisExcel
                         $"connect to '{AppConfig.MaskHost(host)}' skipped (recent failure {elapsedMs}ms ago)");
             }
 
-            var config = AppConfig.Current;
-            int timeoutMs = pool == RedisPool.UdfData ? config.UDF.timeout : config.RTD.timeout;
-
+            var timeouts = AppConfig.ServerTimeouts(host);
             var options = ParseOptions(host);
             options.AbortOnConnectFail = false;
             // The default ConnectRetry (3) multiplies the first-connect stall:
             // a dead host would hold the Excel thread for attempts x timeout.
             options.ConnectRetry = 1;
-            options.ConnectTimeout = timeoutMs;
-            options.SyncTimeout = timeoutMs;
+            options.ConnectTimeout = timeouts.connectTimeout;
+            options.SyncTimeout = timeouts.syncTimeout;
             options.ClientName =
                 $"{ClientNamePrefix(pool)} :: {BuildInfo.Tag} :: " +
                 $"{Environment.UserDomainName}\\{Environment.UserName} :: {Environment.MachineName}";
 
-            logger.Info($"RedisConnect: opening {pool} connection to {AppConfig.MaskHost(host)} (timeout={timeoutMs}ms, client={options.ClientName})");
+            logger.Info($"RedisConnect: opening {pool} connection to {AppConfig.MaskHost(host)} (connect={timeouts.connectTimeout}ms, sync={timeouts.syncTimeout}ms, client={options.ClientName})");
             ConnectionMultiplexer mux;
             try
             {

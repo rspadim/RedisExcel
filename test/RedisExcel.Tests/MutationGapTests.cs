@@ -13,25 +13,26 @@ namespace RedisExcel.Tests
     [Collection("write-mode-seam")]
     public class MutationGapTests
     {
-        // ---- ResponseTimeoutMs: pool selection, slack, clamps, fallback -------
+        // ---- ResponseTimeoutMs: unified server syncTimeout + slack, clamps -----
 
         [Fact]
-        public void ResponseTimeoutMs_UsesThePoolTimeoutPlus500()
+        public void ResponseTimeoutMs_UsesTheServerSyncTimeoutPlus500()
         {
             var original = AppConfig.CurrentOverrideForTests;
             try
             {
                 var cfg = AppConfig.Sanitize(new ConfigRoot());
-                cfg.RTD.timeout = 3000;
-                cfg.UDF.timeout = 7000;
+                cfg.Default = "h";
+                cfg.Servers = new System.Collections.Generic.Dictionary<string, ServerDef>
+                {
+                    ["h"] = new ServerDef { host = "h", syncTimeout = 7000 }
+                };
                 AppConfig.CurrentOverrideForTests = cfg;
 
-                // The pool dimension matters: UDF uses UDF.timeout, RTD uses RTD.timeout.
+                // The unified server timeout (no pool dimension): 7000 + 500.
                 Assert.Equal(7500, RedisUDF.ResponseTimeoutMs(RedisPool.UdfData));
-                Assert.Equal(3500, RedisUDF.ResponseTimeoutMs(RedisPool.RtdData));
-                Assert.Equal(3500, RedisUDF.ResponseTimeoutMs(RedisPool.RtdSub));
-                // The no-arg overload defaults to the RTD pool.
-                Assert.Equal(3500, RedisUDF.ResponseTimeoutMs());
+                Assert.Equal(7500, RedisUDF.ResponseTimeoutMs(RedisPool.RtdData));
+                Assert.Equal(7500, RedisUDF.ResponseTimeoutMs());
             }
             finally
             {
@@ -46,7 +47,11 @@ namespace RedisExcel.Tests
             try
             {
                 var cfg = AppConfig.Sanitize(new ConfigRoot());
-                cfg.UDF.timeout = int.MaxValue; // +500 would overflow a 32-bit int
+                cfg.Default = "h";
+                cfg.Servers = new System.Collections.Generic.Dictionary<string, ServerDef>
+                {
+                    ["h"] = new ServerDef { host = "h", syncTimeout = int.MaxValue }
+                };
                 AppConfig.CurrentOverrideForTests = cfg;
 
                 int bound = RedisUDF.ResponseTimeoutMs(RedisPool.UdfData);
@@ -65,13 +70,15 @@ namespace RedisExcel.Tests
             var original = AppConfig.CurrentOverrideForTests;
             try
             {
+                // A tiny syncTimeout (1) -> 1 + 500 = 501.
                 var cfg = AppConfig.Sanitize(new ConfigRoot());
-                cfg.UDF.timeout = 1; // 1 + 500 = 501, above the 500 floor
+                cfg.Default = "h";
+                cfg.Servers = new System.Collections.Generic.Dictionary<string, ServerDef>
+                {
+                    ["h"] = new ServerDef { host = "h", syncTimeout = 1 }
+                };
                 AppConfig.CurrentOverrideForTests = cfg;
                 Assert.Equal(501, RedisUDF.ResponseTimeoutMs(RedisPool.UdfData));
-
-                cfg.UDF.timeout = -1000; // would be below the floor -> 500
-                Assert.Equal(500, RedisUDF.ResponseTimeoutMs(RedisPool.UdfData));
             }
             finally
             {

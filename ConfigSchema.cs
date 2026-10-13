@@ -9,17 +9,28 @@ using System.Reflection;
 
 namespace RedisExcel
 {
+    /// <summary>Severity of a <see cref="ConfigIssue"/>. An <see cref="Error"/>
+    /// rejects the whole file at load (a wrong value on a known key); a
+    /// <see cref="Warning"/> is logged and ignored (e.g. an unknown/extra key).</summary>
+    internal enum ConfigSeverity
+    {
+        Warning = 0,
+        Error = 1,
+    }
+
     /// <summary>A single problem found while validating RedisExcel.json.</summary>
     internal sealed class ConfigIssue
     {
         /// <summary>JSON path of the offending value (e.g. "#/RTD.timeout").</summary>
         public string Path { get; }
         public string Message { get; }
+        public ConfigSeverity Severity { get; }
 
-        public ConfigIssue(string path, string message)
+        public ConfigIssue(string path, string message, ConfigSeverity severity = ConfigSeverity.Error)
         {
             Path = path ?? "";
             Message = message ?? "";
+            Severity = severity;
         }
 
         public override string ToString() => (Path.Length == 0 ? "/" : Path) + ": " + Message;
@@ -128,8 +139,8 @@ namespace RedisExcel
         private static JToken Prune(JToken value, JsonSchema schema, string path, IList<ConfigIssue> issues)
         {
             // Objects are walked property by property (so an unknown or bad child
-            // is dropped without touching its siblings). Every other value is
-            // checked as a whole: a violation drops just that value.
+            // is handled without touching its siblings). Every other value is
+            // checked as a whole.
             if (schema.Type.HasFlag(JsonObjectType.Object) && value is JObject obj)
             {
                 var cleaned = new JObject();
@@ -176,7 +187,7 @@ namespace RedisExcel
                     foreach (var candidate in list)
                     {
                         if (candidate != list[0])
-                            issues?.Add(new ConfigIssue(path + "/" + candidate.Name, "duplicate key (differs only by case)"));
+                            issues?.Add(new ConfigIssue(path + "/" + candidate.Name, "duplicate key (differs only by case)", ConfigSeverity.Warning));
                         var pruned = Prune(candidate.Value, childSchema, path + "/" + candidate.Name, issues);
                         if (pruned == null)
                             continue;
@@ -218,15 +229,36 @@ namespace RedisExcel
                     }
                     else
                     {
-                        issues?.Add(new ConfigIssue(childPath, "unknown key"));
+                        // An extra/unknown key is a WARNING, not an error: we do not
+                        // use it, and it must not reject an otherwise working file.
+                        issues?.Add(new ConfigIssue(childPath, "unknown key (ignored)", ConfigSeverity.Warning));
                     }
                 }
                 return cleaned;
             }
 
+            // A schema that is a oneOf (a Servers value: string or object): keep the
+            // value when any branch validates; otherwise it is an error.
+            if (schema.OneOf != null && schema.OneOf.Count > 0)
+            {
+                bool any;
+                try
+                {
+                    any = schema.OneOf.Any(branch => branch.Validate(value).Count == 0);
+                }
+                catch (Exception ex)
+                {
+                    issues?.Add(new ConfigIssue(path, "invalid value (" + ex.GetType().Name + ")"));
+                    return null;
+                }
+                if (any)
+                    return value;
+                issues?.Add(new ConfigIssue(path, "expected a connection string or an object with host/connectTimeout/syncTimeout"));
+                return null;
+            }
+
             // A value the schema cannot even inspect (e.g. a JSON integer larger
-            // than Int64 makes NJsonSchema throw) is treated as invalid, so it is
-            // dropped instead of reaching ToObject and discarding the whole file.
+            // than Int64 makes NJsonSchema throw) is treated as invalid.
             ICollection<NJsonSchema.Validation.ValidationError> errors;
             try
             {
@@ -240,8 +272,13 @@ namespace RedisExcel
             if (errors.Count > 0)
             {
                 var first = errors.First();
-                issues?.Add(new ConfigIssue(path, Describe(first)));
-                return null;
+                // An unknown-key report from `additionalProperties:false` is a
+                // warning; every other kind is a value error (fail-closed).
+                var severity = first.Kind == NJsonSchema.Validation.ValidationErrorKind.NoAdditionalPropertiesAllowed
+                    ? ConfigSeverity.Warning
+                    : ConfigSeverity.Error;
+                issues?.Add(new ConfigIssue(path, Describe(first), severity));
+                return severity == ConfigSeverity.Error ? null : value;
             }
             return value;
         }

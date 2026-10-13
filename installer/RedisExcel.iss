@@ -597,30 +597,28 @@ begin
     Result := (OptionsPage <> nil) and OptionsPage.Values[0];
 end;
 
-// The generated config for SIMPLE mode: minimal, with the code's defaults
-// spelled out. Advanced mode uses the editable text from the wizard.
+// The generated config for SIMPLE mode: minimal v1.6 shape (server declared
+// once via Default + Servers). Advanced mode uses the editable text.
 function SimpleConfigJson(): String;
 var HostLine: String;
 begin
   HostLine := HostString();
   Result :=
     '{' + #13#10 +
+    '  "Default": "local",' + #13#10 +
+    '  "Servers": {' + #13#10 +
+    '    "local": "' + HostLine + '"' + #13#10 +
+    '  },' + #13#10 +
     '  "RTD": {' + #13#10 +
-    '    "host": "' + HostLine + '",' + #13#10 +
-    '    "timeout": 1000,' + #13#10 +
     '    "RedisUpdateRateMs": 1000,' + #13#10 +
     '    "ExcelUpdateRateMs": 100,' + #13#10 +
     '    "MessageCounterThreshold": 10000,' + #13#10 +
     '    "ExcelUpdateStyle": "Automatic",' + #13#10 +
-    '    "UseGetMultiple": true' + #13#10 +
-    '  },' + #13#10 +
-    '  "UDF": {' + #13#10 +
-    '    "host": "' + HostLine + '",' + #13#10 +
-    '    "timeout": 1000' + #13#10 +
+    '    "UseGetMultiple": true,' + #13#10 +
+    '    "CoalesceRealtimeUpdates": true' + #13#10 +
     '  },' + #13#10 +
     '  "UpdateCheck": true,' + #13#10 +
     '  "SkipRepeatedMessages": true,' + #13#10 +
-    '  "CoalesceRealtimeUpdates": true,' + #13#10 +
     '  "ConflationMs": 200,' + #13#10 +
     '  "PublishDedupCacheSize": 10000,' + #13#10 +
     '  "SyncWrite": "fireforget",' + #13#10 +
@@ -628,10 +626,9 @@ begin
     '}' + #13#10;
 end;
 
-// The fully commented template the advanced page starts from. It exposes every
-// key the add-in understands, with a one-line explanation each, so the user
-// sees and can tune everything on a single screen. The loader accepts // and
-// /* */ comments, so this stays valid as-is.
+// The fully commented template the advanced page starts from. Exposes every key
+// the add-in understands, with a one-line explanation each. The loader accepts
+// // and /* */ comments, so this stays valid as-is.
 function AdvancedTemplate(): String;
 var
   H, Port, Pw: String;
@@ -645,28 +642,27 @@ begin
   Result :=
     '{' + #13#10 +
     '  // RedisExcel.json - comments (// and /* */) are allowed.' + #13#10 +
+    '  // The server is declared once: Default is a name from Servers (or a raw' + #13#10 +
+    '  // connection string). Every formula may still pass its own host argument.' + #13#10 +
+    '  "Default": "local",' + #13#10 +
+    '  // Global timeout defaults (ms) for servers declared as a plain string.' + #13#10 +
+    '  "Timeout": { "connectTimeout": 5000, "syncTimeout": 5000 },' + #13#10 +
+    '  // Named servers: value is a connection string OR { host, connectTimeout, syncTimeout }.' + #13#10 +
+    '  "Servers": {' + #13#10 +
+    '    "local": "' + H + '",' + #13#10 +
+    '    // "prod": { "host": "sentinel-a:26379,sentinel-b:26379,serviceName=mymaster", "connectTimeout": 8000, "syncTimeout": 8000 },' + #13#10 +
+    '    // "cache": "node-a:6379,node-b:6379"' + #13#10 +
+    '  },' + #13#10 +
     '  "RTD": {' + #13#10 +
-    '    // Default host for =RTD("RedisRtd",...). A full connection string works.' + #13#10 +
-    '    "host": "' + H + '",' + #13#10 +
-    '    "timeout": 1000,                        // connect/sync timeout (ms)' + #13#10 +
     '    "RedisUpdateRateMs": 1000,              // how often the poll timer reads Redis' + #13#10 +
     '    "ExcelUpdateRateMs": 100,               // how often dirty values are flushed to Excel' + #13#10 +
     '    "ExcelUpdateStyle": "Automatic",        // Timer | Realtime | Automatic' + #13#10 +
     '    "MessageCounterThreshold": 10000,       // Automatic: msgs/sec above which it switches to timer; <=0 disables' + #13#10 +
-    '    "UseGetMultiple": true                  // batch GET topics into one MGET per tick' + #13#10 +
-    '  },' + #13#10 +
-    '  "UDF": {' + #13#10 +
-    '    // Default host for the =RedisUDF... functions.' + #13#10 +
-    '    "host": "' + H + '",' + #13#10 +
-    '    "timeout": 1000' + #13#10 +
-    '  },' + #13#10 +
-    '  // Named host aliases usable as the host argument, e.g. "prod".' + #13#10 +
-    '  "Servers": {' + #13#10 +
-    '    // "prod": "localhost:6379,defaultDatabase=0"' + #13#10 +
+    '    "UseGetMultiple": true,                 // batch GET topics into one MGET per tick' + #13#10 +
+    '    "CoalesceRealtimeUpdates": true         // real-time: at most one push per window (superseded by ConflationMs)' + #13#10 +
     '  },' + #13#10 +
     '  "UpdateCheck": true,                      // background check for a newer release' + #13#10 +
     '  "SkipRepeatedMessages": true,             // skip identical consecutive SUB/GET payloads (ordinal)' + #13#10 +
-    '  "CoalesceRealtimeUpdates": true,          // real-time: at most one push per window (superseded by ConflationMs)' + #13#10 +
     '  "ConflationMs": 200,                      // explicit real-time window in ms (0 = off; capped at 3600000)' + #13#10 +
     '  "PublishDedupCacheSize": 10000,           // LRU size for PublishIfChanged' + #13#10 +
     '  "SyncWrite": "fireforget",                // sync | fireforget | fireforget-all' + #13#10 +

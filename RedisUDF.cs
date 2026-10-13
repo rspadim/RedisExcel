@@ -195,9 +195,11 @@ namespace RedisExcel
         {
             try
             {
-                int timeout = pool == RedisPool.UdfData
-                    ? AppConfig.Current.UDF.timeout
-                    : AppConfig.Current.RTD.timeout;
+                // A single unified server timeout: the same value backs both the
+                // connection's SyncTimeout and this response bound. Read it for the
+                // pool's default server.
+                var timeouts = AppConfig.ServerTimeouts(null);
+                int timeout = timeouts.syncTimeout;
                 // Clamp to the int range: a configured timeout near int.MaxValue
                 // would otherwise overflow timeout+500 into a negative bound.
                 long bound = (long)timeout + 500;
@@ -465,10 +467,10 @@ namespace RedisExcel
         {
             // null / empty cell / omitted argument all mean "use the default host".
             if (optionalHost == null || optionalHost is ExcelMissing || optionalHost is ExcelEmpty)
-                return AppConfig.ResolveUdfHost(null);
+                return AppConfig.ResolveServerHost(null);
             if (!(optionalHost is string host))
                 throw new ArgumentException("host must be a text value");
-            return AppConfig.ResolveUdfHost(host);
+            return AppConfig.ResolveServerHost(host);
         }
 
         /// <summary>
@@ -741,6 +743,17 @@ namespace RedisExcel
             return new object[,] { { Fail(function, ex, context) } };
         }
 
+        /// <summary>Throws a <see cref="ConfigException"/> when the configuration
+        /// was rejected by the schema (a wrong value on a known key). The cell then
+        /// shows "#CONFIG: ..." instead of touching Redis with default hosts.</summary>
+        private static void ThrowIfConfigRejected()
+        {
+            var config = AppConfig.Current;
+            if (config != null && config.Rejected)
+                throw new ConfigException("RedisExcel.json rejected: " + (config.RejectedReason ?? "invalid configuration")
+                    + " (fix the file, then restart Excel)");
+        }
+
         /// <summary>
         /// Shared error envelope for the UDF bodies: runs the body (which must
         /// resolve the host first) and converts a failure into the standard
@@ -750,7 +763,12 @@ namespace RedisExcel
         {
             try
             {
+                ThrowIfConfigRejected();
                 return body();
+            }
+            catch (ConfigException cex)
+            {
+                return "#CONFIG: " + cex.Message;
             }
             catch (Exception ex)
             {
@@ -763,7 +781,12 @@ namespace RedisExcel
         {
             try
             {
+                ThrowIfConfigRejected();
                 return body();
+            }
+            catch (ConfigException cex)
+            {
+                return new object[,] { { "#CONFIG: " + cex.Message } };
             }
             catch (Exception ex)
             {

@@ -1,39 +1,53 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "RedisExcel configuration",
-  "description": "Schema for RedisExcel.json. Comments (// and /* */) are accepted by the loader. Values that do not match are dropped individually (the rest of the file is kept).",
+  "description": "Schema for RedisExcel.json (v1.6 shape). Comments (// and /* */) are accepted. A wrong VALUE on a known key rejects the whole file (fail-closed); an EXTRA key is only a warning. The server is declared once: Default is a name from Servers or a raw connection string, and Servers values may be a string or an object.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "RTD": {
+    "Default": { "type": "string", "description": "The default server: a name defined in Servers, or a raw connection string used as-is." },
+    "Timeout": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Global timeout defaults (ms) for servers declared as a plain string, or that omit a field.",
       "properties": {
-        "host": { "type": "string", "description": "Default Redis host for RTD (host:port or a full connection string)." },
-        "timeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Connect and sync timeout in milliseconds." },
-        "RedisUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often the poll timer reads Redis." },
-        "ExcelUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often dirty values are flushed to Excel." },
-        "ExcelUpdateStyle": { "type": "string", "pattern": "^(?:[Tt][Ii][Mm][Ee][Rr]|[Rr][Ee][Aa][Ll][Tt][Ii][Mm][Ee]|[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ii][Cc])$", "description": "Timer, Realtime or Automatic (case-insensitive; ASCII)." },
-        "MessageCounterThreshold": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "description": "Messages/second above which Automatic switches to timer delivery." },
-        "UseGetMultiple": { "type": "boolean", "description": "Batch polled GET/HGET reads into one round trip." }
-      }
-    },
-    "UDF": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "host": { "type": "string", "description": "Default Redis host for the UDF functions." },
-        "timeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Connect and sync timeout in milliseconds." }
+        "connectTimeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Handshake/AUTH timeout in milliseconds (default 5000)." },
+        "syncTimeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Command reply wait in milliseconds (default 5000)." }
       }
     },
     "Servers": {
       "type": "object",
-      "additionalProperties": { "type": "string" },
-      "description": "Host aliases: name -> host/connection string."
+      "description": "Named servers: name -> connection string, or name -> { host, connectTimeout, syncTimeout }.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["host"],
+            "properties": {
+              "host": { "type": "string", "description": "Redis connection string (host:port or a full connection string)." },
+              "connectTimeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Handshake/AUTH timeout in milliseconds." },
+              "syncTimeout": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Command reply wait in milliseconds." }
+            }
+          }
+        ]
+      }
+    },
+    "RTD": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "RedisUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often the poll timer reads Redis." },
+        "ExcelUpdateRateMs": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "How often dirty values are flushed to Excel." },
+        "ExcelUpdateStyle": { "type": "string", "pattern": "^(?:[Tt][Ii][Mm][Ee][Rr]|[Rr][Ee][Aa][Ll][Tt][Ii][Mm][Ee]|[Aa][Uu][Tt][Oo][Mm][Aa][Tt][Ii][Cc])$", "description": "Timer, Realtime or Automatic (case-insensitive; ASCII)." },
+        "MessageCounterThreshold": { "type": "integer", "minimum": -9223372036854775808, "maximum": 9223372036854775807, "description": "Messages/second above which Automatic switches to timer delivery." },
+        "UseGetMultiple": { "type": "boolean", "description": "Batch polled GET/HGET reads into one round trip." },
+        "CoalesceRealtimeUpdates": { "type": "boolean", "description": "Real-time coalescing flag (superseded by an explicit ConflationMs)." }
+      }
     },
     "UpdateCheck": { "type": "boolean", "description": "Check GitHub for a newer release in the background." },
     "SkipRepeatedMessages": { "type": "boolean", "description": "Skip identical consecutive payloads for literal SUB and polled GET/HGET." },
-    "CoalesceRealtimeUpdates": { "type": "boolean", "description": "Legacy real-time coalescing flag (superseded by an explicit ConflationMs)." },
     "ConflationMs": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647, "description": "Real-time conflation window in ms (0 = off, one push per message; negative clamps to 0, >3600000 caps to 3600000 via Sanitize)." },
     "PublishDedupCacheSize": { "type": "integer", "minimum": 1, "maximum": 2147483647, "description": "Capacity of the PublishIfChanged dedup cache (LRU)." },
     "SyncWrite": { "type": "string", "pattern": "^(?:[Ss][Yy][Nn][Cc]|[Ff][Ii][Rr][Ee][Ff][Oo][Rr][Gg][Ee][Tt]|[Ff][Ii][Rr][Ee][Ff][Oo][Rr][Gg][Ee][Tt]-[Aa][Ll][Ll])$", "description": "sync, fireforget or fireforget-all (case-insensitive; ASCII)." },

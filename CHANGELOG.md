@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed (BREAKING - configuration, v1.6)
+
+- **Unified, named-server configuration.** `RedisExcel.json` now declares the
+  server **once** instead of duplicating `host`/`timeout` in `RTD` and `UDF`:
+
+  ```jsonc
+  {
+    "Default": "prod",                        // a name in Servers, or a raw connection string
+    "Timeout": { "connectTimeout": 5000, "syncTimeout": 5000 },
+    "Servers": {
+      "prod":  { "host": "sentinel-a:26379,...,serviceName=mymaster", "connectTimeout": 8000 },
+      "cache": "node-a:6379,node-b:6379"      // string shorthand
+    },
+    "RTD": { "RedisUpdateRateMs": 1000, "...": "...", "CoalesceRealtimeUpdates": true },
+    "...": "..."
+  }
+  ```
+
+  - `Default` selects the server for **both** RTD and UDF (no per-section host); a
+    formula's `host` argument still overrides per call.
+  - `Servers` values are a connection string **or** an object
+    `{ host, connectTimeout, syncTimeout }`; `Timeout` holds the global defaults.
+  - **Two timeouts** (`connectTimeout`, `syncTimeout`), default **5000 ms**
+    (the old 1000 ms connect timeout was too tight for slow/VPN links).
+  - `CoalesceRealtimeUpdates` moved into `RTD` (it is RTD-only).
+  - **The old shape is rejected:** `RTD.host`, `UDF.host`, `RTD.timeout`,
+    `UDF.timeout` and a top-level `CoalesceRealtimeUpdates` are no longer
+    accepted; migration is a one-time edit.
+- **Fail-closed on a wrong VALUE:** a bad value on a known key (type/range/enum)
+  now rejects the whole file (every UDF/RTD cell returns `#CONFIG: ...` until it
+  is fixed) instead of silently defaulting just that value. An **extra/unknown
+  key** stays a non-fatal log **warning**.
+
 ### Added
 
 - **Native Redis HA: Sentinel and Cluster.** A `host` that is a Sentinel

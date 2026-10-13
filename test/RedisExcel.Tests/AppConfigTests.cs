@@ -23,24 +23,20 @@ namespace RedisExcel.Tests
         [Fact]
         public void CandidatePaths_NoAddInFolder_SkipsItWithoutBreakingTheRest()
         {
-            // When the add-in/excel folder is unknown the entry is null and is
-            // skipped by the caller (LoadFromPaths ignores null/blank paths).
             var paths = AppConfig.CandidatePaths(null, null).Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
             Assert.All(paths, p => Assert.EndsWith("RedisExcel.json", p));
             Assert.DoesNotContain(@"C:\RedisExcel", string.Join(";", paths));
         }
 
         [Fact]
-        public void Sanitize_FillsMissingSectionsWithDefaults()
+        public void Sanitize_FillsDefaults()
         {
             var config = AppConfig.Sanitize(new ConfigRoot());
 
             Assert.NotNull(config.RTD);
-            Assert.NotNull(config.UDF);
-            Assert.Equal(AppConfig.DefaultHost, config.RTD.host);
-            Assert.Equal(AppConfig.DefaultHost, config.UDF.host);
-            Assert.Equal(1000, config.RTD.timeout);
-            Assert.Equal(1000, config.UDF.timeout);
+            Assert.Equal(AppConfig.DefaultHost, config.Default);
+            Assert.NotNull(config.Timeout);
+            Assert.NotNull(config.Servers);
             Assert.Equal(1000, config.RTD.RedisUpdateRateMs);
             Assert.Equal(100, config.RTD.ExcelUpdateRateMs);
             Assert.Equal(ENUMExcelUpdateStyle.Automatic, config.RTD.ExcelUpdateStyle);
@@ -54,94 +50,142 @@ namespace RedisExcel.Tests
         {
             var config = new ConfigRoot
             {
+                Default = "prod",
+                Servers = new Dictionary<string, ServerDef>
+                {
+                    ["prod"] = new ServerDef { host = "host1", connectTimeout = 8000, syncTimeout = 9000 },
+                    ["cache"] = new ServerDef { host = "host2" }
+                },
                 RTD = new RTDConfig
                 {
-                    host = "host1",
-                    timeout = 42,
                     RedisUpdateRateMs = 7,
                     ExcelUpdateRateMs = 3,
                     ExcelUpdateStyle = ENUMExcelUpdateStyle.Timer,
                     MessageCounterThreshold = 5,
                     UseGetMultiple = false
-                },
-                UDF = new ConfigSection { host = "host2", timeout = 9 }
+                }
             };
 
             var sanitized = AppConfig.Sanitize(config);
 
-            Assert.Equal("host1", sanitized.RTD.host);
-            Assert.Equal(42, sanitized.RTD.timeout);
+            Assert.Equal("prod", sanitized.Default);
+            Assert.Equal("host1", sanitized.Servers["prod"].host);
+            Assert.Equal(8000, sanitized.Servers["prod"].connectTimeout);
+            Assert.Equal(9000, sanitized.Servers["prod"].syncTimeout);
+            Assert.Equal("host2", sanitized.Servers["cache"].host);
             Assert.Equal(7, sanitized.RTD.RedisUpdateRateMs);
             Assert.Equal(3, sanitized.RTD.ExcelUpdateRateMs);
             Assert.Equal(ENUMExcelUpdateStyle.Timer, sanitized.RTD.ExcelUpdateStyle);
             Assert.Equal(5, sanitized.RTD.MessageCounterThreshold);
             Assert.False(sanitized.RTD.UseGetMultiple);
-            Assert.Equal("host2", sanitized.UDF.host);
-            Assert.Equal(9, sanitized.UDF.timeout);
         }
 
         [Fact]
-        public void Sanitize_FixesNonPositiveTimeoutsAndRates()
+        public void Sanitize_DropsServerEntriesWithNoHost()
         {
             var config = new ConfigRoot
             {
-                RTD = new RTDConfig { timeout = 0, RedisUpdateRateMs = -5, ExcelUpdateRateMs = 0 },
-                UDF = new ConfigSection { timeout = -1 }
+                Servers = new Dictionary<string, ServerDef>
+                {
+                    ["ok"] = new ServerDef { host = "h:1" },
+                    ["empty"] = new ServerDef { host = "" },
+                    ["null"] = null
+                }
             };
 
             var sanitized = AppConfig.Sanitize(config);
 
-            Assert.Equal(1000, sanitized.RTD.timeout);
+            Assert.True(sanitized.Servers.ContainsKey("ok"));
+            Assert.False(sanitized.Servers.ContainsKey("empty"));
+            Assert.False(sanitized.Servers.ContainsKey("null"));
+        }
+
+        [Fact]
+        public void Sanitize_FixesNonPositiveRates()
+        {
+            var config = new ConfigRoot
+            {
+                RTD = new RTDConfig { RedisUpdateRateMs = -5, ExcelUpdateRateMs = 0 }
+            };
+
+            var sanitized = AppConfig.Sanitize(config);
+
             Assert.Equal(1000, sanitized.RTD.RedisUpdateRateMs);
             Assert.Equal(100, sanitized.RTD.ExcelUpdateRateMs);
-            Assert.Equal(1000, sanitized.UDF.timeout);
+        }
+
+        // ---- resolution -------------------------------------------------------
+
+        private static ConfigRoot Config(string defaultRef, params (string name, string host)[] servers)
+        {
+            var map = new Dictionary<string, ServerDef>(StringComparer.Ordinal);
+            foreach (var s in servers)
+                map[s.name] = new ServerDef { host = s.host };
+            return new ConfigRoot { Default = defaultRef, Servers = map };
         }
 
         [Theory]
-        [InlineData(null, "default", null, "default")]
-        [InlineData("", "default", null, "default")]
-        [InlineData("   ", "default", null, "default")]
-        [InlineData("alias", "default", "alias=resolved", "resolved")]
-        [InlineData(" prod ", "default", "prod=resolved", "resolved")] // trimmed before lookup
-        [InlineData("PROD", "default", "prod=resolved", "resolved")] // case-insensitive fallback
-        [InlineData("unknown", "default", null, "unknown")]
-        [InlineData("alias", "alias", "alias=resolved", "resolved")]
-        public void ResolveHostCore_ResolvesAliasesAndDefaults(string host, string defaultHost, string mapping, string expected)
+        [InlineData(null, "localhost:6379")]      // blank -> Default (raw string)
+        [InlineData("", "localhost:6379")]
+        [InlineData("   ", "localhost:6379")]
+        [InlineData("localhost:6379", "localhost:6379")] // raw string as-is
+        [InlineData("prod", "h-prod")]            // name -> Servers[str]
+        [InlineData("PROD", "h-prod")]            // case-insensitive name
+        public void ResolveServer_ResolvesDefaultAndNames(string reference, string expected)
         {
-            var servers = new Dictionary<string, string>();
-            if (mapping != null)
-            {
-                var parts = mapping.Split('=');
-                servers[parts[0]] = parts[1];
-            }
-
-            Assert.Equal(expected, AppConfig.ResolveHostCore(host, defaultHost, servers));
+            var cfg = Config("localhost:6379", ("prod", "h-prod"));
+            Assert.Equal(expected, AppConfig.ResolveServer(cfg, reference)?.host);
         }
 
         [Fact]
-        public void ResolveHostCore_ExactAliasWinsOverCaseVariant()
+        public void ResolveServer_ExactNameWinsOverCaseVariant()
         {
-            var servers = new Dictionary<string, string>
+            var cfg = Config(null,
+                ("prod", "exact"), ("Prod", "variant"));
+            Assert.Equal("exact", AppConfig.ResolveServer(cfg, "prod").host);
+            Assert.Equal("variant", AppConfig.ResolveServer(cfg, "Prod").host);
+        }
+
+        [Fact]
+        public void ResolveServer_UnknownBareName_FallsBackToRawString()
+        {
+            // A name that is not defined is used as a raw connection string (so a
+            // bare "myhost:6379" keeps working); it is NOT a silent default.
+            var cfg = Config("localhost:6379");
+            Assert.Equal("myhost:6379", AppConfig.ResolveServer(cfg, "myhost:6379").host);
+        }
+
+        [Fact]
+        public void ServerTimeouts_ServerObjectWinsThenGlobalThenDefault()
+        {
+            var cfg = new ConfigRoot
             {
-                { "prod", "exact" },
-                { "Prod", "variant" }
+                Default = "prod",
+                Timeout = new TimeoutConfig { connectTimeout = 3000, syncTimeout = 4000 },
+                Servers = new Dictionary<string, ServerDef>
+                {
+                    ["prod"] = new ServerDef { host = "h", connectTimeout = 8000 }
+                }
             };
+            AppConfig.CurrentOverrideForTests = cfg;
+            try
+            {
+                // connect: server object (8000); sync: global (4000)
+                var t = AppConfig.ServerTimeouts(null);
+                Assert.Equal(8000, t.connectTimeout);
+                Assert.Equal(4000, t.syncTimeout);
+            }
+            finally { AppConfig.CurrentOverrideForTests = null; }
 
-            // Each spelling hits its own exact key (ordinal) instead of the
-            // case-insensitive scan picking an arbitrary dictionary order.
-            Assert.Equal("exact", AppConfig.ResolveHostCore("prod", null, servers));
-            Assert.Equal("variant", AppConfig.ResolveHostCore("Prod", null, servers));
-        }
-
-        [Fact]
-        public void ResolveHostCore_NullHostAndDefault_ReturnsNull()
-        {
-            var servers = new Dictionary<string, string> { { "prod", "x" } };
-
-            // With no default host there is nothing to resolve: null in, null
-            // out (an alias mapping must not invent a host).
-            Assert.Null(AppConfig.ResolveHostCore(null, null, servers));
-            Assert.Null(AppConfig.ResolveHostCore("   ", null, servers));
+            // With no config at all: the built-in defaults.
+            AppConfig.CurrentOverrideForTests = new ConfigRoot();
+            try
+            {
+                var t = AppConfig.ServerTimeouts("localhost:6379");
+                Assert.Equal(AppConfig.DefaultConnectTimeoutMs, t.connectTimeout);
+                Assert.Equal(AppConfig.DefaultSyncTimeoutMs, t.syncTimeout);
+            }
+            finally { AppConfig.CurrentOverrideForTests = null; }
         }
 
         [Fact]
@@ -169,8 +213,8 @@ namespace RedisExcel.Tests
         {
             Assert.True(new ConfigRoot().SkipRepeatedMessages);
             Assert.False(new ConfigRoot { SkipRepeatedMessages = false }.SkipRepeatedMessages);
-            Assert.True(new ConfigRoot().CoalesceRealtimeUpdates);
-            Assert.False(new ConfigRoot { CoalesceRealtimeUpdates = false }.CoalesceRealtimeUpdates);
+            Assert.True(new RTDConfig().CoalesceRealtimeUpdates);
+            Assert.False(new RTDConfig { CoalesceRealtimeUpdates = false }.CoalesceRealtimeUpdates);
         }
 
         [Fact]
@@ -185,7 +229,6 @@ namespace RedisExcel.Tests
         [Fact]
         public void Sanitize_SyncWrite_DefaultsToFireForgetWhenAbsent()
         {
-            // Absent (fresh instance), null, empty and whitespace all fall back.
             Assert.Equal("fireforget", new ConfigRoot().SyncWrite);
             Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot()).SyncWrite);
             Assert.Equal("fireforget", AppConfig.Sanitize(new ConfigRoot { SyncWrite = null }).SyncWrite);
@@ -222,19 +265,19 @@ namespace RedisExcel.Tests
             Assert.False(AppConfig.Sanitize(new ConfigRoot { AsyncWrites = false }).AsyncWrites);
         }
 
+        // ---- loader (new shape) ----------------------------------------------
+
         [Fact]
         public void LoadFromPaths_MalformedFirstExisting_StopsAndUsesDefaults()
         {
             using (var temp = new TempFiles())
             {
                 string malformed = temp.Write("malformed.json", "{ this is not json");
-                string wellFormed = temp.Write("well-formed.json", "{\"RTD\":{\"host\":\"second-file-host\"}}");
+                string wellFormed = temp.Write("well-formed.json", "{\"Default\":\"second-host:6379\"}");
 
                 var config = AppConfig.LoadFromPaths(new[] { malformed, wellFormed });
 
-                // The first existing file wins even when malformed: no fall-through.
-                Assert.Equal(AppConfig.DefaultHost, config.RTD.host);
-                // No usable file: the legacy no-file flush timer applies.
+                Assert.Equal(AppConfig.DefaultHost, config.Default);
                 Assert.Equal(1000, config.RTD.ExcelUpdateRateMs);
                 Assert.Equal(10000, config.PublishDedupCacheSize);
             }
@@ -251,25 +294,9 @@ namespace RedisExcel.Tests
                     temp.PathOf("missing-2.json")
                 });
 
-                Assert.Equal(AppConfig.DefaultHost, config.RTD.host);
+                Assert.Equal(AppConfig.DefaultHost, config.Default);
                 Assert.Equal(1000, config.RTD.ExcelUpdateRateMs);
                 Assert.Equal(10000, config.PublishDedupCacheSize);
-            }
-        }
-
-        [Fact]
-        public void LoadFromPaths_MissingFirstThenValid_LoadsSecond()
-        {
-            using (var temp = new TempFiles())
-            {
-                string missing = temp.PathOf("missing.json");
-                string valid = temp.Write("valid.json", "{\"RTD\":{\"host\":\"loaded-host\"}}");
-
-                var config = AppConfig.LoadFromPaths(new[] { missing, null, valid });
-
-                Assert.Equal("loaded-host", config.RTD.host);
-                // A usable file keeps the standard default, not the legacy fallback.
-                Assert.Equal(100, config.RTD.ExcelUpdateRateMs);
             }
         }
 
@@ -279,42 +306,57 @@ namespace RedisExcel.Tests
             using (var temp = new TempFiles())
             {
                 string valid = temp.Write("valid.json",
-                    "{\"RTD\":{\"host\":\"h1\",\"RedisUpdateRateMs\":42,\"ExcelUpdateRateMs\":7}," +
-                    "\"UDF\":{\"host\":\"h2\",\"timeout\":9}," +
-                    "\"PublishDedupCacheSize\":7," +
-                    "\"SkipRepeatedMessages\":false}");
+                    "{\"Default\":\"prod\"," +
+                    "\"Servers\":{\"prod\":{\"host\":\"h1\",\"connectTimeout\":8000},\"cache\":\"h2\"}," +
+                    "\"RTD\":{\"RedisUpdateRateMs\":42,\"ExcelUpdateRateMs\":7}," +
+                    "\"PublishDedupCacheSize\":7,\"SkipRepeatedMessages\":false}");
 
                 var config = AppConfig.LoadFromPaths(new[] { valid });
 
-                Assert.Equal("h1", config.RTD.host);
+                Assert.Equal("prod", config.Default);
+                Assert.Equal("h1", config.Servers["prod"].host);
+                Assert.Equal(8000, config.Servers["prod"].connectTimeout);
+                Assert.Equal("h2", config.Servers["cache"].host);   // string shorthand
                 Assert.Equal(42, config.RTD.RedisUpdateRateMs);
                 Assert.Equal(7, config.RTD.ExcelUpdateRateMs);
-                Assert.Equal("h2", config.UDF.host);
-                Assert.Equal(9, config.UDF.timeout);
                 Assert.Equal(7, config.PublishDedupCacheSize);
                 Assert.False(config.SkipRepeatedMessages);
             }
         }
 
         [Fact]
-        public void LoadFromPaths_OneBadValue_KeepsEveryOtherValue()
+        public void LoadFromPaths_WrongValueOnKnownKey_RejectsTheWholeFile()
         {
+            // 1.6 policy: a wrong VALUE on a known key fails closed (the file is
+            // rejected), unlike the old per-value tolerance. Extra keys are not
+            // values and stay warnings.
             using (var temp = new TempFiles())
             {
-                // A wrong-typed/unknown-enum value must NOT discard the rest of the
-                // file: that silently repointed the host to localhost and changed
-                // the write mode.
-                string partlyBad = temp.Write("partly-bad.json",
-                    "{\"RTD\":{\"host\":\"myhost\",\"ExcelUpdateStyle\":\"Bogus\",\"RedisUpdateRateMs\":42}," +
-                    "\"SyncWrite\":\"sync\",\"PublishDedupCacheSize\":9,\"UpdateCheck\":\"no\"}");
+                string bad = temp.Write("bad.json",
+                    "{\"Default\":\"myhost\",\"RTD\":{\"RedisUpdateRateMs\":\"nope\"},\"SyncWrite\":\"sync\"}");
 
-                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+                var config = AppConfig.LoadFromPaths(new[] { bad });
 
-                Assert.Equal("myhost", config.RTD.host);            // kept
-                Assert.Equal(42, config.RTD.RedisUpdateRateMs);      // kept
-                Assert.Equal("sync", config.SyncWrite);              // kept
-                Assert.Equal(9, config.PublishDedupCacheSize);       // kept
-                Assert.Equal(ENUMExcelUpdateStyle.Automatic, config.RTD.ExcelUpdateStyle); // bad value -> default
+                Assert.True(config.Rejected);
+                Assert.NotNull(config.RejectedReason);
+                Assert.Contains("RedisUpdateRateMs", config.RejectedReason);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_UnknownExtraKey_IsToleratedAsWarning()
+        {
+            // An extra key we do not use must not reject the file.
+            using (var temp = new TempFiles())
+            {
+                string extra = temp.Write("extra.json",
+                    "{\"Default\":\"myhost:6379\",\"Nope\":1,\"SyncWrite\":\"sync\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { extra });
+
+                Assert.False(config.Rejected);
+                Assert.Equal("myhost:6379", config.Default);
+                Assert.Equal("sync", config.SyncWrite);
             }
         }
 
@@ -323,7 +365,6 @@ namespace RedisExcel.Tests
         {
             using (var temp = new TempFiles())
             {
-                // The config may use any case; the sanitized value is lowercase.
                 string valid = temp.Write("writes.json",
                     "{\"SyncWrite\":\"FIREFORGET-ALL\",\"AsyncWrites\":true}");
 
@@ -335,44 +376,18 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void LoadFromPaths_BoolWhereNumberExpected_KeepsTheRestOfTheFile()
-        {
-            // Regression (audit D1): a bool/object/array in a numeric position used
-            // to fail at the JSON reader level (the Error callback cannot repair it)
-            // and returned null, discarding the WHOLE file - host, write mode and
-            // aliases all reverted to defaults. The schema now removes just the bad
-            // value.
-            using (var temp = new TempFiles())
-            {
-                string partlyBad = temp.Write("bool-int.json",
-                    "{\"RTD\":{\"host\":\"prodhost:6379\",\"timeout\":true}," +
-                    "\"UDF\":{\"host\":\"prodhost:6379\"},\"SyncWrite\":\"sync\"," +
-                    "\"Servers\":{\"prod\":\"prodhost:6379\"}}");
-
-                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
-
-                Assert.Equal("prodhost:6379", config.RTD.host);      // kept
-                Assert.Equal("prodhost:6379", config.UDF.host);      // kept
-                Assert.Equal("sync", config.SyncWrite);              // kept
-                Assert.NotNull(config.Servers);                      // kept
-                Assert.Equal("prodhost:6379", config.Servers["prod"]);
-                Assert.Equal(1000, config.RTD.timeout);              // bad bool -> default
-            }
-        }
-
-        [Fact]
-        public void LoadFromPaths_ObjectWhereNumberExpected_KeepsTheRestOfTheFile()
+        public void LoadFromPaths_ServerStringOrObject_BothBind()
         {
             using (var temp = new TempFiles())
             {
-                string partlyBad = temp.Write("obj-int.json",
-                    "{\"RTD\":{\"RedisUpdateRateMs\":{}},\"ConflationMs\":[1],\"SyncWrite\":\"sync\"}");
+                string valid = temp.Write("servers.json",
+                    "{\"Servers\":{\"a\":\"h:1\",\"b\":{\"host\":\"h:2\",\"syncTimeout\":9000}}}");
 
-                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
+                var config = AppConfig.LoadFromPaths(new[] { valid });
 
-                Assert.Equal("sync", config.SyncWrite);
-                Assert.Equal(1000, config.RTD.RedisUpdateRateMs);
-                Assert.Null(config.ConflationMs);
+                Assert.Equal("h:1", config.Servers["a"].host);
+                Assert.Equal("h:2", config.Servers["b"].host);
+                Assert.Equal(9000, config.Servers["b"].syncTimeout);
             }
         }
 
@@ -382,12 +397,12 @@ namespace RedisExcel.Tests
             using (var temp = new TempFiles())
             {
                 string withComments = temp.Write("comments.json",
-                    "{\n// the production host\n\"RTD\":{\"host\":\"myhost\"},\n" +
+                    "{\n// the production host\n\"Default\":\"myhost:6379\",\n" +
                     "/* write mode */ \"SyncWrite\":\"sync\"\n}");
 
                 var config = AppConfig.LoadFromPaths(new[] { withComments });
 
-                Assert.Equal("myhost", config.RTD.host);
+                Assert.Equal("myhost:6379", config.Default);
                 Assert.Equal("sync", config.SyncWrite);
             }
         }
@@ -395,42 +410,22 @@ namespace RedisExcel.Tests
         [Fact]
         public void LoadFromPaths_AliasWithADot_KeepsTheRestOfTheFile()
         {
-            // Regression (verify round): a Servers alias containing a dot made the
-            // schema pruner miss the path and discard the WHOLE file. An alias is a
-            // free-form key, so a dot (or any punctuation) must not break it.
             using (var temp = new TempFiles())
             {
                 string partlyBad = temp.Write("dot-alias.json",
                     "{\"Servers\":{\"prod.eu\":\"prodhost:6379\"},\"SyncWrite\":\"sync\"," +
-                    "\"RTD\":{\"host\":\"myhost\"}}");
+                    "\"Default\":\"myhost:6379\"}");
 
                 var config = AppConfig.LoadFromPaths(new[] { partlyBad });
 
                 Assert.Equal("sync", config.SyncWrite);
-                Assert.Equal("myhost", config.RTD.host);
-                Assert.Equal("prodhost:6379", config.Servers["prod.eu"]);
+                Assert.Equal("myhost:6379", config.Default);
+                Assert.Equal("prodhost:6379", config.Servers["prod.eu"].host);
             }
         }
 
         [Fact]
-        public void LoadFromPaths_KeysDifferingOnlyByCase_KeepTheFirst()
-        {
-            // Regression (verify round): "RTD" (good) + "rtd" (bad) used to make the
-            // pruner remove the GOOD one and leave the bad one, discarding the file.
-            using (var temp = new TempFiles())
-            {
-                string partlyBad = temp.Write("case-dup.json",
-                    "{\"RTD\":{\"host\":\"myhost\"},\"rtd\":{\"timeout\":true},\"SyncWrite\":\"sync\"}");
-
-                var config = AppConfig.LoadFromPaths(new[] { partlyBad });
-
-                Assert.Equal("myhost", config.RTD.host);
-                Assert.Equal("sync", config.SyncWrite);
-            }
-        }
-
-        [Fact]
-        public void LoadFromPaths_ServersWithNonStringValue_DropsJustThatAlias()
+        public void LoadFromPaths_ServersBadValue_DropsJustThatServer()
         {
             using (var temp = new TempFiles())
             {
@@ -439,24 +434,24 @@ namespace RedisExcel.Tests
 
                 var config = AppConfig.LoadFromPaths(new[] { partlyBad });
 
-                Assert.Equal("sync", config.SyncWrite);
-                Assert.Equal("h:6379", config.Servers["ok"]);
-                Assert.False(config.Servers.ContainsKey("bad")); // the non-string alias is dropped
+                // A Servers value that is neither a string nor an object is a value
+                // error -> reject the file (fail-closed).
+                Assert.True(config.Rejected);
             }
         }
 
         [Fact]
-        public void ValidateConfiguration_ReportsProblemsWithoutThrowing()
+        public void ValidateConfiguration_ReportsErrorsWithoutThrowing()
         {
             using (var temp = new TempFiles())
             {
-                string bad = temp.Write("bad.json", "{\"RTD\":{\"timeout\":true},\"AsyncWrites\":\"yes\"}");
-                var issues = new System.Collections.Generic.List<ConfigIssue>();
-                var parsed = AppConfig.ParseTolerant(System.IO.File.ReadAllText(bad), null, issues);
+                string bad = temp.Write("bad.json", "{\"RTD\":{\"RedisUpdateRateMs\":true},\"AsyncWrites\":\"yes\"}");
+                var issues = new List<ConfigIssue>();
+                var parsed = AppConfig.ParseTolerant(File.ReadAllText(bad), null, issues);
 
-                Assert.NotNull(parsed);              // the file still loads
-                Assert.Equal(2, issues.Count);        // both bad values reported
-                Assert.Contains(issues, i => i.Path.Contains("timeout"));
+                Assert.NotNull(parsed);
+                Assert.True(parsed.Rejected);
+                Assert.Contains(issues, i => i.Path.Contains("RedisUpdateRateMs"));
                 Assert.Contains(issues, i => i.Path.Contains("AsyncWrites"));
             }
         }
@@ -473,8 +468,7 @@ namespace RedisExcel.Tests
                 string report = AppConfig.ValidateConfiguration(bad);
                 Assert.StartsWith("Error:", report);
                 Assert.Contains("ConflationMs", report);
-                // An out-of-range ConflationMs is VALID (Sanitize clamps it); only a
-                // wrong type is a problem.
+                // An out-of-range ConflationMs is VALID (Sanitize clamps it).
                 string clamped = temp.Write("clamped.json", "{\"ConflationMs\":9999999}");
                 Assert.StartsWith("OK", AppConfig.ValidateConfiguration(clamped));
             }
@@ -492,13 +486,8 @@ namespace RedisExcel.Tests
             using (var temp = new TempFiles())
             {
                 string good = temp.Write("good.json", "{\"SyncWrite\":\"sync\"}");
-                // A path validates that file; ExcelMissing/blank validates the
-                // in-use configuration (whatever this machine has, or "no file").
                 Assert.StartsWith("OK", (string)RedisUDF.RedisCheckConfigFile(good));
                 Assert.StartsWith("Error: file not found", (string)RedisUDF.RedisCheckConfigFile(@"Z:\nope.json"));
-                // The in-use path reads the machine's file (not the hermetic
-                // override), so assert only that it returns a valid report - OK or a
-                // problem list - never that this machine's config happens to be OK.
                 string inUse = (string)RedisUDF.RedisCheckConfigFile(ExcelDna.Integration.ExcelMissing.Value);
                 Assert.True(inUse.StartsWith("OK") || inUse.StartsWith("Error:"), "unexpected report: " + inUse);
             }
