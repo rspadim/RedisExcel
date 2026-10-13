@@ -103,6 +103,21 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void Servers_ObjectKeyCaseIsInsensitive()
+        {
+            // The loader (and the Newtonsoft binder) match property names
+            // case-insensitively everywhere else, so a Servers object spelled
+            // Host/HOST/ConnectTimeout must be accepted, not rejected (audit G1).
+            Assert.False(Rejected("{\"Servers\":{\"a\":{\"HOST\":\"x\"}}}"));
+            Assert.False(Rejected("{\"Servers\":{\"a\":{\"Host\":\"x\"}}}"));
+            Assert.False(Rejected("{\"Servers\":{\"a\":{\"host\":\"x\",\"ConnectTimeout\":5}}}"));
+            Assert.False(Rejected("{\"Servers\":{\"a\":{\"Host\":\"x\",\"SyncTimeout\":5}}}"));
+            // A genuine unknown field must still fail (only the KNOWN names are
+            // case-folded).
+            Assert.True(Rejected("{\"Servers\":{\"p\":{\"host\":\"h\",\"nope\":1}}}"));
+        }
+
+        [Fact]
         public void Servers_NonStringNonObjectValue_IsRejected()
         {
             Assert.True(Rejected("{\"Servers\":{\"bad\":123}}"));

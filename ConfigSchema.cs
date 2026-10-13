@@ -258,6 +258,27 @@ namespace RedisExcel
                 ConfigSeverity.Warning));
         }
 
+        /// <summary>Returns a copy of <paramref name="obj"/> with each property
+        /// renamed to the canonical spelling declared by the oneOf OBJECT branch
+        /// (case-insensitively). Keys the schema does not know keep their spelling
+        /// so the strict branch still fails on a genuine unknown key. Lets the
+        /// schema's case-sensitive `required`/`additionalProperties` agree with the
+        /// case-insensitive binder (audit G1).</summary>
+        private static JObject NormalizeObjectKeyCase(JObject obj, JsonSchema oneOfSchema)
+        {
+            var objectBranch = oneOfSchema?.OneOf?.FirstOrDefault(b => b.Type.HasFlag(JsonObjectType.Object));
+            if (objectBranch?.Properties == null)
+                return obj;
+            var copy = new JObject();
+            foreach (var prop in obj.Properties())
+            {
+                var canonical = objectBranch.Properties
+                    .FirstOrDefault(p => string.Equals(p.Key, prop.Name, StringComparison.OrdinalIgnoreCase)).Key;
+                copy[canonical ?? prop.Name] = prop.Value;
+            }
+            return copy;
+        }
+
         /// <summary>True when a value looks like a Redis connection string (or a
         /// bare host / host:port) rather than a Servers name.</summary>
         private static bool LooksLikeConnectionString(string value)
@@ -384,10 +405,19 @@ namespace RedisExcel
             // value when any branch validates; otherwise it is an error.
             if (schema.OneOf != null && schema.OneOf.Count > 0)
             {
+                // Property names are matched case-insensitively everywhere else in
+                // the loader (and by the Newtonsoft binder), but the schema's own
+                // `required`/`additionalProperties` are case-SENSITIVE - so a
+                // Servers object spelled `Host`/`HOST`/`ConnectTimeout` would fail
+                // here while every other part accepts it (audit G1). Normalize the
+                // object's keys to the canonical spelling before validating.
+                JToken probe = value;
+                if (value is JObject valueObj)
+                    probe = NormalizeObjectKeyCase(valueObj, schema);
                 bool any;
                 try
                 {
-                    any = schema.OneOf.Any(branch => branch.Validate(value).Count == 0);
+                    any = schema.OneOf.Any(branch => branch.Validate(probe).Count == 0);
                 }
                 catch (Exception ex)
                 {
@@ -395,7 +425,7 @@ namespace RedisExcel
                     return null;
                 }
                 if (any)
-                    return value;
+                    return probe;
                 issues?.Add(new ConfigIssue(path, "expected a connection string or an object with host/connectTimeout/syncTimeout"));
                 return null;
             }

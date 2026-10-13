@@ -76,8 +76,12 @@ Line ''
 # ---- Parse (accept // and /* */ comments like the add-in) ------------------
 $raw = Get-Content -LiteralPath $Config -Raw
 
-# Remove comments WITHOUT touching // inside strings (so "redis://host" stays).
-function Strip-JsonComments([string]$text) {
+# Remove comments AND trailing commas WITHOUT touching either inside strings (so
+# "redis://host" and "a,}" stay intact). The add-in uses Newtonsoft, which
+# accepts both; the PowerShell parser does not, so the validator normalizes them
+# or it would flag a file the add-in loads fine (and a naive regex corrupted a
+# string value, audit G1/R7).
+function Normalize-Json([string]$text) {
   $sb = New-Object System.Text.StringBuilder
   $inString = $false
   $inLine = $false
@@ -106,6 +110,12 @@ function Strip-JsonComments([string]$text) {
     if ($c -eq '"') { $inString = $true; [void]$sb.Append($c); $i++; continue }
     if ($c -eq '/' -and $c2 -eq '/') { $inLine = $true; $i += 2; continue }
     if ($c -eq '/' -and $c2 -eq '*') { $inBlock = $true; $i += 2; continue }
+    if ($c -eq ',') {
+      # Drop a comma whose next non-whitespace char closes an object/array.
+      $j = $i + 1
+      while ($j -lt $n -and ([char]$text[$j] -eq ' ' -or [char]$text[$j] -eq "`t" -or [char]$text[$j] -eq "`r" -or [char]$text[$j] -eq "`n")) { $j++ }
+      if ($j -lt $n -and ([char]$text[$j] -eq '}' -or [char]$text[$j] -eq ']')) { $i++; continue }
+    }
     [void]$sb.Append($c)
     $i++
   }
@@ -116,11 +126,7 @@ $json = $null
 try {
   $json = $raw | ConvertFrom-Json
 } catch {
-  # Strip comments (string-aware) and trailing commas. The add-in uses
-  # Newtonsoft, which accepts BOTH; the PowerShell parser does not, so the
-  # validator must normalize them or it flags a file the add-in loads fine.
-  $stripped = Strip-JsonComments $raw
-  $stripped = [regex]::Replace($stripped, ',\s*([}\]])', '$1')
+  $stripped = Normalize-Json $raw
   try { $json = $stripped | ConvertFrom-Json }
   catch {
     Line 'FAIL: the file is not valid JSON.'
