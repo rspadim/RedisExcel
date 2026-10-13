@@ -1315,9 +1315,11 @@ begin
     // throws before the wizard exists), so the page-based choice is unavailable.
     // Support an explicit opt-in instead: /REMOVESERVERS=<kind>[,...]. This is
     // harmless in an interactive run (the parameter is usually absent) and lets
-    // a silent run drive the removal; import it regardless of WizardSilent().
+    // a silent run drive the removal; import it regardless of the mode. NOTE:
+    // this runs during UNINSTALL, where WizardSilent() is illegal - use
+    // UninstallSilent() (audit H2/D2).
     ImportRemoveServersParam();
-    if WizardSilent() then
+    if UninstallSilent() then
       Exit;
     // Only build the page when at least one server was detected.
     if Present > 0 then
@@ -1391,7 +1393,7 @@ begin
   for I := 0 to GetArrayLength(RemoveServerKind) - 1 do
   begin
     Code := RunScript('uninstall-server.ps1', '-Kind ' + RemoveServerKind[I]);
-    if (Code <> 0) and (not WizardSilent()) then
+    if (Code <> 0) and (not UninstallSilent()) then
       MsgBox(FmtMessage(ExpandConstant('{cm:UninstServerFailed}'), [RemoveServerKind[I], IntToStr(Code)]),
              mbInformation, MB_OK);
     Log('UninstallServers: kind=' + RemoveServerKind[I] + ' exit=' + IntToStr(Code));
@@ -1415,7 +1417,9 @@ begin
   end
   else if CurUninstallStep = usPostUninstall then
   begin
-    if FileExists(ExpandConstant('{app}\RedisExcel.json')) then
+    // Never block an unattended uninstall with a dialog: keep the config by
+    // default in a silent run (audit H2/D4).
+    if FileExists(ExpandConstant('{app}\RedisExcel.json')) and (not UninstallSilent()) then
       if MsgBox(ExpandConstant('{cm:UninstKeepConfig}'), mbConfirmation, MB_YESNO) = IDNO then
         DeleteFile(ExpandConstant('{app}\RedisExcel.json'));
   end;

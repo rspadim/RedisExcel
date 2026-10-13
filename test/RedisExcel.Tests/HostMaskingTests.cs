@@ -207,6 +207,48 @@ namespace RedisExcel.Tests
             Assert.Equal(expected, AppConfig.MaskHost(input));
         }
 
+        [Fact]
+        public void MaskHost_IsLinearOnALongRunOfSpaces()
+        {
+            // Regression for the ReDoS (audit H1): the old delimiter regex let a
+            // whitespace run be consumed by two alternatives, which is O(n^2).
+            // A pathological value must return quickly, not hang for seconds.
+            string input = new string(' ', 20000);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            string masked = AppConfig.MaskHost(input);
+            sw.Stop();
+            Assert.Equal(input, masked);
+            Assert.True(sw.ElapsedMilliseconds < 1000,
+                "MaskHost took " + sw.ElapsedMilliseconds + "ms on a whitespace run (likely ReDoS)");
+        }
+
+        [Fact]
+        public void ConfigIssue_StripsUnicodeLineSeparators()
+        {
+            // A key name can contain U+0085/U+2028/U+2029 (not char.IsControl),
+            // which would forge a second line/cell (audit H1/C3).
+            var nel = new ConfigIssue("/Servers/evil\u0085FAKE", "x");
+            Assert.DoesNotContain("\u0085", nel.ToString());
+            var ls = new ConfigIssue("/a\u2028b", "x");
+            Assert.DoesNotContain("\u2028", ls.ToString());
+            var ps = new ConfigIssue("/a\u2029b", "x");
+            Assert.DoesNotContain("\u2029", ps.ToString());
+            var c1 = new ConfigIssue("/a\u009fb", "x");
+            Assert.DoesNotContain("\u009f", c1.ToString());
+        }
+
+        [Fact]
+        public void ServerDefConverter_ReadsKeysCaseInsensitively()
+        {
+            // The converter must not depend on Clean having canonicalized the keys
+            // (audit H1/C4): a raw object with Host/ConnectTimeout still binds.
+            var def = Newtonsoft.Json.JsonConvert.DeserializeObject<ServerDef>(
+                "{\"Host\":\"h:1\",\"ConnectTimeout\":9,\"SyncTimeout\":8}");
+            Assert.Equal("h:1", def.host);
+            Assert.Equal(9, def.connectTimeout);
+            Assert.Equal(8, def.syncTimeout);
+        }
+
         [Theory]
         // A URI authority carries userinfo the key=value regex cannot see. The
         // full userinfo must be redacted even when it contains its own '@'

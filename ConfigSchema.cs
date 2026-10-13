@@ -44,8 +44,10 @@ namespace RedisExcel
             return Sanitize(path) + ": " + Sanitize(Message);
         }
 
-        /// <summary>Masks credentials and removes control characters (newlines
-        /// included) so one issue can never span/forge multiple log lines.</summary>
+        /// <summary>Masks credentials and removes characters that can break a line
+        /// (so one issue can never span/forge multiple log lines or split a cell).
+        /// Covers C0/C1 controls plus the Unicode line/paragraph separators and NEL,
+        /// which `char.IsControl` does not flag.</summary>
         private static string Sanitize(string text)
         {
             if (string.IsNullOrEmpty(text))
@@ -55,12 +57,17 @@ namespace RedisExcel
                 return masked;
             var sb = new System.Text.StringBuilder(masked.Length);
             foreach (char c in masked)
-                sb.Append(char.IsControl(c) ? ' ' : c);
+                sb.Append(char.IsControl(c) || IsLineBreaker(c) ? ' ' : c);
             return sb.ToString();
         }
 
+        private static bool IsLineBreaker(char c) =>
+            c == '\u0085' || c == '\u2028' || c == '\u2029' || c == '\u009f';
+
         private static readonly char[] ControlChars =
-            Enumerable.Range(0, 32).Select(i => (char)i).Concat(new[] { (char)127 }).ToArray();
+            Enumerable.Range(0, 32).Select(i => (char)i)
+                .Concat(new[] { (char)127, '\u0085', '\u2028', '\u2029', '\u009f' })
+                .ToArray();
     }
 
     /// <summary>
@@ -261,21 +268,42 @@ namespace RedisExcel
         /// <summary>Returns a copy of <paramref name="obj"/> with each property
         /// renamed to the canonical spelling declared by the oneOf OBJECT branch
         /// (case-insensitively). Keys the schema does not know keep their spelling
-        /// so the strict branch still fails on a genuine unknown key. Lets the
-        /// schema's case-sensitive `required`/`additionalProperties` agree with the
-        /// case-insensitive binder (audit G1).</summary>
-        private static JObject NormalizeObjectKeyCase(JObject obj, JsonSchema oneOfSchema)
+        /// so the strict branch still fails on a genuine unknown key. When two keys
+        /// differ only by case, the EXACT-canonical spelling wins (agreeing with the
+        /// rest of the loader's dedup, audit H1/C2) and a warning is recorded. Lets
+        /// the schema's case-sensitive `required`/`additionalProperties` agree with
+        /// the case-insensitive binder (audit G1).</summary>
+        private static JObject NormalizeObjectKeyCase(JObject obj, JsonSchema oneOfSchema, IList<ConfigIssue> issues, string path)
         {
             var objectBranch = oneOfSchema?.OneOf?.FirstOrDefault(b => b.Type.HasFlag(JsonObjectType.Object));
             if (objectBranch?.Properties == null)
                 return obj;
-            var copy = new JObject();
+            // Group by canonical target so a case-only duplicate is resolved the
+            // same way everywhere: the exact spelling wins, else the first seen.
+            var chosen = new Dictionary<string, JProperty>(StringComparer.Ordinal);
+            var order = new List<string>();
             foreach (var prop in obj.Properties())
             {
                 var canonical = objectBranch.Properties
-                    .FirstOrDefault(p => string.Equals(p.Key, prop.Name, StringComparison.OrdinalIgnoreCase)).Key;
-                copy[canonical ?? prop.Name] = prop.Value;
+                    .FirstOrDefault(p => string.Equals(p.Key, prop.Name, StringComparison.OrdinalIgnoreCase)).Key ?? prop.Name;
+                if (!chosen.TryGetValue(canonical, out var keeper))
+                {
+                    chosen[canonical] = prop;
+                    order.Add(canonical);
+                    continue;
+                }
+                // A duplicate that differs only by case: prefer the exact-canonical
+                // spelling; otherwise keep the first. Record a warning either way.
+                bool keepNew = string.Equals(prop.Name, canonical, StringComparison.Ordinal)
+                    && !string.Equals(keeper.Name, canonical, StringComparison.Ordinal);
+                issues?.Add(new ConfigIssue(path + "/" + prop.Name,
+                    "duplicate key (differs only by case)", ConfigSeverity.Warning));
+                if (keepNew)
+                    chosen[canonical] = prop;
             }
+            var copy = new JObject();
+            foreach (var canonical in order)
+                copy[canonical] = chosen[canonical].Value;
             return copy;
         }
 
@@ -413,7 +441,7 @@ namespace RedisExcel
                 // object's keys to the canonical spelling before validating.
                 JToken probe = value;
                 if (value is JObject valueObj)
-                    probe = NormalizeObjectKeyCase(valueObj, schema);
+                    probe = NormalizeObjectKeyCase(valueObj, schema, issues, path);
                 bool any;
                 try
                 {

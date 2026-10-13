@@ -1437,6 +1437,11 @@ namespace RedisExcel
                 var channelsSeen = new List<string>();
                 var channelSet = new HashSet<string>(StringComparer.Ordinal);
                 var counts = new Dictionary<string, long>(StringComparer.Ordinal);
+                // Per-channel error text for a channel whose NUMSUB lookup failed
+                // (e.g. ACL denied PUBSUB NUMSUB): v1.5.2 showed the message in the
+                // Subscribers cell, so keep that instead of silently reporting 0
+                // (audit H3).
+                var errors = new Dictionary<string, string>(StringComparer.Ordinal);
                 const int MaxChannelsRows = 1000000;
                 foreach (var server in GetMasterServers(conn))
                 {
@@ -1485,6 +1490,11 @@ namespace RedisExcel
                     }
                     catch (Exception ex)
                     {
+                        // The batch failed for this node: record the message for
+                        // this node's channels so their Subscribers cell shows the
+                        // error instead of a misleading 0 (v1.5.2 behaviour).
+                        foreach (var n in nodeNames)
+                            errors[n] = "Error: " + AppConfig.MaskHost(ex.Message);
                         logger.Error(ex, $"RedisUDFPubSubChannelsInfo: host={AppConfig.MaskHost(host)}, PUBSUB NUMSUB batch");
                     }
                 }
@@ -1504,7 +1514,10 @@ namespace RedisExcel
                 for (int i = 0; i < channelsSeen.Count; i++)
                 {
                     result[i + 1, 0] = channelsSeen[i];
-                    result[i + 1, 1] = counts.TryGetValue(channelsSeen[i], out var count) ? count : 0;
+                    if (errors.TryGetValue(channelsSeen[i], out var err))
+                        result[i + 1, 1] = err;
+                    else
+                        result[i + 1, 1] = counts.TryGetValue(channelsSeen[i], out var count) ? count : 0;
                 }
                 return result;
             }

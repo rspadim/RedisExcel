@@ -22,19 +22,33 @@ param(
 $ErrorActionPreference = 'Continue'
 function Write-Step([string]$m) { Write-Host ("[redis-uninstall] " + $m) }
 
+# Removes the container only when its IMAGE matches the requested kind, so
+# /REMOVESERVERS=docker-valkey cannot delete a Redis container (audit H2/D3).
+function Remove-DockerContainer([string]$imagePattern) {
+  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Step "Docker not found; nothing to do."
+    return
+  }
+  $image = (& docker inspect --format '{{.Config.Image}}' $ContainerName 2>$null | Out-String).Trim()
+  if ([string]::IsNullOrWhiteSpace($image)) {
+    Write-Step "no container '$ContainerName'; nothing to do."
+    return
+  }
+  if ($image -notlike $imagePattern) {
+    Write-Step "container '$ContainerName' image '$image' does not match '$imagePattern'; leaving it."
+    return
+  }
+  Write-Step "removing container '$ContainerName' (image '$image')"
+  & docker rm -f $ContainerName 2>&1 | Write-Host
+}
+
 switch ($Kind) {
   'docker-redis' {
-    $docker = Get-Command docker -ErrorAction SilentlyContinue
-    if (-not $docker) { Write-Step "Docker not found; nothing to do."; exit 0 }
-    Write-Step "removing container '$ContainerName'"
-    & docker rm -f $ContainerName 2>&1 | Write-Host
+    Remove-DockerContainer 'redis*'
     exit 0
   }
   'docker-valkey' {
-    $docker = Get-Command docker -ErrorAction SilentlyContinue
-    if (-not $docker) { Write-Step "Docker not found; nothing to do."; exit 0 }
-    Write-Step "removing container '$ContainerName'"
-    & docker rm -f $ContainerName 2>&1 | Write-Host
+    Remove-DockerContainer 'valkey*'
     exit 0
   }
   'wsl-redis' {

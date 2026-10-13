@@ -53,16 +53,28 @@ namespace RedisExcel
             if (reader.TokenType == JsonToken.StartObject)
             {
                 // JObject.Load (not serializer.Deserialize) avoids recursing back
-                // into this converter.
+                // into this converter. Property names are read case-insensitively
+                // (matching the rest of the loader and the schema walker) so the
+                // converter is not silently dependent on Clean having canonicalized
+                // the keys first (audit H1/C4).
                 var obj = JObject.Load(reader);
                 return new ServerDef
                 {
-                    host = (string)obj["host"],
-                    connectTimeout = (int?)obj["connectTimeout"],
-                    syncTimeout = (int?)obj["syncTimeout"],
+                    host = (string)GetIgnoreCase(obj, "host"),
+                    connectTimeout = (int?)GetIgnoreCase(obj, "connectTimeout"),
+                    syncTimeout = (int?)GetIgnoreCase(obj, "syncTimeout"),
                 };
             }
             throw new JsonSerializationException("a Servers value must be a string or an object");
+        }
+
+        private static JToken GetIgnoreCase(JObject obj, string name)
+        {
+            var exact = obj.Property(name);
+            if (exact != null)
+                return exact.Value;
+            return obj.Properties()
+                .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))?.Value;
         }
 
         public override void WriteJson(JsonWriter writer, object value, JsonSerializer serializer)
@@ -504,12 +516,15 @@ namespace RedisExcel
             @"(^|[,\s])[^@,;/\s]*:[^@,;:/\s]*@(?=[^@/\s]*$|[,;\s])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A credential keyword is preceded by the string start, a connection-string
-        // delimiter (comma/semicolon) OR whitespace: a credential can reach a cell
-        // or log line embedded after any whitespace, not only after a comma, and a
-        // leaked secret is worse than over-masking a user identifier that happens to
-        // look like "x=password=y" (audit round P).
+        // delimiter (comma/semicolon, optional spaces) OR a single whitespace. The
+        // delimiter alternatives must NOT overlap each other on whitespace: the old
+        // `(^|[,;\s])\s*` let BOTH `[,;\s]` and `\s*` consume the same spaces, which
+        // is O(n^2) on a run of whitespace and made the loader hang for seconds on a
+        // config value of ~8000 spaces (audit H1, ReDoS). The `[,;]\s*` branch eats
+        // a comma/semicolon plus its spaces; the `\s` branch eats exactly one, so the
+        // engine advances one char per position and the scan is linear.
         private static readonly Regex PasswordPair = new Regex(
-            @"(^|[,;\s])\s*(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
+            @"(^|[,;]\s*|\s)(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         /// <summary>
