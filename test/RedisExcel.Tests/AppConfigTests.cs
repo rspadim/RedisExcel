@@ -189,6 +189,32 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ServerTimeouts_SameHostTwoServers_DefaultWins()
+        {
+            // Two Servers entries with the SAME host: the connection belongs to
+            // Default, so its timeout must win for the flattened host string
+            // (audit D1), regardless of declaration order.
+            var original = AppConfig.CurrentOverrideForTests;
+            try
+            {
+                var cfg = AppConfig.Sanitize(new ConfigRoot
+                {
+                    Default = "secondary",
+                    Servers = new Dictionary<string, ServerDef>
+                    {
+                        ["primary"] = new ServerDef { host = "localhost:6379", syncTimeout = 1111 },
+                        ["secondary"] = new ServerDef { host = "localhost:6379", syncTimeout = 2222 }
+                    }
+                });
+                AppConfig.CurrentOverrideForTests = cfg;
+
+                var t = AppConfig.ServerTimeouts("localhost:6379");
+                Assert.Equal(2222, t.syncTimeout); // Default (secondary), not the first entry
+            }
+            finally { AppConfig.CurrentOverrideForTests = original; }
+        }
+
+        [Fact]
         public void ServerTimeouts_ResolvesByServerHostToo_NotJustTheName()
         {
             // The connection manager passes the RESOLVED host string (the name is

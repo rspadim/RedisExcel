@@ -424,11 +424,19 @@ namespace RedisExcel
 
         /// <summary>Finds a server whose <c>host</c> equals the given (resolved)
         /// connection string, so a per-server timeout survives the name -> host
-        /// flattening. First match wins when two servers share a host string.</summary>
+        /// flattening. When two servers share a host string the <c>Default</c>
+        /// server wins (it is the one the connection actually belongs to),
+        /// otherwise the first declared entry.</summary>
         private static ServerDef FindServerByHost(IDictionary<string, ServerDef> servers, string host)
         {
             if (servers == null || string.IsNullOrWhiteSpace(host))
                 return null;
+            // Prefer the Default server's entry: the caller has flattened Default
+            // to this host string, so when two entries share the host the Default
+            // one is the connection's true owner (audit D1/D2).
+            var defaultDef = FindServer(servers, Current?.Default);
+            if (defaultDef != null && string.Equals(defaultDef.host, host, StringComparison.Ordinal))
+                return defaultDef;
             foreach (var kv in servers)
             {
                 if (kv.Value != null && string.Equals(kv.Value.host, host, StringComparison.Ordinal))

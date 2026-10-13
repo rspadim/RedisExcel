@@ -1131,7 +1131,11 @@ namespace RedisExcel
                 // silently (their per-item try/catch logs the individual faults).
                 logger.Error(ex, $"PollHost: batch execute failed, host={AppConfig.MaskHost(host)}");
             }
-            int responseTimeoutMs = RedisUDF.ResponseTimeoutMs();
+            // Use the TOPIC host's syncTimeout (not the Default server's): the bound
+            // must match the multiplexer's own SyncTimeout for THAT server, or a
+            // reply arriving within the connection's timeout is abandoned (audit
+            // D1). The UDF ...Multiples batches already pass their host the same way.
+            int responseTimeoutMs = RedisUDF.ResponseTimeoutMs(host);
             DrainBatch(singleTasks, responseTimeoutMs, host,
                 // HGET and GET (UseGetMultiple=false): IsNull distinguishes a missing
                 // key/field from an existing one holding the empty string (same as MGET).
