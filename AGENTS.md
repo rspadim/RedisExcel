@@ -266,12 +266,14 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   file** (every UDF/RTD cell shows `#CONFIG: ...` until it is fixed), while an
   extra/unknown **key** is only a log warning. The removed v1 keys
   (`RTD.host`/`UDF.host`/`RTD.timeout`/`UDF.timeout`, root
-  `CoalesceRealtimeUpdates`) and a dangling `Default` are errors, so a pre-1.6
-  file fails closed instead of silently reverting to localhost. A structural
-  failure (not JSON, or a root that is not a JSON object) also fails closed
-  (`#CONFIG`), and the first-existing candidate stops the search. Every cell's
-  `#CONFIG` reason names the offending **file path**, so a stale copy in one
-  search location is identifiable from the cell. `=RedisCheckConfigFile()`
+  `CoalesceRealtimeUpdates`) are errors, so a pre-1.6 file fails closed instead of
+  silently reverting to localhost; a `Default` that is a bare word which is not a
+  defined `Servers` name and not a recognizable connection string is a WARNING
+  only (it may be a valid port-less host like `localhost`), used as the host. A
+  structural failure (not JSON, or a root that is not a JSON object) also fails
+  closed (`#CONFIG`), and the first-existing candidate stops the search. Every
+  cell's `#CONFIG` reason names the offending **file path**, so a stale copy in
+  one search location is identifiable from the cell. `=RedisCheckConfigFile()`
   reports the problems in a cell (blank =
   the config in use, or pass a path). When no config file is found at all, the
   no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file
