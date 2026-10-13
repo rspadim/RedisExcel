@@ -268,8 +268,11 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   (`RTD.host`/`UDF.host`/`RTD.timeout`/`UDF.timeout`, root
   `CoalesceRealtimeUpdates`) and a dangling `Default` are errors, so a pre-1.6
   file fails closed instead of silently reverting to localhost. A structural
-  failure (not JSON) uses safe defaults, and the first-existing candidate stops
-  the search. `=RedisCheckConfigFile()` reports the problems in a cell (blank =
+  failure (not JSON, or a root that is not a JSON object) also fails closed
+  (`#CONFIG`), and the first-existing candidate stops the search. Every cell's
+  `#CONFIG` reason names the offending **file path**, so a stale copy in one
+  search location is identifiable from the cell. `=RedisCheckConfigFile()`
+  reports the problems in a cell (blank =
   the config in use, or pass a path). When no config file is found at all, the
   no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file
   default of 100 ms). An undefined `ExcelUpdateStyle` falls back to `Automatic`,
@@ -501,6 +504,14 @@ These cost real debugging time — read before writing automation.
    though the registry keys exist. Workaround for test machines: register the
    ProgID/CLSID under `HKLM\Software\Classes` (admin), pointing at the packed
    XLL. This is an environment workaround, not part of the normal install.
+   A **stale** `HKLM` registration is itself a trap: it makes Excel load a
+   *second* copy of the XLL from a different folder, whose RTD server reads
+   that other folder's `RedisExcel.json` and never sees the config the run
+   under test wrote. In that state `=RTD("RedisRtd",...)` can return a value
+   while the UDFs in the tested XLL return `#CONFIG` - the fail-closed guard is
+   **per XLL instance**, not per process, so a machine-wide ProgID can hide it.
+   Confirm only ONE XLL module is loaded (`Get-Process EXCEL | Get Modules`)
+   before trusting an RTD result.
 3. **`CLIENT KILL TYPE pubsub` is destructive** — it disconnects every Pub/Sub
    client of that server. Only use it against a disposable/local Redis. The
    E2E script skips it for non-local hosts.
