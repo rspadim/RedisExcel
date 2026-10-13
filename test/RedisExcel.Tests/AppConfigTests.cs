@@ -189,6 +189,88 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void ServerTimeouts_ResolvesByServerHostToo_NotJustTheName()
+        {
+            // The connection manager passes the RESOLVED host string (the name is
+            // flattened), so a per-server timeout must still be found by matching
+            // the server whose host equals that string - otherwise the per-server
+            // timeout is dead config.
+            var original = AppConfig.CurrentOverrideForTests;
+            try
+            {
+                var cfg = AppConfig.Sanitize(new ConfigRoot
+                {
+                    Default = "prod",
+                    Timeout = new TimeoutConfig { connectTimeout = 3000, syncTimeout = 3000 },
+                    Servers = new Dictionary<string, ServerDef>
+                    {
+                        ["prod"] = new ServerDef { host = "prod-host:6379", connectTimeout = 12000, syncTimeout = 13000 }
+                    }
+                });
+                AppConfig.CurrentOverrideForTests = cfg;
+
+                // By name (alias text):
+                var byName = AppConfig.ServerTimeouts("prod");
+                Assert.Equal(12000, byName.connectTimeout);
+                Assert.Equal(13000, byName.syncTimeout);
+                // By the RESOLVED host string (what Connect actually passes):
+                var byHost = AppConfig.ServerTimeouts("prod-host:6379");
+                Assert.Equal(12000, byHost.connectTimeout);
+                Assert.Equal(13000, byHost.syncTimeout);
+                // The default (blank reference) also resolves to the prod server:
+                var byDefault = AppConfig.ServerTimeouts(null);
+                Assert.Equal(12000, byDefault.connectTimeout);
+            }
+            finally { AppConfig.CurrentOverrideForTests = original; }
+        }
+
+        [Fact]
+        public void LoadFromPaths_LegacyKeys_RejectTheFileNotSilentlyDefault()
+        {
+            // A pre-1.6 file must FAIL CLOSED (a removed key is an error), never
+            // silently reload on localhost while the validator says OK.
+            using (var temp = new TempFiles())
+            {
+                string legacy = temp.Write("legacy.json",
+                    "{\"RTD\":{\"host\":\"prod.redis.internal:6379\",\"timeout\":4000,\"RedisUpdateRateMs\":500}," +
+                    "\"UDF\":{\"host\":\"prod.redis.internal:6379\",\"timeout\":4000}," +
+                    "\"CoalesceRealtimeUpdates\":false,\"SyncWrite\":\"sync\"}");
+
+                var config = AppConfig.LoadFromPaths(new[] { legacy });
+
+                Assert.True(config.Rejected);
+                Assert.Contains("RTD/host", config.RejectedReason);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_DanglingDefaultName_RejectsTheFile()
+        {
+            using (var temp = new TempFiles())
+            {
+                string dangling = temp.Write("dangling.json",
+                    "{\"Default\":\"prod\",\"Servers\":{\"production\":\"h:6379\"}}");
+
+                var config = AppConfig.LoadFromPaths(new[] { dangling });
+
+                Assert.True(config.Rejected);
+                Assert.Contains("Default", config.RejectedReason);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_DefaultRawConnectionString_IsAccepted()
+        {
+            using (var temp = new TempFiles())
+            {
+                string raw = temp.Write("raw.json", "{\"Default\":\"localhost:6379\"}");
+                Assert.False(AppConfig.LoadFromPaths(new[] { raw }).Rejected);
+                string dotted = temp.Write("dotted.json", "{\"Default\":\"redis.example.com\"}");
+                Assert.False(AppConfig.LoadFromPaths(new[] { dotted }).Rejected);
+            }
+        }
+
+        [Fact]
         public void Sanitize_UndefinedExcelUpdateStyle_ResetsToAutomatic()
         {
             var config = new ConfigRoot
@@ -333,7 +415,7 @@ namespace RedisExcel.Tests
             using (var temp = new TempFiles())
             {
                 string bad = temp.Write("bad.json",
-                    "{\"Default\":\"myhost\",\"RTD\":{\"RedisUpdateRateMs\":\"nope\"},\"SyncWrite\":\"sync\"}");
+                    "{\"Default\":\"myhost:6379\",\"RTD\":{\"RedisUpdateRateMs\":\"nope\"},\"SyncWrite\":\"sync\"}");
 
                 var config = AppConfig.LoadFromPaths(new[] { bad });
 

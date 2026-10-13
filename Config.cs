@@ -238,9 +238,12 @@ namespace RedisExcel
                             logger.Error(ex, $"AppConfig: value ignored in {path} (schema), keeping the rest of the file"), issues);
                         if (config != null)
                         {
-                            logger.Info(issues.Count == 0
-                                ? $"AppConfig: loaded configuration from {path}"
-                                : $"AppConfig: loaded configuration from {path} with {issues.Count} value(s) ignored");
+                            if (config.Rejected)
+                                logger.Error($"AppConfig: configuration REJECTED from {path}: {config.RejectedReason} - every UDF/RTD call returns #CONFIG until it is fixed");
+                            else
+                                logger.Info(issues.Count == 0
+                                    ? $"AppConfig: loaded configuration from {path}"
+                                    : $"AppConfig: loaded configuration from {path} with {issues.Count} value(s) ignored");
                             return Sanitize(config);
                         }
                         logger.Error($"AppConfig: config file {path} is not a JSON object, using defaults");
@@ -377,20 +380,44 @@ namespace RedisExcel
 
         /// <summary>Both timeouts (ms) for a resolved server: the server's own
         /// value, else the global <c>Timeout</c> block, else the built-in default
-        /// (5000 ms).</summary>
+        /// (5000 ms). The reference may be a <c>Servers</c> name OR the resolved
+        /// connection string (the connection manager passes the flattened host, so
+        /// the per-server timeouts are recovered by matching the server whose host
+        /// equals it - otherwise the per-server timeout would be dead config).</summary>
         public static (int connectTimeout, int syncTimeout) ServerTimeouts(string reference)
         {
             var config = Current;
-            var def = ResolveServer(config, reference);
+            ServerDef def;
+            if (string.IsNullOrWhiteSpace(reference))
+                def = ResolveServer(config, null);                       // the Default server (a name or a raw string)
+            else
+                def = FindServer(config?.Servers, reference)             // a Servers KEY (the alias text)
+                      ?? FindServerByHost(config?.Servers, reference)    // a Servers VALUE's host (the resolved string)
+                      ?? new ServerDef { host = reference };             // a raw connection string
             int connect = def?.connectTimeout
-                ?? config.Timeout?.connectTimeout
+                ?? config?.Timeout?.connectTimeout
                 ?? DefaultConnectTimeoutMs;
             int sync = def?.syncTimeout
-                ?? config.Timeout?.syncTimeout
+                ?? config?.Timeout?.syncTimeout
                 ?? DefaultSyncTimeoutMs;
             if (connect <= 0) connect = DefaultConnectTimeoutMs;
             if (sync <= 0) sync = DefaultSyncTimeoutMs;
             return (connect, sync);
+        }
+
+        /// <summary>Finds a server whose <c>host</c> equals the given (resolved)
+        /// connection string, so a per-server timeout survives the name -> host
+        /// flattening. First match wins when two servers share a host string.</summary>
+        private static ServerDef FindServerByHost(IDictionary<string, ServerDef> servers, string host)
+        {
+            if (servers == null || string.IsNullOrWhiteSpace(host))
+                return null;
+            foreach (var kv in servers)
+            {
+                if (kv.Value != null && string.Equals(kv.Value.host, host, StringComparison.Ordinal))
+                    return kv.Value;
+            }
+            return null;
         }
 
         /// <summary>Normalizes a SyncWrite mode to its lowercase form; unknown

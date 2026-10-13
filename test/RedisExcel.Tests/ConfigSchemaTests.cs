@@ -121,7 +121,7 @@ namespace RedisExcel.Tests
         [Fact]
         public void Default_IsAString()
         {
-            Assert.True(Accepted("{\"Default\":\"prod\"}"));
+            Assert.True(Accepted("{\"Default\":\"prod\",\"Servers\":{\"prod\":\"h:6379\"}}"));
             Assert.True(Accepted("{\"Default\":\"localhost:6379\"}"));
             Assert.True(Rejected("{\"Default\":42}"));
         }
@@ -305,9 +305,15 @@ namespace RedisExcel.Tests
         // ---- extra keys are warnings, not errors -------------------------------
 
         [Theory]
+        [InlineData("{\"UDF\":{\"host\":\"x\"}}")]   // the removed section is now an ERROR (a legacy key)
+        public void LegacyKeys_AreErrors(string json)
+        {
+            Assert.True(Rejected(json));
+        }
+
+        [Theory]
         [InlineData("{\"Unknown\":1}")]
         [InlineData("{\"RTD\":{\"Unknown\":1}}")]
-        [InlineData("{\"UDF\":{\"host\":\"x\"}}")]   // the removed section is now an extra key
         public void UnknownKeys_AreOnlyWarnings(string json)
         {
             Assert.False(Rejected(json));

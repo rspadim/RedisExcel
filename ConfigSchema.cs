@@ -128,12 +128,87 @@ namespace RedisExcel
             {
                 System.Threading.Thread.CurrentThread.CurrentCulture =
                     System.Globalization.CultureInfo.InvariantCulture;
+                // The removed v1 keys must be ERRORS, not tolerated extra keys:
+                // otherwise a pre-1.6 file loads on defaults (host -> localhost)
+                // while the validator says "OK". Report them before/independently of
+                // the schema walk (which would only warn about an unknown key).
+                ReportLegacyKeys(root, issues);
+                ReportDanglingDefault(root, issues);
                 return Prune(root, _schema.Value, "", issues);
             }
             finally
             {
                 System.Threading.Thread.CurrentThread.CurrentCulture = saved;
             }
+        }
+
+        /// <summary>Flags the pre-1.6 keys that the unified shape removed, as
+        /// ERRORs with the v1.6 replacement, so an old file fails closed instead of
+        /// silently reverting to defaults.</summary>
+        internal static void ReportLegacyKeys(JToken root, IList<ConfigIssue> issues)
+        {
+            if (issues == null || !(root is JObject obj))
+                return;
+            void Legacy(string section, string key, string replacement)
+            {
+                if (obj[section] is JObject sec && sec.Property(key) != null)
+                    issues.Add(new ConfigIssue("/" + section + "/" + key,
+                        "removed in v1.6; use " + replacement, ConfigSeverity.Error));
+            }
+            Legacy("RTD", "host", "\"Default\" (or a \"Servers\" name)");
+            Legacy("RTD", "timeout", "the server's \"connectTimeout\"/\"syncTimeout\" (or the global \"Timeout\")");
+            // The whole UDF section was removed (it only held host/timeout).
+            if (obj.Property("UDF") != null)
+                issues.Add(new ConfigIssue("/UDF",
+                    "removed in v1.6; declare servers under \"Servers\" and pick one with \"Default\"", ConfigSeverity.Error));
+            // The root-level boolean moved into RTD.
+            if (obj.Property("CoalesceRealtimeUpdates") != null)
+                issues.Add(new ConfigIssue("/CoalesceRealtimeUpdates",
+                    "moved into \"RTD\" in v1.6", ConfigSeverity.Error));
+        }
+
+        /// <summary>Flags a <c>Default</c> that names a server which is not defined
+        /// in <c>Servers</c> and does not look like a connection string (a bare
+        /// name). Without this a mis-typed server name silently becomes a bogus
+        /// host instead of failing closed - the one high-impact config error the
+        /// schema alone cannot see.</summary>
+        internal static void ReportDanglingDefault(JToken root, IList<ConfigIssue> issues)
+        {
+            if (issues == null || !(root is JObject obj))
+                return;
+            var defaultToken = obj.Property("Default")?.Value;
+            if (defaultToken == null || defaultToken.Type != JTokenType.String)
+                return;
+            string name = (string)defaultToken;
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+            // A raw connection string is allowed ("host", "host:port", "host,opt=..").
+            if (LooksLikeConnectionString(name))
+                return;
+            if (obj["Servers"] is JObject servers
+                && (servers.Property(name) != null
+                    || servers.Properties().Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))))
+                return;
+            issues.Add(new ConfigIssue("/Default",
+                "'" + name + "' is not defined in \"Servers\" and is not a connection string",
+                ConfigSeverity.Error));
+        }
+
+        /// <summary>True when a value looks like a Redis connection string (or a
+        /// bare host / host:port) rather than a Servers name.</summary>
+        private static bool LooksLikeConnectionString(string value)
+        {
+            string s = value.Trim();
+            if (s.Length == 0)
+                return false;
+            // A host:port, an IPv4/IPv6 host, a dotted hostname, or any option list.
+            if (s.IndexOf(',') >= 0 || s.IndexOf('=') >= 0 || s.IndexOf('/') >= 0)
+                return true; // connection string with options, a path, or redis://
+            if (s.IndexOf(':') >= 0)
+                return true; // host:port (an alias may not contain ':')
+            if (s.IndexOf('.') >= 0)
+                return true; // dotted hostname (an alias may not contain '.')
+            return false;    // a bare word: that is a Servers name, not a host
         }
 
         private static JToken Prune(JToken value, JsonSchema schema, string path, IList<ConfigIssue> issues)
