@@ -350,7 +350,7 @@ namespace RedisExcel.Tests
         // ---- loader (new shape) ----------------------------------------------
 
         [Fact]
-        public void LoadFromPaths_MalformedFirstExisting_StopsAndUsesDefaults()
+        public void LoadFromPaths_MalformedFirstExisting_FailsClosedAndStops()
         {
             using (var temp = new TempFiles())
             {
@@ -359,9 +359,26 @@ namespace RedisExcel.Tests
 
                 var config = AppConfig.LoadFromPaths(new[] { malformed, wellFormed });
 
-                Assert.Equal(AppConfig.DefaultHost, config.Default);
-                Assert.Equal(1000, config.RTD.ExcelUpdateRateMs);
-                Assert.Equal(10000, config.PublishDedupCacheSize);
+                // A first existing file that cannot be parsed fails CLOSED (the
+                // lower-priority file is never silently used).
+                Assert.True(config.Rejected);
+                Assert.Contains("malformed.json", config.RejectedReason);
+            }
+        }
+
+        [Fact]
+        public void LoadFromPaths_LeadingComment_IsAccepted()
+        {
+            // Comments are documented as allowed anywhere; a file whose FIRST token
+            // is a comment must still load (a regression fixed after audit B1).
+            using (var temp = new TempFiles())
+            {
+                string lineComment = temp.Write("lead-line.json", "// leading note\n{ \"Default\":\"myhost:6379\" }");
+                Assert.False(AppConfig.LoadFromPaths(new[] { lineComment }).Rejected);
+                Assert.Equal("myhost:6379", AppConfig.LoadFromPaths(new[] { lineComment }).Default);
+
+                string blockComment = temp.Write("lead-block.json", "/* leading */ { \"Default\":\"myhost:6379\" }");
+                Assert.Equal("myhost:6379", AppConfig.LoadFromPaths(new[] { blockComment }).Default);
             }
         }
 

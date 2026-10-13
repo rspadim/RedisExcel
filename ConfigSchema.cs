@@ -99,6 +99,25 @@ namespace RedisExcel
             using (var reader = new JsonTextReader(new StringReader(json)))
             {
                 reader.DateParseHandling = DateParseHandling.None;
+                // Skip leading whitespace/comments BEFORE the root object: a file
+                // that starts with `// note` or `/* note */` is documented as valid
+                // (comments are allowed anywhere), but JToken.ReadFrom would return
+                // the comment token (a non-object) and the whole config would be
+                // silently discarded. Consume comments until the first real token.
+                while (reader.Read())
+                {
+                    if (reader.TokenType == JsonToken.Comment)
+                        continue;
+                    break;
+                }
+                if (reader.TokenType == JsonToken.None
+                    || reader.TokenType == JsonToken.StartArray
+                    || reader.TokenType == JsonToken.Integer
+                    || reader.TokenType == JsonToken.Float
+                    || reader.TokenType == JsonToken.String
+                    || reader.TokenType == JsonToken.Boolean
+                    || reader.TokenType == JsonToken.Null)
+                    return null; // not an object
                 var token = JToken.ReadFrom(reader);
                 return token as JObject;
             }

@@ -239,21 +239,38 @@ namespace RedisExcel
                         if (config != null)
                         {
                             if (config.Rejected)
+                            {
+                                // Name the FILE in the reason: with several candidate
+                                // locations, a stale %USERPROFILE% copy shadowing a good
+                                // C:\RedisExcel one must be identifiable from the cell.
+                                config.RejectedReason = Path.GetFileName(path) + " (" + path + "): " + config.RejectedReason;
                                 logger.Error($"AppConfig: configuration REJECTED from {path}: {config.RejectedReason} - every UDF/RTD call returns #CONFIG until it is fixed");
+                            }
                             else
                                 logger.Info(issues.Count == 0
                                     ? $"AppConfig: loaded configuration from {path}"
                                     : $"AppConfig: loaded configuration from {path} with {issues.Count} value(s) ignored");
                             return Sanitize(config);
                         }
-                        logger.Error($"AppConfig: config file {path} is not a JSON object, using defaults");
+                        // A file that exists but is not a JSON OBJECT (e.g. a broken
+                        // root) must ALSO fail closed, not silently fall back to
+                        // localhost - the same principle as a wrong value (#CONFIG).
+                        logger.Error($"AppConfig: config file {path} is not a JSON object; every UDF/RTD call returns #CONFIG until it is fixed");
+                        var badRoot = Sanitize(new ConfigRoot());
+                        badRoot.Rejected = true;
+                        badRoot.RejectedReason = Path.GetFileName(path) + " (" + path + "): the config root is not a JSON object";
+                        return badRoot;
                     }
                     catch (Exception ex)
                     {
-                        logger.Error(ex, $"AppConfig: error reading config file {path}, using defaults");
+                        // Malformed JSON (the reader threw): fail closed too, so a
+                        // typo cannot silently drop the user onto localhost.
+                        logger.Error(ex, $"AppConfig: error parsing config file {path}; every UDF/RTD call returns #CONFIG until it is fixed");
+                        var malformed = Sanitize(new ConfigRoot());
+                        malformed.Rejected = true;
+                        malformed.RejectedReason = Path.GetFileName(path) + " (" + path + "): invalid JSON (" + ex.Message + ")";
+                        return malformed;
                     }
-                    // The first existing candidate stops the search, even on failure.
-                    break;
                 }
             }
             catch (Exception ex)

@@ -66,7 +66,13 @@ replace when you update the add-in.
 > `.dll` is a dependency and `NLog.config` configures the log file. When you move
 > the add-in, move that whole folder.
 
-The `RedisExcel.json` file (settings, host aliases) is the host config
+> **Upgrading from 1.5.x or older:** the configuration format changed (breaking).
+> Replace the `.xll`/`.dll` as usual, then run `Validate-Config.cmd` (or
+> `=RedisCheckConfigFile()` in a cell) on your existing `RedisExcel.json`: if it
+> uses the old format, every cell shows a `#CONFIG` error until you migrate it.
+> See **Migrating from the old shape** under the JSON configuration section.
+
+The `RedisExcel.json` file (settings, named servers) is the host config
 ([Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)).
 It is searched in this order (the **first existing file wins**):
 >

@@ -94,6 +94,7 @@ english.ServerFailed=Could not set up %1 automatically (exit %2).%nYou can insta
 english.ConfigWriteFailed=Could not write %1. Create it manually from the sample (RedisExcel.json).
 english.TestFailed=Installed, but the Redis at %1 did not answer a PING.%nCheck that the server is running (docker ps) and adjust RedisExcel.json if it is on another host/port.
 english.TestOk=All set! Redis answered at %1.%n%nTo use it: open Excel. If the add-in does not load automatically, go to File > Options > Add-ins > Go... > Browse... and pick the .xll in %2.
+english.UpgradeConfigKept=An existing RedisExcel.json was found and kept (your settings were not overwritten).%n%nThis is a MAJOR update: the configuration format changed. If that file uses the old format, every cell will show a #CONFIG error until it is migrated.%n%nRun Validate-Config.cmd (or =RedisCheckConfigFile() in Excel) and see the README section "Migrating from the old shape".
 english.FinishedText=RedisExcel is installed in:%n%2%n%nIf the add-in does not load automatically, enable it in Excel:%nFile > Options > Add-ins > Go... > Browse... and pick RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).%n%nThen try =RedisUDFGet("preco_btc") in a cell.
 english.UninstServersTitle=Servers
 english.UninstServersSubtitle=Remove Redis-compatible servers too?
@@ -163,6 +164,7 @@ spanish.ServerFailed=No se pudo configurar %1 automáticamente (salida %2).%nPue
 spanish.ConfigWriteFailed=No se pudo escribir %1. Créelo manualmente desde el ejemplo (RedisExcel.json).
 spanish.TestFailed=Instalado, pero el Redis en %1 no respondió a PING.%nCompruebe que el servidor esté en ejecución (docker ps) y ajuste RedisExcel.json si está en otro host/puerto.
 spanish.TestOk=¡Todo listo! Redis respondió en %1.%n%nPara usarlo: abra Excel. Si el complemento no se carga solo, vaya a Archivo > Opciones > Complementos > Ir... > Examinar... y elija el .xll en %2.
+spanish.UpgradeConfigKept=Se encontro un RedisExcel.json existente y se conservo (sus ajustes no se sobrescribieron).%n%nEsta es una actualizacion MAYOR: el formato de configuracion cambio. Si ese archivo usa el formato antiguo, cada celda mostrara un error #CONFIG hasta migrarlo.%n%nEjecute Validate-Config.cmd (o =RedisCheckConfigFile() en Excel) y vea la seccion del README "Migrating from the old shape".
 spanish.FinishedText=RedisExcel está instalado en:%n%2%n%nSi el complemento no se carga solo, actívelo en Excel:%nArchivo > Opciones > Complementos > Ir... > Examinar... y elija RedisExcel64-packed.xll (o RedisExcel-packed.xll para Office de 32 bits).%n%nLuego pruebe =RedisUDFGet("preco_btc") en una celda.
 spanish.UninstServersTitle=Servidores
 spanish.UninstServersSubtitle=¿Eliminar también los servidores compatibles con Redis?
@@ -232,6 +234,7 @@ brazilianportuguese.ServerFailed=Não foi possível configurar %1 automaticament
 brazilianportuguese.ConfigWriteFailed=Não foi possível gravar %1. Crie manualmente a partir do exemplo (RedisExcel.json).
 brazilianportuguese.TestFailed=Instalado, mas o Redis em %1 não respondeu ao PING.%nConfira se o servidor está rodando (docker ps) e ajuste o RedisExcel.json se ele estiver em outro host/porta.
 brazilianportuguese.TestOk=Tudo certo! O Redis respondeu em %1.%n%nPara usar: abra o Excel. Se o add-in não carregar sozinho, vá em Arquivo > Opções > Suplementos > Ir... > Procurar... e escolha o .xll em %2.
+brazilianportuguese.UpgradeConfigKept=Um RedisExcel.json existente foi encontrado e mantido (suas configuracoes nao foram sobrescritas).%n%nEsta e uma atualizacao MAIOR: o formato de configuracao mudou. Se esse arquivo usa o formato antigo, cada celula mostrara um erro #CONFIG ate ser migrado.%n%nRode o Validate-Config.cmd (ou =RedisCheckConfigFile() no Excel) e veja a secao "Migrating from the old shape" no README.
 brazilianportuguese.FinishedText=O RedisExcel foi instalado em:%n%2%n%nSe o add-in não carregar sozinho, habilite no Excel:%nArquivo > Opções > Suplementos > Ir... > Procurar... e escolha RedisExcel64-packed.xll (ou RedisExcel-packed.xll para Office 32 bits).%n%nDepois teste =RedisUDFGet("preco_btc") em uma célula.
 brazilianportuguese.UninstServersTitle=Servidores
 brazilianportuguese.UninstServersSubtitle=Remover também os servidores compatíveis com o Redis?
@@ -316,6 +319,7 @@ var
   ServerInstallCode: Integer;
   TestOk: Boolean;
   InstallCompleted: Boolean;
+  InstallKeptConfig: Boolean;
   UninstallServersPage: TInputOptionWizardPage;
   ServerKinds: TArrayOfString;
   ServerLabels: TArrayOfString;
@@ -753,7 +757,11 @@ begin
         if not SaveStringToFile(ConfigPath, Lines, False) then
           MsgBox(FmtMessage(ExpandConstant('{cm:ConfigWriteFailed}'), [ConfigPath]),
                  mbInformation, MB_OK);
-      end;
+      end
+      else
+        // A pre-1.6 config is preserved verbatim: remember it so the finish step
+        // can warn about the migration (the add-in rejects the old shape).
+        InstallKeptConfig := True;
     end;
 
     if WizardIsTaskSelected('excelautoload') then
@@ -783,6 +791,10 @@ begin
 
   if not TestOk then
     Msg := FmtMessage(ExpandConstant('{cm:TestFailed}'), [HostPort])
+  else if InstallKeptConfig then
+    // An upgrade kept the user's existing RedisExcel.json: warn about the v1.6
+    // break (the old shape is rejected -> #CONFIG) instead of claiming all-set.
+    Msg := FmtMessage(ExpandConstant('{cm:UpgradeConfigKept}'), [HostPort, ExpandConstant('{app}')])
   else
     Msg := FmtMessage(ExpandConstant('{cm:TestOk}'), [HostPort, ExpandConstant('{app}')]);
 
