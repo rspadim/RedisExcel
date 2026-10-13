@@ -128,6 +128,15 @@ try {
     exit 2
   }
 }
+# The root must be a JSON OBJECT: the add-in rejects anything else (empty file,
+# array, number, string, bool, null, comment-only) with #CONFIG - the validator
+# must agree instead of reporting OK (audit F3). A scalar/array root parses as a
+# non-PSCustomObject, and an empty/comment-only file parses as $null.
+if ($null -eq $json -or -not ($json -is [System.Management.Automation.PSCustomObject])) {
+  Line 'FAIL: the config root is not a JSON object.'
+  Line '      The add-in requires a JSON object ({ ... }); anything else fails closed (#CONFIG).'
+  exit 2
+}
 Line 'The file parsed as JSON. Checking each key against the schema...'
 Line ''
 
@@ -274,12 +283,14 @@ if ($json.RTD -and ($json.RTD.PSObject.Properties.Name -contains 'timeout')) {
   $problems.Add("/RTD/timeout : removed in v1.6; use the server's connectTimeout/syncTimeout or the global `"Timeout`"")
 }
 
-# A dangling Default (a bare name not in Servers and not a connection string) is
-# an error in the add-in too.
+# A dangling Default (a bare word not in Servers and not a connection string) is
+# only a WARNING in the add-in: a single-label host ("localhost", a service name)
+# is a valid port-less connection string, so rejecting it would lock a valid
+# config out (audit F1). A real host is used as-is, never a silent fallback.
 $defaultName = $null
 if ($json.Default -is [string]) { $defaultName = $json.Default.Trim() }
 if ($defaultName) {
-  $looksLikeConn = ($defaultName -match '[:,=/]') -or ($defaultName -match '\.')
+  $looksLikeConn = ($defaultName -match '[:,=/]') -or ($defaultName -match '\.') -or ($defaultName -ieq 'localhost')
   $inServers = $false
   if ($json.Servers) {
     foreach ($p in $json.Servers.PSObject.Properties) {
@@ -287,7 +298,7 @@ if ($defaultName) {
     }
   }
   if (-not $looksLikeConn -and -not $inServers) {
-    $problems.Add("/Default : '$defaultName' is not defined in `"Servers`" and is not a connection string")
+    $warnings.Add("/Default : '$defaultName' is not defined in `"Servers`" and is not a connection string; using it as a host")
   }
 }
 
@@ -297,7 +308,7 @@ foreach ($name in $json.PSObject.Properties.Name) {
     $warnings.Add("/$name : unknown key (ignored by the add-in)")
     continue
   }
-  CheckValue ("/" + $name) $value $topSchema.properties.$name
+  [void](CheckValue ("/" + $name) $value $topSchema.properties.$name)
   Line ("  checked  /$name")
 }
 

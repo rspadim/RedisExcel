@@ -1,4 +1,4 @@
-using Newtonsoft.Json;
+﻿using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NJsonSchema;
 using System;
@@ -188,13 +188,14 @@ namespace RedisExcel
             }
         }
 
-        /// <summary>The property with the given name, matched the SAME way the
-        /// schema walker and the Newtonsoft binder do (case-insensitively, exact
-        /// case first). The pre-checks below must not use an ordinal lookup: the
+        /// <summary>The property with the given name, matched case-insensitively
+        /// (exact case first) - the SAME way the schema walker and the Newtonsoft
+        /// binder match. The pre-checks below must not use an ordinal lookup: the
         /// walker merges case-variant keys, so an ordinal lookup both rejected a
-        /// valid config (a lowercase "servers") and skipped the lenient guards on
-        /// a lowercase "default"/"rtd" (audit D3).</summary>
-        private static JProperty FindRootProperty(JObject obj, string name)
+        /// valid config (a lowercase "servers") and skipped the lenient guards on a
+        /// lowercase "default"/"rtd" (audit D3), and it missed a case-variant
+        /// legacy member like "RTD.Host" that the validator flags (audit F3).</summary>
+        private static JProperty FindProperty(JObject obj, string name)
         {
             var exact = obj.Property(name);
             if (exact != null)
@@ -211,33 +212,35 @@ namespace RedisExcel
                 return;
             void Legacy(string section, string key, string replacement)
             {
-                var sec = FindRootProperty(obj, section)?.Value as JObject;
-                if (sec != null && sec.Property(key) != null)
+                var sec = FindProperty(obj, section)?.Value as JObject;
+                if (sec != null && FindProperty(sec, key) != null)
                     issues.Add(new ConfigIssue("/" + section + "/" + key,
                         "removed in v1.6; use " + replacement, ConfigSeverity.Error));
             }
             Legacy("RTD", "host", "\"Default\" (or a \"Servers\" name)");
             Legacy("RTD", "timeout", "the server's \"connectTimeout\"/\"syncTimeout\" (or the global \"Timeout\")");
             // The whole UDF section was removed (it only held host/timeout).
-            if (FindRootProperty(obj, "UDF") != null)
+            if (FindProperty(obj, "UDF") != null)
                 issues.Add(new ConfigIssue("/UDF",
                     "removed in v1.6; declare servers under \"Servers\" and pick one with \"Default\"", ConfigSeverity.Error));
             // The root-level boolean moved into RTD.
-            if (FindRootProperty(obj, "CoalesceRealtimeUpdates") != null)
+            if (FindProperty(obj, "CoalesceRealtimeUpdates") != null)
                 issues.Add(new ConfigIssue("/CoalesceRealtimeUpdates",
                     "moved into \"RTD\" in v1.6", ConfigSeverity.Error));
         }
 
-        /// <summary>Flags a <c>Default</c> that names a server which is not defined
-        /// in <c>Servers</c> and does not look like a connection string (a bare
-        /// name). Without this a mis-typed server name silently becomes a bogus
-        /// host instead of failing closed - the one high-impact config error the
-        /// schema alone cannot see.</summary>
+        /// <summary>Flags a <c>Default</c> whose value is a bare word that is
+        /// neither a defined <c>Servers</c> name nor a recognizable connection
+        /// string. It is a WARNING, not an error: a single-label host
+        /// ("localhost", a Docker/K8s service name) is a perfectly valid
+        /// port-less connection string, so rejecting it would lock a valid
+        /// config out (audit F1). The warning still surfaces the likely typo,
+        /// and the value is used as-is (never a silent localhost fallback).</summary>
         internal static void ReportDanglingDefault(JToken root, IList<ConfigIssue> issues)
         {
             if (issues == null || !(root is JObject obj))
                 return;
-            var defaultToken = FindRootProperty(obj, "Default")?.Value;
+            var defaultToken = FindProperty(obj, "Default")?.Value;
             if (defaultToken == null || defaultToken.Type != JTokenType.String)
                 return;
             string name = (string)defaultToken;
@@ -246,14 +249,13 @@ namespace RedisExcel
             // A raw connection string is allowed ("host", "host:port", "host,opt=..").
             if (LooksLikeConnectionString(name))
                 return;
-            var servers = FindRootProperty(obj, "Servers")?.Value as JObject;
+            var servers = FindProperty(obj, "Servers")?.Value as JObject;
             if (servers != null
-                && (servers.Property(name) != null
-                    || servers.Properties().Any(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase))))
+                && (FindProperty(servers, name) != null))
                 return;
             issues.Add(new ConfigIssue("/Default",
-                "'" + name + "' is not defined in \"Servers\" and is not a connection string",
-                ConfigSeverity.Error));
+                "'" + name + "' is not defined in \"Servers\" and is not a connection string; using it as a host",
+                ConfigSeverity.Warning));
         }
 
         /// <summary>True when a value looks like a Redis connection string (or a
@@ -263,6 +265,10 @@ namespace RedisExcel
             string s = value.Trim();
             if (s.Length == 0)
                 return false;
+            // A well-known single-label host is a valid port-less endpoint (avoid a
+            // noisy warning for the very common Default: "localhost").
+            if (s.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+                return true;
             // A host:port, an IPv4/IPv6 host, a dotted hostname, or any option list.
             if (s.IndexOf(',') >= 0 || s.IndexOf('=') >= 0 || s.IndexOf('/') >= 0)
                 return true; // connection string with options, a path, or redis://
@@ -270,7 +276,7 @@ namespace RedisExcel
                 return true; // host:port (an alias may not contain ':')
             if (s.IndexOf('.') >= 0)
                 return true; // dotted hostname (an alias may not contain '.')
-            return false;    // a bare word: that is a Servers name, not a host
+            return false;    // a bare word: warn (it may be a Servers name or a service host)
         }
 
         private static JToken Prune(JToken value, JsonSchema schema, string path, IList<ConfigIssue> issues)

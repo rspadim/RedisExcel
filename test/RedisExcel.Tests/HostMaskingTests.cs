@@ -187,11 +187,14 @@ namespace RedisExcel.Tests
         // (audit D2: the old regex stopped at the first '@' and leaked the rest).
         [InlineData("redis://user:p@leakpart@127.0.0.1:6379")]
         [InlineData("redis://user:secret@127.0.0.1:6379,abortConnect=False")]
+        [InlineData("user:secret@127.0.0.1:6379")]   // bare, no scheme (audit F1)
+        [InlineData("MY PASSWORD@127.0.0.1:6379")]
         public void MaskHost_MasksTheWholeUriUserInfo(string input)
         {
             string masked = AppConfig.MaskHost(input);
             Assert.DoesNotContain("leakpart", masked);
             Assert.DoesNotContain("secret", masked);
+            Assert.DoesNotContain("MY PASSWORD", masked);
             Assert.DoesNotContain("user:", masked);
             Assert.Contains("127.0.0.1:6379", masked); // the host survives
         }

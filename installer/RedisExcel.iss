@@ -938,13 +938,13 @@ begin
     UnregisterExcelAutoLoad();
     // The add-in registers this ProgId under HKCU on load; remove it.
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\RedisRtd');
+    // Remove any servers the user ticked. This MUST run at usUninstall: the
+    // [UninstallDelete] entry removes {app}\scripts (and thus the helper) BEFORE
+    // usPostUninstall, so calling it there silently no-ops (audit F2).
+    RunUninstallServers();
   end
   else if CurUninstallStep = usPostUninstall then
   begin
-    // Remove any servers the user ticked (the scripts still exist at this step
-    // because the files are deleted after usPostUninstall's default handling).
-    RunUninstallServers();
-
     if FileExists(ExpandConstant('{app}\RedisExcel.json')) then
       if MsgBox(ExpandConstant('{cm:UninstKeepConfig}'), mbConfirmation, MB_YESNO) = IDNO then
         DeleteFile(ExpandConstant('{app}\RedisExcel.json'));

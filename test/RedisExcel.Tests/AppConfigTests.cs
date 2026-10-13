@@ -270,17 +270,24 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void LoadFromPaths_DanglingDefaultName_RejectsTheFile()
+        public void LoadFromPaths_BareDefaultName_IsAWarningNotARejection()
         {
+            // A bare word is a valid port-less host ("localhost", a service name),
+            // so a Default that is not a Servers key must NOT reject the file - it
+            // is used as the host, with a warning (audit F1). A silent localhost
+            // fallback is still impossible: the value itself becomes the host.
             using (var temp = new TempFiles())
             {
-                string dangling = temp.Write("dangling.json",
+                string bare = temp.Write("bare.json",
                     "{\"Default\":\"prod\",\"Servers\":{\"production\":\"h:6379\"}}");
 
-                var config = AppConfig.LoadFromPaths(new[] { dangling });
+                var config = AppConfig.LoadFromPaths(new[] { bare });
 
-                Assert.True(config.Rejected);
-                Assert.Contains("Default", config.RejectedReason);
+                Assert.False(config.Rejected);
+                Assert.Equal("prod", config.Default);
+                var issues = new System.Collections.Generic.List<ConfigIssue>();
+                AppConfig.ParseTolerant(System.IO.File.ReadAllText(bare), null, issues);
+                Assert.Contains(issues, i => i.Path == "/Default" && i.Severity == ConfigSeverity.Warning);
             }
         }
 

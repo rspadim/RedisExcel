@@ -321,14 +321,20 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
-        public void DanglingDefault_IsCaseInsensitiveLikeTheWalker()
+        public void DanglingDefault_IsCaseInsensitiveAndOnlyAWarning()
         {
             // A lowercase "servers" still defines the server (the walker/binder are
             // case-insensitive), so a valid config must NOT be rejected (D3 A1).
             Assert.False(Rejected("{\"Default\":\"prod\",\"servers\":{\"prod\":\"h:1\"}}"));
-            // A lowercase "default" must still be validated as dangling (D3 A2).
-            Assert.True(Rejected("{\"default\":\"typo\"}"));
-            Assert.True(Rejected("{\"DEFAULT\":\"typo\"}"));
+            // A bare word that is not a Servers key is a WARNING (it may be a valid
+            // port-less host like "localhost"), never a rejection (audit F1), and
+            // the guard is case-insensitive like the walker (D3 A2).
+            Assert.False(Rejected("{\"default\":\"typo\"}"));
+            Assert.True(Warned("{\"default\":\"typo\"}"));
+            Assert.True(Warned("{\"DEFAULT\":\"typo\"}"));
+            // A real host is accepted with no warning at all.
+            Assert.False(Warned("{\"Default\":\"localhost\"}"));
+            Assert.False(Warned("{\"Default\":\"localhost:6379\"}"));
         }
 
         [Theory]

@@ -480,6 +480,7 @@ namespace RedisExcel
             // A URI authority (redis://user:pass@host) carries credentials the
             // key=value regex cannot see; redact its userinfo first.
             string masked = UriUserInfo.Replace(host, "****@");
+            masked = BareUserInfo.Replace(masked, "****@");
             return PasswordPair.Replace(masked, "$1$2=****");
         }
 
@@ -491,6 +492,12 @@ namespace RedisExcel
         // precedes a host character redacts the whole userinfo.
         private static readonly Regex UriUserInfo = new Regex(
             @"(?<=//)[^/\s]*@(?=[^@/\s]*$|/)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // A bare "user:pass@host" or "user@host" (no scheme) also carries
+        // userinfo that the key=value regex cannot see; it reaches the cell/log
+        // through the same MaskHost chokepoint (audit F1).
+        private static readonly Regex BareUserInfo = new Regex(
+            @"(^|[,\s])[^@,;/\s]*@(?=[^@/\s]*$|[,;\s])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A credential keyword is preceded by the string start, a connection-string
         // delimiter (comma/semicolon) OR whitespace: a credential can reach a cell
