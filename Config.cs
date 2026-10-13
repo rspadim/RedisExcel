@@ -476,9 +476,13 @@ namespace RedisExcel
         }
 
         // redis://user:SECRET@host / rediss://:SECRET@host / redis://user@host:
-        // whatever sits between '//' and '@' is userinfo and must be redacted.
+        // whatever sits between '//' and the LAST '@' before the authority is
+        // userinfo and must be redacted. Matching to the FIRST '@' leaked the
+        // rest when the userinfo itself contained an '@' (e.g.
+        // redis://user:p@leakpart@host); the greedy run up to the last '@' that
+        // precedes a host character redacts the whole userinfo.
         private static readonly Regex UriUserInfo = new Regex(
-            @"(?<=//)[^/@\s]+@", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            @"(?<=//)[^/\s]*@(?=[^@/\s]*$|/)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A credential keyword is preceded by the string start, a connection-string
         // delimiter (comma/semicolon) OR whitespace: a credential can reach a cell

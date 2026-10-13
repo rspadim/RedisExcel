@@ -180,5 +180,60 @@ namespace RedisExcel.Tests
                 RedisUDF.SyncWriteOverrideForTests = previous;
             }
         }
+
+        [Theory]
+        // A URI authority carries userinfo the key=value regex cannot see. The
+        // full userinfo must be redacted even when it contains its own '@'
+        // (audit D2: the old regex stopped at the first '@' and leaked the rest).
+        [InlineData("redis://user:p@leakpart@127.0.0.1:6379")]
+        [InlineData("redis://user:secret@127.0.0.1:6379,abortConnect=False")]
+        public void MaskHost_MasksTheWholeUriUserInfo(string input)
+        {
+            string masked = AppConfig.MaskHost(input);
+            Assert.DoesNotContain("leakpart", masked);
+            Assert.DoesNotContain("secret", masked);
+            Assert.DoesNotContain("user:", masked);
+            Assert.Contains("127.0.0.1:6379", masked); // the host survives
+        }
+
+        [Fact]
+        public void ConfigIssue_MasksASecretInThePathAndStripsControlCharacters()
+        {
+            // The issue PATH embeds raw JSON key names; a Servers key can be a
+            // connection string with password=..., and a key can contain \n.
+            var secret = new ConfigIssue("/Servers/h:6379,password=TOPSECRET", "expected a connection string");
+            string s = secret.ToString();
+            Assert.DoesNotContain("TOPSECRET", s);
+            Assert.Contains("password=****", s);
+            Assert.Contains("expected a connection string", s);
+
+            var newline = new ConfigIssue("/Servers/srv\nFORGED|injected", "x");
+            Assert.DoesNotContain("\n", newline.ToString());
+            Assert.DoesNotContain("\r", newline.ToString());
+        }
+
+        [Fact]
+        public void RejectedReason_MasksASecretInAServersKeyAndNeverSpansLines()
+        {
+            string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "redisexcel-mask-" + System.Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(dir);
+            try
+            {
+                string path = System.IO.Path.Combine(dir, "RedisExcel.json");
+                System.IO.File.WriteAllText(path,
+                    "{\"Default\":\"localhost:6379\",\"Servers\":{\"h:6379,password=TOPSECRET\":12345}}");
+
+                var config = AppConfig.LoadFromPaths(new[] { path });
+
+                Assert.True(config.Rejected);
+                Assert.DoesNotContain("TOPSECRET", config.RejectedReason);
+                Assert.DoesNotContain("\n", config.RejectedReason);
+                Assert.DoesNotContain("\r", config.RejectedReason);
+            }
+            finally
+            {
+                try { System.IO.Directory.Delete(dir, true); } catch { }
+            }
+        }
     }
 }

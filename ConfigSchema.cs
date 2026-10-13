@@ -33,7 +33,34 @@ namespace RedisExcel
             Severity = severity;
         }
 
-        public override string ToString() => (Path.Length == 0 ? "/" : Path) + ": " + Message;
+        public override string ToString()
+        {
+            // The path embeds raw JSON KEY names (e.g. a Servers key that IS a
+            // connection string with password=...): mask credentials and strip
+            // control characters (a key name may contain \n, which would forge a
+            // log line and split the #CONFIG cell). Every derived surface (cell,
+            // NLog, RedisCheckConfigFile) inherits this.
+            string path = Path.Length == 0 ? "/" : Path;
+            return Sanitize(path) + ": " + Sanitize(Message);
+        }
+
+        /// <summary>Masks credentials and removes control characters (newlines
+        /// included) so one issue can never span/forge multiple log lines.</summary>
+        private static string Sanitize(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return text ?? "";
+            string masked = AppConfig.MaskHost(text);
+            if (masked.IndexOfAny(ControlChars) < 0)
+                return masked;
+            var sb = new System.Text.StringBuilder(masked.Length);
+            foreach (char c in masked)
+                sb.Append(char.IsControl(c) ? ' ' : c);
+            return sb.ToString();
+        }
+
+        private static readonly char[] ControlChars =
+            Enumerable.Range(0, 32).Select(i => (char)i).Concat(new[] { (char)127 }).ToArray();
     }
 
     /// <summary>
