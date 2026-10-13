@@ -59,6 +59,23 @@ namespace RedisExcel.Tests
         }
 
         /// <summary>
+        /// RedisRtd.cs is not compiled by any test project, so a regression in a
+        /// source-level invariant there would ship silently (audit E3). Pin the
+        /// critical one: the RTD polled-command drain must bound its batch wait by
+        /// the TOPIC host's syncTimeout, not the Default server's - otherwise a
+        /// reply arriving within the connection's own timeout is abandoned.
+        /// </summary>
+        [Fact]
+        public void RedisRtd_PollDrain_UsesTheTopicHostBound()
+        {
+            string repoRoot = FindRepoRoot();
+            string source = File.ReadAllText(Path.Combine(repoRoot, "RedisRtd.cs"));
+
+            Assert.Contains("int responseTimeoutMs = RedisUDF.ResponseTimeoutMs(host);", source);
+            Assert.DoesNotContain("int responseTimeoutMs = RedisUDF.ResponseTimeoutMs();", source);
+        }
+
+        /// <summary>
         /// Resolves one Compile Include value to absolute paths, expanding the
         /// simple globs the csproj format allows (for example "..\..\*.cs").
         /// </summary>

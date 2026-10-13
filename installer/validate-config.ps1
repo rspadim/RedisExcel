@@ -157,12 +157,34 @@ function Describe($value) {
   return ($value.GetType().Name + " '" + ($value | Out-String).Trim() + "'")
 }
 
-function CheckValue($path, $value, $sub) {
+function CheckValue($path, $value, $sub, [switch]$Strict) {
   $script:checked++
+  # oneOf (e.g. a Servers value: a connection string OR an object). Valid when at
+  # least one branch validates; otherwise it is an ERROR, matching the add-in's
+  # fail-closed rejection (the previous walker ignored oneOf and reported a false
+  # OK for a numeric/array/bad-object Servers value - audit E2). Inside a branch an
+  # unknown key is a branch failure (the branch declares additionalProperties:false),
+  # not the tolerant top-level warning.
+  if ($sub.oneOf) {
+    $ok = $false
+    foreach ($branch in $sub.oneOf) {
+      $probe = New-Object System.Collections.Generic.List[string]
+      $saved = $script:problems
+      $script:problems = $probe
+      try { $r = CheckValue $path $value $branch -Strict } finally { $script:problems = $saved }
+      if ($r) { $ok = $true; break }
+    }
+    if (-not $ok) {
+      $script:problems.Add("$path : expected a connection string or an object with host/connectTimeout/syncTimeout")
+      return $false
+    }
+    return $true
+  }
+  $typeOk = $true
   if ($sub.type) {
     if (-not (TypeOk $value $sub.type)) {
       $script:problems.Add("$path : expected " + $sub.type + ' but got ' + (Describe $value))
-      return
+      return $false
     }
   }
   if ($sub.type -eq 'string' -and $value -is [string]) {
@@ -170,32 +192,59 @@ function CheckValue($path, $value, $sub) {
       # The schema's patterns are meant to be case-insensitive ASCII.
       if ($value -notmatch ('^(?i:' + ($sub.pattern -replace '^\(\?i\)', '') + ')$')) {
         $script:problems.Add("$path : '$value' is not one of the allowed values")
+        $typeOk = $false
       }
     }
   }
   if ($sub.type -eq 'integer' -or $sub.type -eq 'number') {
     if ($null -ne $sub.minimum -and $value -lt $sub.minimum) {
       $script:problems.Add("$path : $value is below the minimum $($sub.minimum)")
+      $typeOk = $false
     }
     if ($null -ne $sub.maximum -and $value -gt $sub.maximum) {
       $script:problems.Add("$path : $value is above the maximum $($sub.maximum)")
+      $typeOk = $false
     }
   }
   # Recurse into objects.
   if ($sub.type -eq 'object' -and ($value -is [System.Management.Automation.PSCustomObject])) {
-    $hasAdditional = ($null -ne $sub.additionalProperties)
+    # additionalProperties semantics: absent = allowed; $false = not allowed;
+    # an object = validate the value against that schema; $true = allowed.
+    # (A boolean $false is NOT null, so the old `$null -ne` test wrongly treated
+    # `additionalProperties:false` as permissive - audit E2.)
+    $addSchema = $null
+    $addAllowed = $true
+    if ($sub.PSObject.Properties.Name -contains 'additionalProperties') {
+      $add = $sub.additionalProperties
+      if ($add -is [System.Management.Automation.PSCustomObject]) { $addSchema = $add }
+      elseif ($add -eq $false) { $addAllowed = $false }
+    }
     $known = @()
     if ($sub.properties) { $known = @($sub.properties.PSObject.Properties.Name) }
+    # required: every listed property must be present (e.g. Servers object -> host).
+    if ($sub.required) {
+      $present = @($value.PSObject.Properties.Name)
+      foreach ($req in $sub.required) {
+        if ($present -notcontains $req) {
+          $script:problems.Add("$path : missing required property '$req'")
+          $typeOk = $false
+        }
+      }
+    }
     foreach ($prop in $value.PSObject.Properties) {
       $name = $prop.Name
       if ($sub.properties -and ($known -contains $name)) {
-        CheckValue ("$path/" + $name) $prop.Value $sub.properties.$name
-      } elseif ($hasAdditional -and ($sub.additionalProperties -is [System.Management.Automation.PSCustomObject])) {
+        if (-not (CheckValue ("$path/" + $name) $prop.Value $sub.properties.$name)) { $typeOk = $false }
+      } elseif ($null -ne $addSchema) {
         # Free-form map (e.g. Servers): validate the value against the
-        # additionalProperties schema.
-        CheckValue ("$path/" + $name) $prop.Value $sub.additionalProperties
-      } elseif ($hasAdditional) {
+        # additionalProperties schema (oneOf in the Servers case).
+        if (-not (CheckValue ("$path/" + $name) $prop.Value $addSchema)) { $typeOk = $false }
+      } elseif ($addAllowed) {
         # additionalProperties: true -> anything is allowed.
+      } elseif ($Strict) {
+        # Inside a oneOf branch: an unknown key makes THIS branch fail (the branch
+        # declares additionalProperties:false), it is not a tolerant warning.
+        $typeOk = $false
       } else {
         # An extra/unknown key is only a WARNING (the add-in logs and ignores
         # it); it does NOT reject the file.
@@ -203,6 +252,7 @@ function CheckValue($path, $value, $sub) {
       }
     }
   }
+  return $typeOk
 }
 
 # Walk top-level keys.
