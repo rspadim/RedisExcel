@@ -19,7 +19,11 @@ server, including the v1.1.0 Pub/Sub regression scenario:
      against local hosts; use -SkipClientKill to force it off.
   6. Kills its own hidden Excel mid-stream and verifies the Redis server drops
      every subscription (a crashed add-in leaves no dangling state; skipped
-     with -KeepExcelOpen).
+     with -KeepExcelOpen). The kill makes Office relaunch the instance to show
+     document recovery (EXCEL.EXE /restore); that relaunch is closed right away,
+     because it never exits on its own and would keep the session (and the
+     recovery pane) alive. Any remaining hidden Excel leftovers are reported,
+     and closed only with -CloseExcelLeftovers.
 
 TESTS USE ONLY THE test.redisexcel.* CHANNELS AND test.redisexcel.* KEYS.
 
@@ -89,7 +93,13 @@ param(
     [ValidateSet('sync', 'fireforget', 'fireforget-all')]
     [string]$SyncWrite = 'fireforget',
     [switch]$AsyncWrites,
-    [switch]$KeepExcelOpen
+    [switch]$KeepExcelOpen,
+    # Terminate the EXCEL.EXE processes the crash test leaves behind (the
+    # recovery relaunch and/or hidden automation instances) instead of only
+    # reporting them. Off by default: the harness never kills EXCEL.EXE blindly,
+    # and a process appearing during the run cannot be PROVEN to be this run's
+    # (this environment spawns hidden instances around any Excel COM activation).
+    [switch]$CloseExcelLeftovers
 )
 
 $ErrorActionPreference = 'Stop'
@@ -1264,6 +1274,87 @@ finally {
             }
             if ($pending.Count -gt 0) {
                 Write-Host ("WARNING: a hidden Excel instance did not exit within 30s (PIDs: " + (($pending | ForEach-Object { $_.Id }) -join ',') + "); back-to-back runs may be slow.") -ForegroundColor Yellow
+            }
+        }
+        else {
+            # The "Excel dies mid-stream" scenario killed this run's hidden Excel
+            # with Stop-Process, so there is no COM proxy left to Quit/Release.
+            # The crash has two side effects the normal branch never sees: Office
+            # RELAUNCHES the instance to show document recovery (EXCEL.EXE
+            # /restore), and the DCOM activation/teardown leaves hidden
+            # /automation -Embedding instances alive (empty window title - the
+            # shape AGENTS lesson 4 warns about). Observe boundedly, then close
+            # what is attributable and report the rest.
+            $leftovers = @()
+            $observeDeadline = (Get-Date).AddSeconds(15)
+            $settleAt = $null
+            while ((Get-Date) -lt $observeDeadline) {
+                $current = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
+                    Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
+                if ($current.Count -eq 0) { $leftovers = @(); break }
+                if ($null -eq $settleAt) { $settleAt = (Get-Date).AddSeconds(3) }
+                elseif ((Get-Date) -ge $settleAt) { $leftovers = $current; break }
+                $leftovers = $current
+                Start-Sleep -Milliseconds 250
+            }
+            if ($leftovers.Count -gt 0) {
+                # Split by command line. The recovery relaunch is the ONE
+                # leftover this run is responsible for: it carries exactly
+                # /restore and is spawned seconds after OUR Stop-Process. A
+                # hidden /automation -Embedding instance is NOT attributable
+                # (this environment spawns them around any Excel COM activation,
+                # including when nothing of ours is running).
+                $recoveryRelaunch = @()
+                $unattributed = @()
+                foreach ($leftoverProcess in $leftovers) {
+                    $leftoverCommandLine = ''
+                    try {
+                        $leftoverCommandLine = [string](Get-CimInstance Win32_Process -Filter ("ProcessId=" + $leftoverProcess.Id) -ErrorAction SilentlyContinue).CommandLine
+                    }
+                    catch { }
+                    $entry = [pscustomobject]@{
+                        Id = $leftoverProcess.Id
+                        Title = $leftoverProcess.MainWindowTitle
+                        CommandLine = $leftoverCommandLine
+                    }
+                    if ($leftoverCommandLine -match '/restore') { $recoveryRelaunch += $entry }
+                    else { $unattributed += $entry }
+                }
+
+                foreach ($entry in $recoveryRelaunch) {
+                    # It NEVER exits on its own (observed still alive 28 minutes
+                    # after the run) and keeps the crashed session's recovery
+                    # pane alive. Closing the process dismisses the automatic
+                    # relaunch only: the recovery items themselves are untouched.
+                    try {
+                        Stop-Process -Id $entry.Id -Force -ErrorAction Stop
+                        Write-Host ("         closed the Office recovery relaunch (PID {0}, EXCEL.EXE /restore) that this run's crash started." -f $entry.Id) -ForegroundColor DarkGray
+                    }
+                    catch {
+                        Write-Host ("WARNING: could not close the Office recovery relaunch (PID {0}): {1}" -f $entry.Id, $_.Exception.Message) -ForegroundColor Yellow
+                    }
+                }
+
+                if ($unattributed.Count -gt 0) {
+                    Write-Host ("WARNING: the crash test left {0} other EXCEL.EXE process(es) behind (hidden /automation -Embedding instances have an empty title; ownership cannot be proven):" -f $unattributed.Count) -ForegroundColor Yellow
+                    foreach ($entry in $unattributed) {
+                        Write-Host ("         PID {0} title='{1}' {2}" -f $entry.Id, $entry.Title, $entry.CommandLine) -ForegroundColor Yellow
+                    }
+                    if ($CloseExcelLeftovers) {
+                        foreach ($entry in $unattributed) {
+                            try {
+                                Stop-Process -Id $entry.Id -Force -ErrorAction Stop
+                                Write-Host ("         closed PID {0} (-CloseExcelLeftovers)." -f $entry.Id) -ForegroundColor DarkYellow
+                            }
+                            catch {
+                                Write-Host ("         could not close PID {0}: {1}" -f $entry.Id, $_.Exception.Message) -ForegroundColor Red
+                            }
+                        }
+                    }
+                    else {
+                        Write-Host '         close them from Task Manager (or re-run with -CloseExcelLeftovers) if you need a clean machine before the next run.' -ForegroundColor DarkGray
+                    }
+                }
             }
         }
         # Short cooldown so security software can finish scanning the files
