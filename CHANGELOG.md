@@ -1,4 +1,4 @@
-## v1.6.3 (unreleased)
+## v1.6.3
 
 ### Fixed
 

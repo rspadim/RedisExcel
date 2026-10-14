@@ -590,9 +590,9 @@ Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
 the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
-release: `v1.6.2` (installer end-of-install fixes - it authenticates, cannot hang,
-and its messages/sample sheet are English - on top of the v1.6.0 named-server
-configuration; see the root `CHANGELOG.md`).
+release: `v1.6.3` (the installer migrates an incompatible `RedisExcel.json` on
+upgrade - backup + working file, carrying the old server address - on top of the
+v1.6.0 named-server configuration; see the root `CHANGELOG.md`).
 
 On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
 guard fails the release otherwise and names this line); work in progress keeps an
