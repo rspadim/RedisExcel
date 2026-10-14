@@ -8,8 +8,9 @@
   with MkDocs Material (`docs/`, `mkdocs.yml`) and published by the new
   `Deploy landing page` workflow; the support section invites new translations.
 - **`LICENSE` (MIT)** with the bundled third-party licenses listed.
-- **`SIGNING.md`** with the code-signing plan (packed XLLs, the managed DLL and
-  the installer, after packing, with an RFC 3161 timestamp).
+- **`SIGNING.md`** with the (inactive) code-signing plan: manual signing of the
+  packed XLLs, the managed DLL and the installer with an RFC 3161 timestamp
+  when a certificate exists; the CI deliberately signs nothing.
 
 ### Changed (BREAKING - configuration, v1.6)
 

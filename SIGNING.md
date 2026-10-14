@@ -1,10 +1,11 @@
 # Code signing
 
-RedisExcel releases will be code-signed. This file records the plan; the signing
-step is **not wired into the CI yet** because the certificate does not exist at
-the time of writing.
+Status: **inactive**. RedisExcel releases are **not signed** and nothing in the
+CI signs them. Signing is parked; when a certificate exists it will be applied
+**manually** first (outside the pipeline), and only wired into the CI later if
+it proves worth it.
 
-## What gets signed
+## What gets signed (when a certificate exists)
 
 | Artifact | Why |
 | --- | --- |
@@ -15,25 +16,27 @@ the time of writing.
 The packed XLLs embed their own copies of the managed dependencies; the loose
 `RedisExcel.dll` is the one a manual install puts next to the XLL.
 
-## Where the step enters the pipeline
+## Manual procedure (the current plan)
 
-1. `build.yml` produces the release payload (the packed XLLs, `RedisExcel.dll`
-   and the installer) - sign each binary **after** it is built and **before**
-   the artifact upload.
-2. Use an RFC 3161 timestamp server (the SignPath action does this by default),
-   so the signatures stay valid after the certificate expires.
-3. The SignPath **artifact configuration** lists all four PE files: the two
-   packed XLLs, `RedisExcel.dll` and `RedisExcelSetup-<version>.exe`.
+1. Produce the release payload (the packed XLLs, `RedisExcel.dll` and the
+   installer) - the `Build & Release` artifacts are enough.
+2. Sign the four PE files with an Authenticode certificate and an **RFC 3161
+   timestamp** (`signtool sign /fd SHA256 /tr <timestamp-url> /td SHA256
+   <file>` or SignPath's own tooling), then `signtool verify /pa` each one.
+3. Upload the signed files to the release.
+
+Only after that manual flow is proven should a CI step be considered; when it
+is, the landing page must mention the signing service again in its download
+section (the SignPath application requires it).
 
 ## Service
 
 Free code signing for open-source projects is provided by the
-[SignPath Foundation](https://signpath.org/); the landing page does not advertise
-signing while no certificate exists - add the required download-section mention
-back once signing is live. After approval, the remaining steps (organization,
-signing policy and artifact configuration on signpath.io, an API token in GitHub
-Secrets, then the workflow step) follow the SignPath documentation at
-<https://docs.signpath.io/>.
+[SignPath Foundation](https://signpath.org/); the service is not active for this
+project yet, so the landing page does not advertise signing. If it is activated
+later, the remaining steps (organization, signing policy and artifact
+configuration on signpath.io, an API token in GitHub Secrets, then the workflow
+step) follow the SignPath documentation at <https://docs.signpath.io/>.
 
 ## Never
 
