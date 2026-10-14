@@ -53,21 +53,35 @@ jobs:
       - name: Install Redis server (Memurai developer edition)
         shell: pwsh
         run: |
-          # The community feed intermittently answers 406 while resolving a
-          # dependency of this meta-package (seen: memurai-developer.install).
-          # That is infrastructure noise; retry before failing the job.
+          # The community feed flakes (406/504) and, when it does, Chocolatey can
+          # exit 0 after installing nothing ("Chocolatey installed 0/0 packages"),
+          # so validate by the installed service - not by the exit code. If
+          # Memurai never lands, fall back to a portable Redis build from the
+          # GitHub releases (same wire protocol; the suite only needs a server).
+          $installed = $false
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             Write-Host "memurai install attempt $attempt/3"
             choco install memurai-developer -y --no-progress
-            if ($LASTEXITCODE -eq 0) {
-              Write-Host "memurai installed"
-              Get-Service -Name Memurai -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "service $($_.Name): $($_.Status)" }
-              exit 0
+            $svc = Get-Service -Name Memurai -ErrorAction SilentlyContinue
+            if ($svc) {
+              Write-Host "service $($svc.Name): $($svc.Status)"
+              $installed = $true
+              break
             }
-            Write-Host "memurai install failed (exit $LASTEXITCODE)"
+            Write-Host "memurai install failed (exit $LASTEXITCODE; no Memurai service found)"
             if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
           }
-          throw "memurai install failed on all attempts"
+          if (-not $installed) {
+            Write-Host "falling back to a portable Redis build (GitHub releases)"
+            $zip = Join-Path $env:RUNNER_TEMP "redis-windows.zip"
+            $dir = Join-Path $env:RUNNER_TEMP "redis-windows"
+            Invoke-WebRequest -Uri "https://github.com/redis-windows/redis-windows/releases/download/8.10.2/Redis-8.10.2-Windows-x64-msys2.zip" -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath $dir -Force
+            $server = Get-ChildItem -Path $dir -Recurse -Filter "redis-server.exe" | Select-Object -First 1
+            if (-not $server) { throw "redis-server.exe not found in the fallback archive" }
+            Start-Process -FilePath $server.FullName -ArgumentList "--port", "6379" -WorkingDirectory $server.DirectoryName -WindowStyle Hidden
+            Write-Host "portable redis-server started from $($server.DirectoryName)"
+          }
 
       - name: Wait for Redis to answer PING
         shell: pwsh
