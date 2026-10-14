@@ -1344,12 +1344,19 @@ begin
     Args := Args + ' -PasswordFile "' + PwFile + '"';
   TestOk := (RunScript('test-connection.ps1', Args) = 0);
 
+  // The migration note is INDEPENDENT of the connection test: a migrated config
+  // can point at a server that is down right now, and the user must still learn
+  // that the old file was backed up and replaced (its own box, before the result).
+  if InstallMigratedConfig then
+  begin
+    Log('ConfigMigrated: backup=' + ConfigBackupPath);
+    if not WizardSilent() then
+      MsgBox(FmtMessage(ExpandConstant('{cm:UpgradeConfigMigrated}'), [ConfigBackupPath]),
+             mbInformation, MB_OK);
+  end;
+
   if not TestOk then
     Msg := FmtMessage(ExpandConstant('{cm:TestFailed}'), [HostPort])
-  else if InstallMigratedConfig then
-    // A pre-1.6 file was incompatible with this add-in: it was backed up and
-    // replaced, so say where the old one went instead of claiming all-set.
-    Msg := FmtMessage(ExpandConstant('{cm:UpgradeConfigMigrated}'), [ConfigBackupPath])
   else if InstallKeptConfig then
     // An existing, compatible RedisExcel.json was kept verbatim.
     Msg := FmtMessage(ExpandConstant('{cm:UpgradeConfigKept}'), [HostPort, ExpandConstant('{app}')])
