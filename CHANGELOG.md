@@ -4,6 +4,12 @@
 
 ### Added
 
+- **The installer wizard now ships in 10 languages** (English, 简体中文,
+  繁體中文, Português do Brasil, Español, Русский, Français, 한국어, Deutsch,
+  日本語); the add-in stays **English-only inside Excel** on purpose so volatile
+  functions return the same strings on every machine. The silent uninstaller can
+  also remove a server it detects with `/REMOVESERVERS=<kind>` (interactive
+  uninstalls keep the detected-server page, nothing removed by default).
 - **Project landing page** (GitHub Pages) in pt-BR, English and Spanish, built
   with MkDocs Material (`docs/`, `mkdocs.yml`) and published by the new
   `Deploy landing page` workflow; the support section invites new translations.
@@ -11,6 +17,48 @@
 - **`SIGNING.md`** with the (inactive) code-signing plan: manual signing of the
   packed XLLs, the managed DLL and the installer with an RFC 3161 timestamp
   when a certificate exists; the CI deliberately signs nothing.
+- **`Validate-Config.cmd` improvements**: it now rejects a root that is not a
+  JSON object (matching the add-in's `#CONFIG`), tolerates a case-variant
+  duplicate key instead of reporting invalid JSON, reports the same `Servers`
+  verdict as the add-in, and warns when a connection string looks like a
+  password truncated by a comma.
+- Python usage examples and a social preview image on the landing page.
+
+- **Native Redis HA: Sentinel and Cluster.** A `host` that is a Sentinel
+  connection string (`serviceName=mymaster`) or any node of a Redis Cluster now
+  works for every command: key-routed reads/writes and Pub/Sub are handled by
+  StackExchange.Redis (master discovery, MOVED/ASK, reconnect, re-subscribe).
+  Server-wide operations span every cluster master: `RedisUDFKeys` scans all
+  shards and `RedisUDFPubSubChannelsInfo` merges channels/subscriber counts.
+  A Redis Cluster (database 0 only) rejects `defaultDatabase != 0` with a clear
+  error, and a multi-key command across shards reports the "single slot" error
+  plus a hash-tag (`{tag}`) hint. Standalone and Sentinel are unchanged.
+
+### Security
+
+- **Credential masking hardened.** `AppConfig.MaskHost` (which feeds every log
+  line, error cell and `RedisCheckConfigFile`) now redacts URI userinfo with or
+  without a scheme, with a database path (`redis://user:pass@host:6379/0`), with
+  an embedded `@`, and after a control character - and a config issue can no
+  longer forge a log line or split a `#CONFIG` cell. The config loader is no
+  longer quadratic on a long whitespace run (a crafted value could stall it for
+  seconds).
+
+### Fixed
+
+- **Installer**: the uninstaller no longer aborts mid-uninstall (a
+  `WizardSilent` misuse) and now removes the Excel-DNA CLSID key (64-bit view)
+  and cleans the Start-Menu shortcut of a previously installed language; the
+  generated `RedisExcel.json` escapes a password containing `\` or `"`; the
+  non-ASCII wizard strings for seven languages were repaired (they rendered as
+  mojibake).
+- **`RedisUDFPubSubChannelsInfo`** shows the per-channel error text again when
+  `PUBSUB NUMSUB` is denied (instead of a misleading `0`).
+- **`Reload`/eviction**: a connection created while the cache evicted it mid
+  connect is no longer orphaned (it stayed open past `Shutdown` and a later call
+  built a duplicate).
+- `...NonVolatile` write pair-range and `DateTime` argument validation now
+  respect the matrix budget and the invariant error text.
 
 ### Changed (BREAKING - configuration, v1.6)
 
@@ -45,16 +93,6 @@
   is fixed) instead of silently defaulting just that value. An **extra/unknown
   key** stays a non-fatal log **warning**.
 
-### Added
-
-- **Native Redis HA: Sentinel and Cluster.** A `host` that is a Sentinel
-  connection string (`serviceName=mymaster`) or any node of a Redis Cluster now
-  works for every command: key-routed reads/writes and Pub/Sub are handled by
-  StackExchange.Redis (master discovery, MOVED/ASK, reconnect, re-subscribe).
-  Server-wide operations span every cluster master: `RedisUDFKeys` scans all
-  shards and `RedisUDFPubSubChannelsInfo` merges channels/subscriber counts.
-  A Redis Cluster (database 0 only) rejects `defaultDatabase != 0` with a clear
-  error, and a multi-key command across shards reports the "single slot" error
   plus a hash-tag (`{tag}`) hint. Standalone and Sentinel are unchanged.
 
 ## v1.5.2
