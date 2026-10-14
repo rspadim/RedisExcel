@@ -516,15 +516,16 @@ namespace RedisExcel
             @"(^|[,\s])[^@,;/\s]*:[^@,;:/\s]*@(?=[^@/\s]*$|[,;\s])", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A credential keyword is preceded by the string start, a connection-string
-        // delimiter (comma/semicolon, optional spaces) OR a single whitespace. The
-        // delimiter alternatives must NOT overlap each other on whitespace: the old
-        // `(^|[,;\s])\s*` let BOTH `[,;\s]` and `\s*` consume the same spaces, which
-        // is O(n^2) on a run of whitespace and made the loader hang for seconds on a
-        // config value of ~8000 spaces (audit H1, ReDoS). The `[,;]\s*` branch eats
-        // a comma/semicolon plus its spaces; the `\s` branch eats exactly one, so the
-        // engine advances one char per position and the scan is linear.
+        // delimiter (comma/semicolon, optional spaces) OR a single whitespace/control
+        // char. The delimiter alternatives must NOT overlap each other on whitespace:
+        // the old `(^|[,;\s])\s*` let BOTH `[,;\s]` and `\s*` consume the same spaces,
+        // which is O(n^2) on a run of whitespace and made the loader hang for seconds
+        // on a config value of ~8000 spaces (audit H1, ReDoS). The `[,;]\s*` branch
+        // eats a comma/semicolon plus its spaces; the `[\s\p{C}]` branch eats exactly
+        // one char (whitespace OR control - a control char before the keyword must not
+        // hide the credential, audit J2), so the scan stays linear.
         private static readonly Regex PasswordPair = new Regex(
-            @"(^|[,;]\s*|\s)(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
+            @"(^|[,;]\s*|[\s\p{C}])(password|pass|user|username)\s*=\s*(?:""[^""]*""|'[^']*'|[^,]*)",
             RegexOptions.IgnoreCase | RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         /// <summary>

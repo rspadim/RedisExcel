@@ -103,6 +103,17 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void Servers_ObjectCaseOnlyDuplicate_InvalidVariantStillRejects()
+        {
+            // Audit J2: a case-only duplicate in a Servers object must not let an
+            // INVALID value hide behind a valid spelling (fail-closed).
+            Assert.True(Rejected("{\"Servers\":{\"s\":{\"host\":\"localhost:6379\",\"HOST\":123}},\"Default\":\"s\"}"));
+            Assert.True(Rejected("{\"Servers\":{\"s\":{\"host\":123,\"HOST\":\"localhost:6379\"}},\"Default\":\"s\"}"));
+            // Two VALID spellings collapse to the exact-canonical one (warning only).
+            Assert.False(Rejected("{\"Servers\":{\"s\":{\"host\":\"a:1\",\"HOST\":\"b:2\"}},\"Default\":\"s\"}"));
+        }
+
+        [Fact]
         public void Servers_ObjectKeyCaseIsInsensitive()
         {
             // The loader (and the Newtonsoft binder) match property names

@@ -208,6 +208,17 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void MaskHost_MasksACredentialAfterAControlCharacter()
+        {
+            // Audit J2: a control char before "password=" must not hide it (a
+            // key name can embed one, and it reached the #CONFIG cell unmasked).
+            string nul = "\u0000";
+            string masked = AppConfig.MaskHost("srv:6379" + nul + "password=SECRET");
+            Assert.DoesNotContain("SECRET", masked);
+            Assert.Contains("password=****", masked);
+        }
+
+        [Fact]
         public void MaskHost_IsLinearOnALongRunOfSpaces()
         {
             // Regression for the ReDoS (audit H1): the old delimiter regex let a

@@ -314,12 +314,19 @@ namespace RedisExcel
                     order.Add(canonical);
                     continue;
                 }
-                // A duplicate that differs only by case: prefer the exact-canonical
-                // spelling; otherwise keep the first. Record a warning either way.
-                bool keepNew = string.Equals(prop.Name, canonical, StringComparison.Ordinal)
-                    && !string.Equals(keeper.Name, canonical, StringComparison.Ordinal);
+                // A duplicate that differs only by case: the discarded value must
+                // still be VALIDATED (a wrong value on a known key rejects the whole
+                // file). Record the duplicate, and if the discarded value is itself
+                // invalid, fail closed rather than silently dropping it (audit J2;
+                // the earlier version kept the valid spelling and validated only it,
+                // so {"host":"ok","HOST":123} was wrongly accepted).
                 issues?.Add(new ConfigIssue(path + "/" + prop.Name,
                     "duplicate key (differs only by case)", ConfigSeverity.Warning));
+                if (!ValueMatchesProperty(prop.Value, objectBranch.Properties[canonical]))
+                    issues?.Add(new ConfigIssue(path + "/" + prop.Name,
+                        "duplicate key has an invalid value for '" + canonical + "'", ConfigSeverity.Error));
+                bool keepNew = string.Equals(prop.Name, canonical, StringComparison.Ordinal)
+                    && !string.Equals(keeper.Name, canonical, StringComparison.Ordinal);
                 if (keepNew)
                     chosen[canonical] = prop;
             }
@@ -327,6 +334,21 @@ namespace RedisExcel
             foreach (var canonical in order)
                 copy[canonical] = chosen[canonical].Value;
             return copy;
+        }
+
+        /// <summary>True when a discarded duplicate's value would itself satisfy
+        /// the schema property (so an invalid value cannot hide behind a valid
+        /// case-variant spelling).</summary>
+        private static bool ValueMatchesProperty(JToken value, JsonSchema propertySchema)
+        {
+            try
+            {
+                return propertySchema.Validate(value).Count == 0;
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         /// <summary>True when a value looks like a Redis connection string (or a

@@ -423,6 +423,16 @@ namespace RedisExcel
                     connection = winner.Value; // never block on connect: already materialized
                 }
             }
+            // Re-check the shutdown fence: a Shutdown between the earlier check and
+            // the re-insert above would clear the pool and miss this entry, leaking
+            // it (audit J2). Disposing here is idempotent.
+            if (_shutdown)
+            {
+                DisposeConnection(connection, "GetConnection: error disposing connection created during shutdown",
+                    closeFirst: true, allowCommandsToComplete: true);
+                dictionary.TryRemove(host, out _);
+                throw ShuttingDown();
+            }
             if (dictionary.Count > MaxCachedConnectionsPerPool)
                 EvictDisconnectedConnections(dictionary, host, pool);
             if (connection.IsConnected)
