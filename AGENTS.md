@@ -559,6 +559,13 @@ These cost real debugging time — read before writing automation.
    recovery pane can hide a real crashed-document list). When Excel processes keep
    appearing every ~15-30s with no XLL loaded, the other repo is being tested -
    not a leak of ours.
+8. **A `redis-cli.exe` must be run from the folder that carries its DLLs.** The
+   Windows msys2 build needs `msys-*.dll` beside the executable: a copy taken out
+   of that folder exits `0xC0000135` (STATUS_DLL_NOT_FOUND) and prints nothing, so
+   the E2E reported "Redis is not responding" against a server that was answering
+   PONG. The message now names the CLI and its exit code
+   (`CLI 'redis-cli ' exit=-1073741515`), and `-RedisCli "docker exec <container>
+   redis-cli"` sidesteps the local CLI entirely.
 
 ## Release
 
