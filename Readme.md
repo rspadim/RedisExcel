@@ -1,6 +1,6 @@
 # RedisExcel
 
-![RedisExcel Overview](redisexcel.png)
+![RedisExcel Overview](docs/assets/social-card-en.png)
 
 TL-DR: Read Installing in Excel and [Download Releases](https://github.com/rspadim/RedisExcel/releases)
 

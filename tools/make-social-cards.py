@@ -95,7 +95,8 @@ def main():
 
     # Keep the old landing-page URL alive with the prettier artwork: the site used
     # to point its hero at redisexcel.jpg (a busy diagram) and that URL may have
-    # been shared already.
+    # been shared already. The repository Readme uses the English card directly
+    # (docs/assets/social-card-en.png), so no root-level copy is written.
     legacy = ASSETS / "redisexcel.jpg"
     original.save(legacy, "JPEG", quality=92, optimize=True)
     print(f"wrote {legacy.name} (same artwork as the pt card)")
