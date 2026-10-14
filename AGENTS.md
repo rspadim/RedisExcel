@@ -551,3 +551,11 @@ the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
 release: `v1.6.0` (the unified named-server configuration - see the root
 `CHANGELOG.md` for the breaking-config migration).
+
+On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
+guard fails the release otherwise and names this line), (2) update the `Current
+release` value above, and (3) if the Excel surface changed, refresh the frozen
+baseline - `PublicSurfaceParityTests.BaselineHeader`/the generated
+`test\RedisExcel.Tests\PublicSurface.baseline.txt` - with
+`REDISEXCEL_REFRESH_PUBLIC_SURFACE=1` and review the diff. The landing pages
+(`docs\`) carry no version, so they only change when their text changes.
