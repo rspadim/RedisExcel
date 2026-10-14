@@ -51,7 +51,19 @@ jobs:
         run: dotnet test test/RedisExcel.Tests/RedisExcel.Tests.csproj -c Release
 
       - name: Install Redis server (Memurai developer edition)
-        run: choco install memurai-developer -y --no-progress
+        shell: pwsh
+        run: |
+          # The community feed intermittently answers 406 while resolving a
+          # dependency of this meta-package (seen: memurai-developer.install).
+          # That is infrastructure noise; retry before failing the job.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "memurai install attempt $attempt/3"
+            choco install memurai-developer -y --no-progress
+            if ($LASTEXITCODE -eq 0) { Write-Host "memurai installed"; exit 0 }
+            Write-Host "memurai install failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
+          }
+          throw "memurai install failed on all attempts"
 
       - name: Wait for Redis to answer PING
         shell: pwsh
@@ -135,7 +147,18 @@ jobs:
           msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=$tag
 
       - name: Install Inno Setup
-        run: choco install innosetup -y --no-progress
+        shell: pwsh
+        run: |
+          # Same community-feed flake as the Memurai install above: retry
+          # before failing the job on infrastructure noise.
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "innosetup install attempt $attempt/3"
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -eq 0) { Write-Host "innosetup installed"; exit 0 }
+            Write-Host "innosetup install failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
+          }
+          throw "innosetup install failed on all attempts"
 
       # Build the helper installer on every run (so a broken .iss is caught here,
       # not only on a release tag). The version is the tag without the leading
