@@ -22,11 +22,18 @@
       ... -NoBuild                 # reuse the current build (fastest re-run)
       ... -WithE2E                 # add the Excel end-to-end layer
       ... -SkipSmoke -SkipLiveness # unit only
-      ... -LivenessFull            # the full destructive liveness run
+      ... -LivenessFull            # the destructive liveness windows (no --quick)
       ... -RedisHost host:port     # use an existing server (no container)
       ... -ContainerName rs-rt     # name for the disposable redis:7-alpine
       ... -Port 6399               # host port for the disposable container
       ... -Sequential              # run one layer at a time (easier to read)
+
+    The mid-stream SERVER RESTART is not covered by -LivenessFull: it runs only in
+    the liveness suite's own container mode, where the suite starts (and restarts)
+    the container itself, on a port nothing else holds:
+      dotnet run --project test\LivenessTests -c Release -- "127.0.0.1:6399,abortConnect=False" --container rs-live
+    (Passing --container while this script's shared container is already on that
+    port makes the suite SKIP the restart: docker cannot publish the port twice.)
 #>
 [CmdletBinding()]
 param(
