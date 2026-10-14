@@ -128,10 +128,15 @@ dotnet build RedisExcel.sln -c Release
 # Compile the installer (version is injected; use the tag without the 'v')
 iscc "/DAppVersion=<version>" "installer\RedisExcel.iss"
 # -> installer\output\RedisExcelSetup-<version>.exe
+# CI also copies it to installer\output\RedisExcelSetup.exe (version-less), so
+# releases/latest/download/RedisExcelSetup.exe is a stable direct link: the
+# versioned file name under /releases/latest/ would 404 as soon as the next tag
+# is published.
 ```
 
 CI builds the installer on every run (so a broken `.iss` fails fast) and attaches
-`RedisExcelSetup-<version>.exe` to the GitHub release on a `v*` tag.
+both `RedisExcelSetup-<version>.exe` and the version-less `RedisExcelSetup.exe` to
+the GitHub release on a `v*` tag.
 
 ## Notes / limits
 

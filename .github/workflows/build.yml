@@ -203,7 +203,16 @@ jobs:
           iscc "/DAppVersion=$ver" "installer\RedisExcel.iss"
           $exe = "installer\output\RedisExcelSetup-$ver.exe"
           if (-not (Test-Path -LiteralPath $exe)) { throw "installer was not produced: $exe" }
-          Write-Host "installer built: $exe"
+
+          # Also publish a version-less copy so the documented one-click link
+          # (releases/latest/download/RedisExcelSetup.exe) never goes stale:
+          # /releases/latest resolves to the NEWEST release, whose assets carry
+          # the tag in their names, so a versioned file name under that path
+          # (RedisExcelSetup-1.6.0.exe) 404s as soon as the next tag ships.
+          $stable = "installer\output\RedisExcelSetup.exe"
+          Copy-Item -LiteralPath $exe -Destination $stable -Force
+          if (-not (Test-Path -LiteralPath $stable)) { throw "stable installer copy was not produced: $stable" }
+          Write-Host "installer built: $exe (stable copy: $stable)"
 
       - name: Upload the installer artifact
         uses: actions/upload-artifact@v7
@@ -230,10 +239,11 @@ jobs:
           if ($missing.Count -gt 0) {
             throw "release assets missing: " + ($missing -join ', ')
           }
-          if ((Get-ChildItem 'installer/output/*.exe' -ErrorAction SilentlyContinue).Count -eq 0) {
+          $installers = @(Get-ChildItem 'installer/output/*.exe' -ErrorAction SilentlyContinue)
+          if ($installers.Count -eq 0) {
             throw "release asset missing: installer/output/RedisExcelSetup-*.exe"
           }
-          Write-Host ("release assets present: " + ($assets.Count + 1) + " files")
+          Write-Host ("release assets present: " + ($assets.Count + $installers.Count) + " files")
 
       # Hand the release assets to the release job. The artifact keeps the
       # paths relative to the repository root (bin/..., the two config files and

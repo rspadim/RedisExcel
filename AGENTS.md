@@ -303,8 +303,10 @@ job checks out the repository so it can read `CHANGELOG.md` (the checkout runs
 before the artifact download so it cannot wipe the downloaded assets).
 The build job also installs Inno Setup and compiles `installer\RedisExcel.iss`
 on every run (a broken `.iss` fails the build, not only a tag), uploads the
-`RedisExcelSetup-<version>.exe` as a standalone artifact, and on a `v*` tag adds
-it to the release assets.
+installer (`RedisExcelSetup-<version>.exe` plus the version-less
+`RedisExcelSetup.exe` copy, which is what makes
+`releases/latest/download/RedisExcelSetup.exe` a link that never goes stale) as a
+standalone artifact, and on a `v*` tag adds both to the release assets.
 The smoke step retries once (2 attempts, 3s apart) and the quick liveness step up
 to three times (5s apart): a shared runner can stall the whole process or trip a
 best-effort race on infrastructure noise, and the bounds themselves are
@@ -545,6 +547,7 @@ These cost real debugging time — read before writing automation.
 
 Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
-the installer (`RedisExcelSetup-<version>.exe`) as release assets. Current
+the installer (`RedisExcelSetup-<version>.exe` plus the version-less
+`RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
 release: `v1.6.0` (the unified named-server configuration - see the root
 `CHANGELOG.md` for the breaking-config migration).
