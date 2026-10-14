@@ -1,4 +1,4 @@
-﻿; RedisExcel installer + uninstaller (Inno Setup 6).
+; RedisExcel installer + uninstaller (Inno Setup 6).
 ;
 ; Build:  ISCC /DAppVersion=<version> .\installer\RedisExcel.iss
 ; CI builds it on every run and attaches RedisExcelSetup-<version>.exe to a
@@ -250,209 +250,209 @@ brazilianportuguese.SummaryAdvanced=Avancado
 
 
 ; ---- chinesesimplified ----
-chinesesimplified.AdvPageDesc=è¿™å°±æ˜¯å®Œæ•´çš„ RedisExcel.jsonï¼Œå¯ç›´æŽ¥ç¼–è¾‘ï¼šæ¯ä¸ªé”®éƒ½å·²é¢„å¡«é»˜è®¤å€¼å’Œç®€çŸ­æ³¨é‡Šã€‚åŠ è½½é¡¹æŽ¥å— // æ³¨é‡Šï¼Œå› æ­¤å¯ä»¥ä¿ç•™ã€‚å¯åœ¨æ­¤ä¿®æ”¹ä¸»æœºã€åˆ«åã€å†™å…¥æ¨¡å¼ã€ConflationMsã€AsyncWritesâ€”â€”å…¨éƒ¨åœ¨æ­¤ã€‚
-chinesesimplified.AdvPageTitle=é«˜çº§è¿žæŽ¥
-chinesesimplified.ConfigWriteFailed=æ— æ³•å†™å…¥ %1ã€‚è¯·å‚ç…§ç¤ºä¾‹ï¼ˆRedisExcel.jsonï¼‰æ‰‹åŠ¨åˆ›å»ºã€‚
-chinesesimplified.ConnHost=ä¸»æœºï¼ˆæˆ– host:portï¼‰ï¼š
-chinesesimplified.ConnPageDesc=ä½¿ç”¨é»˜è®¤å€¼ï¼ˆlocalhost:6379ï¼‰è¯·ç‚¹â€œä¸‹ä¸€æ­¥â€ã€‚ä¹‹åŽå¯ç¼–è¾‘ RedisExcel.json ä¿®æ”¹ã€‚
-chinesesimplified.ConnPageSubtitle=RedisExcel åº”è¿žæŽ¥åˆ°ä½•å¤„ï¼Ÿ
-chinesesimplified.ConnPageTitle=Redis è¿žæŽ¥
-chinesesimplified.ConnPassword=å¯†ç ï¼ˆå¯é€‰ï¼‰ï¼š
-chinesesimplified.ConnPort=ç«¯å£ï¼š
-chinesesimplified.FinishedText=RedisExcel å·²å®‰è£…åˆ°ï¼š%n%2%n%nå¦‚æžœåŠ è½½é¡¹æœªè‡ªåŠ¨åŠ è½½ï¼Œè¯·åœ¨ Excel ä¸­å¯ç”¨ï¼š%næ–‡ä»¶ > é€‰é¡¹ > åŠ è½½é¡¹ > è½¬åˆ°... > æµè§ˆ...ï¼Œé€‰æ‹© RedisExcel64-packed.xllï¼ˆ32 ä½ Office ç”¨ RedisExcel-packed.xllï¼‰ã€‚%n%nç„¶åŽåœ¨å•å…ƒæ ¼ä¸­è¯•è¯• =RedisUDFGet("preco_btc")ã€‚
-chinesesimplified.GroupConfig=é…ç½®ï¼š
-chinesesimplified.GroupExcel=Excelï¼š
-chinesesimplified.HostRequired=è¯·è¾“å…¥ Redis ä¸»æœºï¼ˆä¾‹å¦‚ localhostï¼‰ã€‚
-chinesesimplified.IconUninstall=å¸è½½ {#AppName}
-chinesesimplified.ModeAdvanced=é«˜çº§ - è®¾ç½®æ•°æ®åº“ã€SSLã€å†™å…¥æ¨¡å¼å’Œæ›´æ–°è°ƒèŠ‚
-chinesesimplified.ModePageDesc=ç®€æ˜“ä»…è¯¢é—®æœåŠ¡å™¨åœ°å€ã€‚é«˜çº§å¯è®¾ç½®æ•°æ®åº“ã€SSL/TLSã€å†™å…¥æ¨¡å¼å’Œå®žæ—¶æ›´æ–°è°ƒèŠ‚ã€‚ä¹‹åŽéšæ—¶å¯ç¼–è¾‘ RedisExcel.jsonï¼ˆæˆ–è¿è¡Œ Validate-Config.cmdï¼‰ã€‚
-chinesesimplified.ModePageSubtitle=ç®€æ˜“è¿˜æ˜¯é«˜çº§å®‰è£…ï¼Ÿ
-chinesesimplified.ModePageTitle=å®‰è£…æ¨¡å¼
-chinesesimplified.ModeSimple=ç®€æ˜“ - ä»… Redis åœ°å€ï¼ˆæŽ¨èï¼‰
-chinesesimplified.OptionsOpenExcel=ç»“æŸæ—¶æ‰“å¼€ç¤ºä¾‹ RedisExcel å·¥ä½œç°¿
-chinesesimplified.OptionsPageDesc=å®‰è£…ç¨‹åºåœ¨ç»“æŸæ—¶æµ‹è¯•è¿žæŽ¥ã€‚å¯é€‰æ‹©æ‰“å¼€ç¤ºä¾‹ Excel å·¥ä½œç°¿ä»¥æ¼”ç¤ºå…¶å·¥ä½œæ–¹å¼ã€‚
-chinesesimplified.OptionsPageSubtitle=å³å°†å®Œæˆ
-chinesesimplified.OptionsPageTitle=é¢å¤–æ£€æŸ¥
-chinesesimplified.ServerDockerRedis=æ˜¯ - Dockerï¼šRedisï¼ˆredis:latestï¼‰
-chinesesimplified.ServerDockerValkey=æ˜¯ - Dockerï¼šValkeyï¼ˆvalkey/valkey:latestï¼‰
-chinesesimplified.ServerFailed=æ— æ³•è‡ªåŠ¨è®¾ç½® %1ï¼ˆé€€å‡ºç  %2ï¼‰ã€‚%næ‚¨å¯ä»¥ç¨åŽå®‰è£…æœåŠ¡å™¨ï¼Œå¹¶åœ¨ RedisExcel.json ä¸­æŒ‡å‘å®ƒã€‚
-chinesesimplified.ServerMemurai=æ˜¯ - Memuraiï¼ˆWindows æœ¬æœºæœåŠ¡ï¼Œéœ€è¦ç®¡ç†å‘˜æƒé™ï¼‰
-chinesesimplified.ServerNameDockerRedis=Redisï¼ˆDockerï¼‰
-chinesesimplified.ServerNameDockerValkey=Valkeyï¼ˆDockerï¼‰
-chinesesimplified.ServerNameGeneric=æœåŠ¡å™¨
+chinesesimplified.AdvPageDesc=这就是完整的 RedisExcel.json，可直接编辑：每个键都已预填默认值和简短注释。加载项接受 // 注释，因此可以保留。可在此修改主机、别名、写入模式、ConflationMs、AsyncWrites——全部在此。
+chinesesimplified.AdvPageTitle=高级连接
+chinesesimplified.ConfigWriteFailed=无法写入 %1。请参照示例（RedisExcel.json）手动创建。
+chinesesimplified.ConnHost=主机（或 host:port）：
+chinesesimplified.ConnPageDesc=使用默认值（localhost:6379）请点“下一步”。之后可编辑 RedisExcel.json 修改。
+chinesesimplified.ConnPageSubtitle=RedisExcel 应连接到何处？
+chinesesimplified.ConnPageTitle=Redis 连接
+chinesesimplified.ConnPassword=密码（可选）：
+chinesesimplified.ConnPort=端口：
+chinesesimplified.FinishedText=RedisExcel 已安装到：%n%2%n%n如果加载项未自动加载，请在 Excel 中启用：%n文件 > 选项 > 加载项 > 转到... > 浏览...，选择 RedisExcel64-packed.xll（32 位 Office 用 RedisExcel-packed.xll）。%n%n然后在单元格中试试 =RedisUDFGet("preco_btc")。
+chinesesimplified.GroupConfig=配置：
+chinesesimplified.GroupExcel=Excel：
+chinesesimplified.HostRequired=请输入 Redis 主机（例如 localhost）。
+chinesesimplified.IconUninstall=卸载 {#AppName}
+chinesesimplified.ModeAdvanced=高级 - 设置数据库、SSL、写入模式和更新调节
+chinesesimplified.ModePageDesc=简易仅询问服务器地址。高级可设置数据库、SSL/TLS、写入模式和实时更新调节。之后随时可编辑 RedisExcel.json（或运行 Validate-Config.cmd）。
+chinesesimplified.ModePageSubtitle=简易还是高级安装？
+chinesesimplified.ModePageTitle=安装模式
+chinesesimplified.ModeSimple=简易 - 仅 Redis 地址（推荐）
+chinesesimplified.OptionsOpenExcel=结束时打开示例 RedisExcel 工作簿
+chinesesimplified.OptionsPageDesc=安装程序在结束时测试连接。可选择打开示例 Excel 工作簿以演示其工作方式。
+chinesesimplified.OptionsPageSubtitle=即将完成
+chinesesimplified.OptionsPageTitle=额外检查
+chinesesimplified.ServerDockerRedis=是 - Docker：Redis（redis:latest）
+chinesesimplified.ServerDockerValkey=是 - Docker：Valkey（valkey/valkey:latest）
+chinesesimplified.ServerFailed=无法自动设置 %1（退出码 %2）。%n您可以稍后安装服务器，并在 RedisExcel.json 中指向它。
+chinesesimplified.ServerMemurai=是 - Memurai（Windows 本机服务，需要管理员权限）
+chinesesimplified.ServerNameDockerRedis=Redis（Docker）
+chinesesimplified.ServerNameDockerValkey=Valkey（Docker）
+chinesesimplified.ServerNameGeneric=服务器
 chinesesimplified.ServerNameMemurai=Memurai
-chinesesimplified.ServerNameWslRedis=Redisï¼ˆWSLï¼‰
-chinesesimplified.ServerNameWslValkey=Valkeyï¼ˆWSLï¼‰
-chinesesimplified.ServerNone=å¦ - æˆ‘å·²æœ‰æœåŠ¡å™¨ï¼ˆæˆ–ç¨åŽè®¾ç½®ï¼‰
-chinesesimplified.ServerPageDesc=RedisExcel éœ€è¦ Redisï¼ˆæˆ– Valkeyï¼‰æœåŠ¡å™¨ã€‚å¦‚æžœè¿˜æ²¡æœ‰ï¼Œè¯·é€‰æ‹©ä¸€ä¸ªé€‰é¡¹ã€‚å…ˆå®‰è£…æœåŠ¡å™¨ï¼Œå†å®‰è£… RedisExcelï¼Œæœ€åŽæµ‹è¯•è¿žæŽ¥ã€‚Docker æœ€ç®€å•ã€‚
-chinesesimplified.ServerPageSubtitle=çŽ°åœ¨å®‰è£…å…¼å®¹ Redis çš„æœåŠ¡å™¨å—ï¼Ÿ
-chinesesimplified.ServerPageTitle=Redis æœåŠ¡å™¨
-chinesesimplified.ServerWslRedis=æ˜¯ - WSL2ï¼šRedisï¼ˆapt install redis-serverï¼‰
-chinesesimplified.ServerWslValkey=æ˜¯ - WSL2ï¼šValkeyï¼ˆapt install valkey-serverï¼‰
-chinesesimplified.SummaryAdvanced=é«˜çº§
-chinesesimplified.SummaryIntro=è¿™äº›å€¼å°†ä¿å­˜åˆ°å®‰è£…æ–‡ä»¶å¤¹ä¸­çš„ RedisExcel.jsonã€‚
-chinesesimplified.SummaryLabel=è¿žæŽ¥
-chinesesimplified.SummaryMode=æ¨¡å¼
-chinesesimplified.SummaryPageSubtitle=æŸ¥çœ‹å°†å†™å…¥ RedisExcel.json çš„è¿žæŽ¥
-chinesesimplified.SummaryPageTitle=æ‚¨çš„è®¾ç½®
-chinesesimplified.SummarySimple=ç®€æ˜“
-chinesesimplified.TaskAutoLoadDesc=æ³¨å†ŒåŠ è½½é¡¹ï¼Œä½¿ Excel è‡ªåŠ¨åŠ è½½ï¼ˆæŽ¨èï¼‰
-chinesesimplified.TaskConfigDesc=åœ¨å®‰è£…æ–‡ä»¶å¤¹ä¸­åˆ›å»º RedisExcel.jsonï¼ˆä¸»æœºè®¾ç½®ï¼‰
-chinesesimplified.TaskNlogDesc=åˆ›å»º NLog.configï¼ˆåœ¨åŠ è½½é¡¹æ—å†™å…¥æ—¥å¿—æ–‡ä»¶ï¼‰
-chinesesimplified.TestFailed=å·²å®‰è£…ï¼Œä½† %1 å¤„çš„ Redis æœªå“åº” PINGã€‚%nè¯·ç¡®è®¤æœåŠ¡å™¨æ­£åœ¨è¿è¡Œï¼ˆdocker psï¼‰ï¼Œå¦‚æžœå®ƒåœ¨å…¶ä»–ä¸»æœº/ç«¯å£ï¼Œè¯·è°ƒæ•´ RedisExcel.jsonã€‚
-chinesesimplified.TestOk=å…¨éƒ¨å°±ç»ªï¼%1 å¤„çš„ Redis å·²å“åº”ã€‚%n%nä½¿ç”¨æ–¹æ³•ï¼šæ‰“å¼€ Excelã€‚å¦‚æžœåŠ è½½é¡¹æœªè‡ªåŠ¨åŠ è½½ï¼Œè¯·è½¬åˆ° æ–‡ä»¶ > é€‰é¡¹ > åŠ è½½é¡¹ > è½¬åˆ°... > æµè§ˆ...ï¼Œé€‰æ‹© %2 ä¸­çš„ .xllã€‚
-chinesesimplified.UninstKeepConfig=ä¿ç•™æ‚¨çš„ RedisExcel.json è®¾ç½®å—ï¼Ÿ
-chinesesimplified.UninstServerFound=%1  [å·²æ‰¾åˆ°]
-chinesesimplified.UninstServerFailed=无法自动移除 %1（退出码 %2）。如有需要请手动移除。
-chinesesimplified.UninstServersDesc=åœ¨æ­¤è®¡ç®—æœºä¸Šå‘çŽ°äº†è¿™äº›æœåŠ¡å™¨ã€‚å‹¾é€‰è¦éš RedisExcel ä¸€èµ·ç§»é™¤çš„é¡¹ã€‚%né»˜è®¤ä¸ç§»é™¤ä»»ä½•å†…å®¹ã€‚
-chinesesimplified.UninstServersSubtitle=ä¹Ÿç§»é™¤å…¼å®¹ Redis çš„æœåŠ¡å™¨å—ï¼Ÿ
-chinesesimplified.UninstServersTitle=æœåŠ¡å™¨
-chinesesimplified.UpgradeConfigKept=å‘çŽ°å·²æœ‰çš„ RedisExcel.json å¹¶äºˆä»¥ä¿ç•™ï¼ˆæœªè¦†ç›–æ‚¨çš„è®¾ç½®ï¼‰ã€‚%n%nè¿™æ˜¯ä¸€æ¬¡é‡å¤§æ›´æ–°ï¼šé…ç½®æ ¼å¼å·²æ›´æ”¹ã€‚å¦‚æžœè¯¥æ–‡ä»¶ä½¿ç”¨æ—§æ ¼å¼ï¼Œåœ¨è¿ç§»ä¹‹å‰æ¯ä¸ªå•å…ƒæ ¼éƒ½ä¼šæ˜¾ç¤º #CONFIG é”™è¯¯ã€‚%n%nè¯·è¿è¡Œ Validate-Config.cmdï¼ˆæˆ–åœ¨ Excel ä¸­ä½¿ç”¨ =RedisCheckConfigFile()ï¼‰ï¼Œå¹¶å‚é˜… README çš„ â€œMigrating from the old shapeâ€ ä¸€èŠ‚ã€‚
+chinesesimplified.ServerNameWslRedis=Redis（WSL）
+chinesesimplified.ServerNameWslValkey=Valkey（WSL）
+chinesesimplified.ServerNone=否 - 我已有服务器（或稍后设置）
+chinesesimplified.ServerPageDesc=RedisExcel 需要 Redis（或 Valkey）服务器。如果还没有，请选择一个选项。先安装服务器，再安装 RedisExcel，最后测试连接。Docker 最简单。
+chinesesimplified.ServerPageSubtitle=现在安装兼容 Redis 的服务器吗？
+chinesesimplified.ServerPageTitle=Redis 服务器
+chinesesimplified.ServerWslRedis=是 - WSL2：Redis（apt install redis-server）
+chinesesimplified.ServerWslValkey=是 - WSL2：Valkey（apt install valkey-server）
+chinesesimplified.SummaryAdvanced=高级
+chinesesimplified.SummaryIntro=这些值将保存到安装文件夹中的 RedisExcel.json。
+chinesesimplified.SummaryLabel=连接
+chinesesimplified.SummaryMode=模式
+chinesesimplified.SummaryPageSubtitle=查看将写入 RedisExcel.json 的连接
+chinesesimplified.SummaryPageTitle=您的设置
+chinesesimplified.SummarySimple=简易
+chinesesimplified.TaskAutoLoadDesc=注册加载项，使 Excel 自动加载（推荐）
+chinesesimplified.TaskConfigDesc=在安装文件夹中创建 RedisExcel.json（主机设置）
+chinesesimplified.TaskNlogDesc=创建 NLog.config（在加载项旁写入日志文件）
+chinesesimplified.TestFailed=已安装，但 %1 处的 Redis 未响应 PING。%n请确认服务器正在运行（docker ps），如果它在其他主机/端口，请调整 RedisExcel.json。
+chinesesimplified.TestOk=全部就绪！%1 处的 Redis 已响应。%n%n使用方法：打开 Excel。如果加载项未自动加载，请转到 文件 > 选项 > 加载项 > 转到... > 浏览...，选择 %2 中的 .xll。
+chinesesimplified.UninstKeepConfig=保留您的 RedisExcel.json 设置吗？
+chinesesimplified.UninstServerFound=%1  [已找到]
+chinesesimplified.UninstServerFailed=?????? %1(??? %2)???????????
+chinesesimplified.UninstServersDesc=在此计算机上发现了这些服务器。勾选要随 RedisExcel 一起移除的项。%n默认不移除任何内容。
+chinesesimplified.UninstServersSubtitle=也移除兼容 Redis 的服务器吗？
+chinesesimplified.UninstServersTitle=服务器
+chinesesimplified.UpgradeConfigKept=发现已有的 RedisExcel.json 并予以保留（未覆盖您的设置）。%n%n这是一次重大更新：配置格式已更改。如果该文件使用旧格式，在迁移之前每个单元格都会显示 #CONFIG 错误。%n%n请运行 Validate-Config.cmd（或在 Excel 中使用 =RedisCheckConfigFile()），并参阅 README 的 “Migrating from the old shape” 一节。
 
 ; ---- chinesetraditional ----
-chinesetraditional.AdvPageDesc=é€™å°±æ˜¯å®Œæ•´çš„ RedisExcel.jsonï¼Œå¯ç›´æŽ¥ç·¨è¼¯ï¼šæ¯å€‹éµéƒ½å·²é å¡«é è¨­å€¼èˆ‡ç°¡çŸ­è¨»è§£ã€‚å¢žç›Šé›†æŽ¥å— // è¨»è§£ï¼Œå› æ­¤å¯ä»¥ä¿ç•™ã€‚å¯åœ¨æ­¤ä¿®æ”¹ä¸»æ©Ÿã€åˆ¥åã€å¯«å…¥æ¨¡å¼ã€ConflationMsã€AsyncWritesâ€”â€”å…¨éƒ½åœ¨æ­¤ã€‚
-chinesetraditional.AdvPageTitle=é€²éšŽé€£ç·š
-chinesetraditional.ConfigWriteFailed=ç„¡æ³•å¯«å…¥ %1ã€‚è«‹ä¾ç¯„ä¾‹ï¼ˆRedisExcel.jsonï¼‰æ‰‹å‹•å»ºç«‹ã€‚
-chinesetraditional.ConnHost=ä¸»æ©Ÿï¼ˆæˆ– host:portï¼‰ï¼š
-chinesetraditional.ConnPageDesc=ä½¿ç”¨é è¨­å€¼ï¼ˆlocalhost:6379ï¼‰è«‹æŒ‰ã€Œä¸‹ä¸€æ­¥ã€ã€‚ä¹‹å¾Œå¯ç·¨è¼¯ RedisExcel.json ä¿®æ”¹ã€‚
-chinesetraditional.ConnPageSubtitle=RedisExcel æ‡‰é€£ç·šåˆ°ä½•è™•ï¼Ÿ
-chinesetraditional.ConnPageTitle=Redis é€£ç·š
-chinesetraditional.ConnPassword=å¯†ç¢¼ï¼ˆé¸å¡«ï¼‰ï¼š
-chinesetraditional.ConnPort=é€£æŽ¥åŸ ï¼š
-chinesetraditional.FinishedText=RedisExcel å·²å®‰è£æ–¼ï¼š%n%2%n%nè‹¥å¢žç›Šé›†æœªè‡ªå‹•è¼‰å…¥ï¼Œè«‹åœ¨ Excel ä¸­å•Ÿç”¨ï¼š%næª”æ¡ˆ > é¸é … > å¢žç›Šé›† > å‰å¾€... > ç€è¦½...ï¼Œé¸æ“‡ RedisExcel64-packed.xllï¼ˆ32 ä½å…ƒ Office è«‹ç”¨ RedisExcel-packed.xllï¼‰ã€‚%n%næŽ¥è‘—åœ¨å„²å­˜æ ¼ä¸­è©¦è©¦ =RedisUDFGet("preco_btc")ã€‚
-chinesetraditional.GroupConfig=è¨­å®šï¼š
-chinesetraditional.GroupExcel=Excelï¼š
-chinesetraditional.HostRequired=è«‹è¼¸å…¥ Redis ä¸»æ©Ÿï¼ˆä¾‹å¦‚ localhostï¼‰ã€‚
-chinesetraditional.IconUninstall=è§£é™¤å®‰è£ {#AppName}
-chinesetraditional.ModeAdvanced=é€²éšŽ - è¨­å®šè³‡æ–™åº«ã€SSLã€å¯«å…¥æ¨¡å¼èˆ‡æ›´æ–°å¾®èª¿
-chinesetraditional.ModePageDesc=ç°¡æ˜“åªè©¢å•ä¼ºæœå™¨ä½å€ã€‚é€²éšŽå¯è¨­å®šè³‡æ–™åº«ã€SSL/TLSã€å¯«å…¥æ¨¡å¼èˆ‡å³æ™‚æ›´æ–°å¾®èª¿ã€‚ä¹‹å¾Œéš¨æ™‚å¯ç·¨è¼¯ RedisExcel.jsonï¼ˆæˆ–åŸ·è¡Œ Validate-Config.cmdï¼‰ã€‚
-chinesetraditional.ModePageSubtitle=ç°¡æ˜“æˆ–é€²éšŽå®‰è£ï¼Ÿ
-chinesetraditional.ModePageTitle=å®‰è£æ¨¡å¼
-chinesetraditional.ModeSimple=ç°¡æ˜“ - åƒ… Redis ä½å€ï¼ˆå»ºè­°ï¼‰
-chinesetraditional.OptionsOpenExcel=çµæŸæ™‚é–‹å•Ÿç¯„ä¾‹ RedisExcel æ´»é ç°¿
-chinesetraditional.OptionsPageDesc=å®‰è£ç¨‹å¼æœƒåœ¨çµæŸæ™‚æ¸¬è©¦é€£ç·šã€‚å¯é¸æ“‡é–‹å•Ÿç¯„ä¾‹ Excel æ´»é ç°¿ä»¥å±•ç¤ºå…¶é‹ä½œæ–¹å¼ã€‚
-chinesetraditional.OptionsPageSubtitle=å³å°‡å®Œæˆ
-chinesetraditional.OptionsPageTitle=é¡å¤–æª¢æŸ¥
-chinesetraditional.ServerDockerRedis=æ˜¯ - Dockerï¼šRedisï¼ˆredis:latestï¼‰
-chinesetraditional.ServerDockerValkey=æ˜¯ - Dockerï¼šValkeyï¼ˆvalkey/valkey:latestï¼‰
-chinesetraditional.ServerFailed=ç„¡æ³•è‡ªå‹•è¨­å®š %1ï¼ˆçµæŸç¢¼ %2ï¼‰ã€‚%næ‚¨å¯ä»¥ç¨å¾Œå®‰è£ä¼ºæœå™¨ï¼Œä¸¦åœ¨ RedisExcel.json ä¸­æŒ‡å‘å®ƒã€‚
-chinesetraditional.ServerMemurai=æ˜¯ - Memuraiï¼ˆWindows åŽŸç”Ÿæœå‹™ï¼Œéœ€è¦ç³»çµ±ç®¡ç†å“¡æ¬Šé™ï¼‰
-chinesetraditional.ServerNameDockerRedis=Redisï¼ˆDockerï¼‰
-chinesetraditional.ServerNameDockerValkey=Valkeyï¼ˆDockerï¼‰
-chinesetraditional.ServerNameGeneric=ä¼ºæœå™¨
+chinesetraditional.AdvPageDesc=這就是完整的 RedisExcel.json，可直接編輯：每個鍵都已預填預設值與簡短註解。增益集接受 // 註解，因此可以保留。可在此修改主機、別名、寫入模式、ConflationMs、AsyncWrites——全都在此。
+chinesetraditional.AdvPageTitle=進階連線
+chinesetraditional.ConfigWriteFailed=無法寫入 %1。請依範例（RedisExcel.json）手動建立。
+chinesetraditional.ConnHost=主機（或 host:port）：
+chinesetraditional.ConnPageDesc=使用預設值（localhost:6379）請按「下一步」。之後可編輯 RedisExcel.json 修改。
+chinesetraditional.ConnPageSubtitle=RedisExcel 應連線到何處？
+chinesetraditional.ConnPageTitle=Redis 連線
+chinesetraditional.ConnPassword=密碼（選填）：
+chinesetraditional.ConnPort=連接埠：
+chinesetraditional.FinishedText=RedisExcel 已安裝於：%n%2%n%n若增益集未自動載入，請在 Excel 中啟用：%n檔案 > 選項 > 增益集 > 前往... > 瀏覽...，選擇 RedisExcel64-packed.xll（32 位元 Office 請用 RedisExcel-packed.xll）。%n%n接著在儲存格中試試 =RedisUDFGet("preco_btc")。
+chinesetraditional.GroupConfig=設定：
+chinesetraditional.GroupExcel=Excel：
+chinesetraditional.HostRequired=請輸入 Redis 主機（例如 localhost）。
+chinesetraditional.IconUninstall=解除安裝 {#AppName}
+chinesetraditional.ModeAdvanced=進階 - 設定資料庫、SSL、寫入模式與更新微調
+chinesetraditional.ModePageDesc=簡易只詢問伺服器位址。進階可設定資料庫、SSL/TLS、寫入模式與即時更新微調。之後隨時可編輯 RedisExcel.json（或執行 Validate-Config.cmd）。
+chinesetraditional.ModePageSubtitle=簡易或進階安裝？
+chinesetraditional.ModePageTitle=安裝模式
+chinesetraditional.ModeSimple=簡易 - 僅 Redis 位址（建議）
+chinesetraditional.OptionsOpenExcel=結束時開啟範例 RedisExcel 活頁簿
+chinesetraditional.OptionsPageDesc=安裝程式會在結束時測試連線。可選擇開啟範例 Excel 活頁簿以展示其運作方式。
+chinesetraditional.OptionsPageSubtitle=即將完成
+chinesetraditional.OptionsPageTitle=額外檢查
+chinesetraditional.ServerDockerRedis=是 - Docker：Redis（redis:latest）
+chinesetraditional.ServerDockerValkey=是 - Docker：Valkey（valkey/valkey:latest）
+chinesetraditional.ServerFailed=無法自動設定 %1（結束碼 %2）。%n您可以稍後安裝伺服器，並在 RedisExcel.json 中指向它。
+chinesetraditional.ServerMemurai=是 - Memurai（Windows 原生服務，需要系統管理員權限）
+chinesetraditional.ServerNameDockerRedis=Redis（Docker）
+chinesetraditional.ServerNameDockerValkey=Valkey（Docker）
+chinesetraditional.ServerNameGeneric=伺服器
 chinesetraditional.ServerNameMemurai=Memurai
-chinesetraditional.ServerNameWslRedis=Redisï¼ˆWSLï¼‰
-chinesetraditional.ServerNameWslValkey=Valkeyï¼ˆWSLï¼‰
-chinesetraditional.ServerNone=å¦ - æˆ‘å·²æœ‰ä¼ºæœå™¨ï¼ˆæˆ–ç¨å¾Œè¨­å®šï¼‰
-chinesetraditional.ServerPageDesc=RedisExcel éœ€è¦ Redisï¼ˆæˆ– Valkeyï¼‰ä¼ºæœå™¨ã€‚å¦‚æžœé‚„æ²’æœ‰ï¼Œè«‹é¸æ“‡ä¸€å€‹é¸é …ã€‚æœƒå…ˆå®‰è£ä¼ºæœå™¨ï¼Œå†å®‰è£ RedisExcelï¼Œæœ€å¾Œæ¸¬è©¦é€£ç·šã€‚Docker æœ€ç°¡å–®ã€‚
-chinesetraditional.ServerPageSubtitle=ç¾åœ¨å®‰è£ç›¸å®¹æ–¼ Redis çš„ä¼ºæœå™¨å—Žï¼Ÿ
-chinesetraditional.ServerPageTitle=Redis ä¼ºæœå™¨
-chinesetraditional.ServerWslRedis=æ˜¯ - WSL2ï¼šRedisï¼ˆapt install redis-serverï¼‰
-chinesetraditional.ServerWslValkey=æ˜¯ - WSL2ï¼šValkeyï¼ˆapt install valkey-serverï¼‰
-chinesetraditional.SummaryAdvanced=é€²éšŽ
-chinesetraditional.SummaryIntro=é€™äº›å€¼å°‡å„²å­˜åˆ°å®‰è£è³‡æ–™å¤¾ä¸­çš„ RedisExcel.jsonã€‚
-chinesetraditional.SummaryLabel=é€£ç·š
-chinesetraditional.SummaryMode=æ¨¡å¼
-chinesetraditional.SummaryPageSubtitle=æª¢é–±å°‡å¯«å…¥ RedisExcel.json çš„é€£ç·š
-chinesetraditional.SummaryPageTitle=æ‚¨çš„è¨­å®š
-chinesetraditional.SummarySimple=ç°¡æ˜“
-chinesetraditional.TaskAutoLoadDesc=è¨»å†Šå¢žç›Šé›†ï¼Œè®“ Excel è‡ªå‹•è¼‰å…¥ï¼ˆå»ºè­°ï¼‰
-chinesetraditional.TaskConfigDesc=åœ¨å®‰è£è³‡æ–™å¤¾ä¸­å»ºç«‹ RedisExcel.jsonï¼ˆä¸»æ©Ÿè¨­å®šï¼‰
-chinesetraditional.TaskNlogDesc=å»ºç«‹ NLog.configï¼ˆåœ¨å¢žç›Šé›†æ—å¯«å…¥è¨˜éŒ„æª”ï¼‰
-chinesetraditional.TestFailed=å·²å®‰è£ï¼Œä½† %1 çš„ Redis æœªå›žæ‡‰ PINGã€‚%nè«‹ç¢ºèªä¼ºæœå™¨æ­£åœ¨åŸ·è¡Œï¼ˆdocker psï¼‰ï¼Œè‹¥åœ¨å…¶ä»–ä¸»æ©Ÿ/é€£æŽ¥åŸ ï¼Œè«‹èª¿æ•´ RedisExcel.jsonã€‚
-chinesetraditional.TestOk=å…¨éƒ¨å°±ç·’ï¼%1 çš„ Redis å·²å›žæ‡‰ã€‚%n%nä½¿ç”¨æ–¹æ³•ï¼šé–‹å•Ÿ Excelã€‚è‹¥å¢žç›Šé›†æœªè‡ªå‹•è¼‰å…¥ï¼Œè«‹å‰å¾€ æª”æ¡ˆ > é¸é … > å¢žç›Šé›† > å‰å¾€... > ç€è¦½...ï¼Œé¸æ“‡ %2 ä¸­çš„ .xllã€‚
-chinesetraditional.UninstKeepConfig=ä¿ç•™æ‚¨çš„ RedisExcel.json è¨­å®šå—Žï¼Ÿ
-chinesetraditional.UninstServerFound=%1  [å·²æ‰¾åˆ°]
-chinesetraditional.UninstServerFailed=無法自動移除 %1（結束碼 %2）。如有需要請手動移除。
-chinesetraditional.UninstServersDesc=åœ¨æ­¤é›»è…¦ä¸Šæ‰¾åˆ°é€™äº›ä¼ºæœå™¨ã€‚å‹¾é¸è¦éš¨ RedisExcel ä¸€ä½µç§»é™¤çš„é …ç›®ã€‚%né è¨­ä¸ç§»é™¤ä»»ä½•é …ç›®ã€‚
-chinesetraditional.UninstServersSubtitle=ä¹Ÿç§»é™¤ç›¸å®¹æ–¼ Redis çš„ä¼ºæœå™¨å—Žï¼Ÿ
-chinesetraditional.UninstServersTitle=ä¼ºæœå™¨
-chinesetraditional.UpgradeConfigKept=æ‰¾åˆ°ç¾æœ‰çš„ RedisExcel.json ä¸¦äºˆä»¥ä¿ç•™ï¼ˆæœªè¦†å¯«æ‚¨çš„è¨­å®šï¼‰ã€‚%n%né€™æ˜¯ä¸€æ¬¡é‡å¤§æ›´æ–°ï¼šè¨­å®šæ ¼å¼å·²è®Šæ›´ã€‚è‹¥è©²æª”æ¡ˆä½¿ç”¨èˆŠæ ¼å¼ï¼Œåœ¨ç§»è½‰ä¹‹å‰æ¯å€‹å„²å­˜æ ¼éƒ½æœƒé¡¯ç¤º #CONFIG éŒ¯èª¤ã€‚%n%nè«‹åŸ·è¡Œ Validate-Config.cmdï¼ˆæˆ–åœ¨ Excel ä¸­ä½¿ç”¨ =RedisCheckConfigFile()ï¼‰ï¼Œä¸¦åƒé–± README çš„ã€ŒMigrating from the old shapeã€ä¸€ç¯€ã€‚
+chinesetraditional.ServerNameWslRedis=Redis（WSL）
+chinesetraditional.ServerNameWslValkey=Valkey（WSL）
+chinesetraditional.ServerNone=否 - 我已有伺服器（或稍後設定）
+chinesetraditional.ServerPageDesc=RedisExcel 需要 Redis（或 Valkey）伺服器。如果還沒有，請選擇一個選項。會先安裝伺服器，再安裝 RedisExcel，最後測試連線。Docker 最簡單。
+chinesetraditional.ServerPageSubtitle=現在安裝相容於 Redis 的伺服器嗎？
+chinesetraditional.ServerPageTitle=Redis 伺服器
+chinesetraditional.ServerWslRedis=是 - WSL2：Redis（apt install redis-server）
+chinesetraditional.ServerWslValkey=是 - WSL2：Valkey（apt install valkey-server）
+chinesetraditional.SummaryAdvanced=進階
+chinesetraditional.SummaryIntro=這些值將儲存到安裝資料夾中的 RedisExcel.json。
+chinesetraditional.SummaryLabel=連線
+chinesetraditional.SummaryMode=模式
+chinesetraditional.SummaryPageSubtitle=檢閱將寫入 RedisExcel.json 的連線
+chinesetraditional.SummaryPageTitle=您的設定
+chinesetraditional.SummarySimple=簡易
+chinesetraditional.TaskAutoLoadDesc=註冊增益集，讓 Excel 自動載入（建議）
+chinesetraditional.TaskConfigDesc=在安裝資料夾中建立 RedisExcel.json（主機設定）
+chinesetraditional.TaskNlogDesc=建立 NLog.config（在增益集旁寫入記錄檔）
+chinesetraditional.TestFailed=已安裝，但 %1 的 Redis 未回應 PING。%n請確認伺服器正在執行（docker ps），若在其他主機/連接埠，請調整 RedisExcel.json。
+chinesetraditional.TestOk=全部就緒！%1 的 Redis 已回應。%n%n使用方法：開啟 Excel。若增益集未自動載入，請前往 檔案 > 選項 > 增益集 > 前往... > 瀏覽...，選擇 %2 中的 .xll。
+chinesetraditional.UninstKeepConfig=保留您的 RedisExcel.json 設定嗎？
+chinesetraditional.UninstServerFound=%1  [已找到]
+chinesetraditional.UninstServerFailed=?????? %1(??? %2)???????????
+chinesetraditional.UninstServersDesc=在此電腦上找到這些伺服器。勾選要隨 RedisExcel 一併移除的項目。%n預設不移除任何項目。
+chinesetraditional.UninstServersSubtitle=也移除相容於 Redis 的伺服器嗎？
+chinesetraditional.UninstServersTitle=伺服器
+chinesetraditional.UpgradeConfigKept=找到現有的 RedisExcel.json 並予以保留（未覆寫您的設定）。%n%n這是一次重大更新：設定格式已變更。若該檔案使用舊格式，在移轉之前每個儲存格都會顯示 #CONFIG 錯誤。%n%n請執行 Validate-Config.cmd（或在 Excel 中使用 =RedisCheckConfigFile()），並參閱 README 的「Migrating from the old shape」一節。
 
 ; ---- russian ----
-russian.AdvPageDesc=Ð­Ñ‚Ð¾ Ð²ÐµÑÑŒ Ð²Ð°Ñˆ RedisExcel.json, Ð³Ð¾Ñ‚Ð¾Ð²Ñ‹Ð¹ Ðº Ð¿Ñ€Ð°Ð²ÐºÐµ: ÐºÐ°Ð¶Ð´Ñ‹Ð¹ ÐºÐ»ÑŽÑ‡ ÑƒÐ¶Ðµ Ð·Ð°Ð¿Ð¾Ð»Ð½ÐµÐ½ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸ÐµÐ¼ Ð¿Ð¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ Ð¸ ÐºÐ¾Ñ€Ð¾Ñ‚ÐºÐ¸Ð¼ ÐºÐ¾Ð¼Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸ÐµÐ¼. ÐÐ´Ð´-Ð¸Ð½ Ð¿Ñ€Ð¸Ð½Ð¸Ð¼Ð°ÐµÑ‚ ÐºÐ¾Ð¼Ð¼ÐµÐ½Ñ‚Ð°Ñ€Ð¸Ð¸ //, Ð¿Ð¾ÑÑ‚Ð¾Ð¼Ñƒ Ð¸Ñ… Ð¼Ð¾Ð¶Ð½Ð¾ Ð¾ÑÑ‚Ð°Ð²Ð¸Ñ‚ÑŒ. ÐœÐµÐ½ÑÐ¹Ñ‚Ðµ Ñ…Ð¾ÑÑ‚Ñ‹, Ð¿ÑÐµÐ²Ð´Ð¾Ð½Ð¸Ð¼Ñ‹, Ñ€ÐµÐ¶Ð¸Ð¼ Ð·Ð°Ð¿Ð¸ÑÐ¸, ConflationMs, AsyncWrites - Ð²ÑÑ‘ Ð·Ð´ÐµÑÑŒ.
-russian.AdvPageTitle=Ð”Ð¾Ð¿Ð¾Ð»Ð½Ð¸Ñ‚ÐµÐ»ÑŒÐ½Ð¾Ðµ Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ
-russian.ConfigWriteFailed=ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð·Ð°Ð¿Ð¸ÑÐ°Ñ‚ÑŒ %1. Ð¡Ð¾Ð·Ð´Ð°Ð¹Ñ‚Ðµ ÐµÐ³Ð¾ Ð²Ñ€ÑƒÑ‡Ð½ÑƒÑŽ Ð¿Ð¾ Ð¾Ð±Ñ€Ð°Ð·Ñ†Ñƒ (RedisExcel.json).
-russian.ConnHost=Ð¥Ð¾ÑÑ‚ (Ð¸Ð»Ð¸ host:port):
-russian.ConnPageDesc=ÐÐ°Ð¶Ð¼Ð¸Ñ‚Ðµ Â«Ð”Ð°Ð»ÐµÐµÂ» Ð´Ð»Ñ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ñ Ð¿Ð¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ (localhost:6379). ÐŸÐ¾Ð·Ð¶Ðµ ÑÑ‚Ð¾ Ð¼Ð¾Ð¶Ð½Ð¾ Ð¸Ð·Ð¼ÐµÐ½Ð¸Ñ‚ÑŒ Ð² RedisExcel.json.
-russian.ConnPageSubtitle=ÐšÑƒÐ´Ð° Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡Ð°Ñ‚ÑŒÑÑ RedisExcel?
-russian.ConnPageTitle=ÐŸÐ¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ðº Redis
-russian.ConnPassword=ÐŸÐ°Ñ€Ð¾Ð»ÑŒ (Ð½ÐµÐ¾Ð±ÑÐ·Ð°Ñ‚ÐµÐ»ÑŒÐ½Ð¾):
-russian.ConnPort=ÐŸÐ¾Ñ€Ñ‚:
-russian.FinishedText=RedisExcel ÑƒÑÑ‚Ð°Ð½Ð¾Ð²Ð»ÐµÐ½ Ð²:%n%2%n%nÐ•ÑÐ»Ð¸ Ð°Ð´Ð´-Ð¸Ð½ Ð½Ðµ Ð·Ð°Ð³Ñ€ÑƒÐ¶Ð°ÐµÑ‚ÑÑ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸, Ð²ÐºÐ»ÑŽÑ‡Ð¸Ñ‚Ðµ ÐµÐ³Ð¾ Ð² Excel:%nÐ¤Ð°Ð¹Ð» > ÐŸÐ°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ > ÐÐ°Ð´ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ > ÐŸÐµÑ€ÐµÐ¹Ñ‚Ð¸... > ÐžÐ±Ð·Ð¾Ñ€... Ð¸ Ð²Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ RedisExcel64-packed.xll (Ð¸Ð»Ð¸ RedisExcel-packed.xll Ð´Ð»Ñ 32-Ð±Ð¸Ñ‚Ð½Ð¾Ð³Ð¾ Office).%n%nÐ—Ð°Ñ‚ÐµÐ¼ Ð¿Ð¾Ð¿Ñ€Ð¾Ð±ÑƒÐ¹Ñ‚Ðµ =RedisUDFGet("preco_btc") Ð² ÑÑ‡ÐµÐ¹ÐºÐµ.
-russian.GroupConfig=ÐšÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ñ:
+russian.AdvPageDesc=Это весь ваш RedisExcel.json, готовый к правке: каждый ключ уже заполнен значением по умолчанию и коротким комментарием. Адд-ин принимает комментарии //, поэтому их можно оставить. Меняйте хосты, псевдонимы, режим записи, ConflationMs, AsyncWrites - всё здесь.
+russian.AdvPageTitle=Дополнительное подключение
+russian.ConfigWriteFailed=Не удалось записать %1. Создайте его вручную по образцу (RedisExcel.json).
+russian.ConnHost=Хост (или host:port):
+russian.ConnPageDesc=Нажмите «Далее» для значения по умолчанию (localhost:6379). Позже это можно изменить в RedisExcel.json.
+russian.ConnPageSubtitle=Куда подключаться RedisExcel?
+russian.ConnPageTitle=Подключение к Redis
+russian.ConnPassword=Пароль (необязательно):
+russian.ConnPort=Порт:
+russian.FinishedText=RedisExcel установлен в:%n%2%n%nЕсли адд-ин не загружается автоматически, включите его в Excel:%nФайл > Параметры > Надстройки > Перейти... > Обзор... и выберите RedisExcel64-packed.xll (или RedisExcel-packed.xll для 32-битного Office).%n%nЗатем попробуйте =RedisUDFGet("preco_btc") в ячейке.
+russian.GroupConfig=Конфигурация:
 russian.GroupExcel=Excel:
-russian.HostRequired=Ð’Ð²ÐµÐ´Ð¸Ñ‚Ðµ Ñ…Ð¾ÑÑ‚ Redis (Ð½Ð°Ð¿Ñ€Ð¸Ð¼ÐµÑ€, localhost).
-russian.IconUninstall=Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ {#AppName}
-russian.ModeAdvanced=Ð Ð°ÑÑˆÐ¸Ñ€ÐµÐ½Ð½Ñ‹Ð¹ - Ð±Ð°Ð·Ð° Ð´Ð°Ð½Ð½Ñ‹Ñ…, SSL, Ñ€ÐµÐ¶Ð¸Ð¼ Ð·Ð°Ð¿Ð¸ÑÐ¸ Ð¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ° Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ð¹
-russian.ModePageDesc=ÐŸÑ€Ð¾ÑÑ‚Ð¾Ð¹ Ð·Ð°Ð¿Ñ€Ð°ÑˆÐ¸Ð²Ð°ÐµÑ‚ Ñ‚Ð¾Ð»ÑŒÐºÐ¾ Ð°Ð´Ñ€ÐµÑ ÑÐµÑ€Ð²ÐµÑ€Ð°. Ð Ð°ÑÑˆÐ¸Ñ€ÐµÐ½Ð½Ñ‹Ð¹ Ð¿Ð¾Ð·Ð²Ð¾Ð»ÑÐµÑ‚ Ð·Ð°Ð´Ð°Ñ‚ÑŒ Ð±Ð°Ð·Ñƒ Ð´Ð°Ð½Ð½Ñ‹Ñ…, SSL/TLS, Ñ€ÐµÐ¶Ð¸Ð¼ Ð·Ð°Ð¿Ð¸ÑÐ¸ Ð¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÑƒ Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ð¹ Ð² Ñ€ÐµÐ°Ð»ÑŒÐ½Ð¾Ð¼ Ð²Ñ€ÐµÐ¼ÐµÐ½Ð¸. RedisExcel.json Ð²ÑÐµÐ³Ð´Ð° Ð¼Ð¾Ð¶Ð½Ð¾ Ð¾Ñ‚Ñ€ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ Ð¿Ð¾Ð·Ð¶Ðµ (Ð¸Ð»Ð¸ Ð·Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚ÑŒ Validate-Config.cmd).
-russian.ModePageSubtitle=ÐŸÑ€Ð¾ÑÑ‚Ð°Ñ Ð¸Ð»Ð¸ Ñ€Ð°ÑÑˆÐ¸Ñ€ÐµÐ½Ð½Ð°Ñ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ°?
-russian.ModePageTitle=Ð ÐµÐ¶Ð¸Ð¼ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸
-russian.ModeSimple=ÐŸÑ€Ð¾ÑÑ‚Ð¾Ð¹ - Ñ‚Ð¾Ð»ÑŒÐºÐ¾ Ð°Ð´Ñ€ÐµÑ Redis (Ñ€ÐµÐºÐ¾Ð¼ÐµÐ½Ð´ÑƒÐµÑ‚ÑÑ)
-russian.OptionsOpenExcel=ÐžÑ‚ÐºÑ€Ñ‹Ñ‚ÑŒ Ð¿Ñ€Ð¸Ð¼ÐµÑ€ ÐºÐ½Ð¸Ð³Ð¸ RedisExcel Ð² ÐºÐ¾Ð½Ñ†Ðµ
-russian.OptionsPageDesc=Ð£ÑÑ‚Ð°Ð½Ð¾Ð²Ñ‰Ð¸Ðº Ð¿Ñ€Ð¾Ð²ÐµÑ€Ð¸Ñ‚ Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ð¿Ð¾ Ð·Ð°Ð²ÐµÑ€ÑˆÐµÐ½Ð¸Ð¸. ÐŸÑ€Ð¸ Ð¶ÐµÐ»Ð°Ð½Ð¸Ð¸ Ð¾Ñ‚ÐºÑ€Ð¾ÐµÑ‚ÑÑ Ð¿Ñ€Ð¸Ð¼ÐµÑ€ ÐºÐ½Ð¸Ð³Ð¸ Excel Ñ Ð´ÐµÐ¼Ð¾Ð½ÑÑ‚Ñ€Ð°Ñ†Ð¸ÐµÐ¹ Ñ€Ð°Ð±Ð¾Ñ‚Ñ‹.
-russian.OptionsPageSubtitle=ÐŸÐ¾Ñ‡Ñ‚Ð¸ Ð³Ð¾Ñ‚Ð¾Ð²Ð¾
-russian.OptionsPageTitle=Ð”Ð¾Ð¿Ð¾Ð»Ð½Ð¸Ñ‚ÐµÐ»ÑŒÐ½Ñ‹Ðµ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÐºÐ¸
-russian.ServerDockerRedis=Ð”Ð° - Docker: Redis (redis:latest)
-russian.ServerDockerValkey=Ð”Ð° - Docker: Valkey (valkey/valkey:latest)
-russian.ServerFailed=ÐÐµ ÑƒÐ´Ð°Ð»Ð¾ÑÑŒ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¸Ñ‚ÑŒ %1 Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸ (ÐºÐ¾Ð´ %2).%nÐ’Ñ‹ Ð¼Ð¾Ð¶ÐµÑ‚Ðµ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ ÑÐµÑ€Ð²ÐµÑ€ Ð¿Ð¾Ð·Ð¶Ðµ Ð¸ ÑƒÐºÐ°Ð·Ð°Ñ‚ÑŒ ÐµÐ³Ð¾ Ð² RedisExcel.json.
-russian.ServerMemurai=Ð”Ð° - Memurai (ÑÐ»ÑƒÐ¶Ð±Ð° Windows, Ð½ÑƒÐ¶Ð½Ñ‹ Ð¿Ñ€Ð°Ð²Ð° Ð°Ð´Ð¼Ð¸Ð½Ð¸ÑÑ‚Ñ€Ð°Ñ‚Ð¾Ñ€Ð°)
+russian.HostRequired=Введите хост Redis (например, localhost).
+russian.IconUninstall=Удалить {#AppName}
+russian.ModeAdvanced=Расширенный - база данных, SSL, режим записи и настройка обновлений
+russian.ModePageDesc=Простой запрашивает только адрес сервера. Расширенный позволяет задать базу данных, SSL/TLS, режим записи и настройку обновлений в реальном времени. RedisExcel.json всегда можно отредактировать позже (или запустить Validate-Config.cmd).
+russian.ModePageSubtitle=Простая или расширенная установка?
+russian.ModePageTitle=Режим установки
+russian.ModeSimple=Простой - только адрес Redis (рекомендуется)
+russian.OptionsOpenExcel=Открыть пример книги RedisExcel в конце
+russian.OptionsPageDesc=Установщик проверит подключение по завершении. При желании откроется пример книги Excel с демонстрацией работы.
+russian.OptionsPageSubtitle=Почти готово
+russian.OptionsPageTitle=Дополнительные проверки
+russian.ServerDockerRedis=Да - Docker: Redis (redis:latest)
+russian.ServerDockerValkey=Да - Docker: Valkey (valkey/valkey:latest)
+russian.ServerFailed=Не удалось настроить %1 автоматически (код %2).%nВы можете установить сервер позже и указать его в RedisExcel.json.
+russian.ServerMemurai=Да - Memurai (служба Windows, нужны права администратора)
 russian.ServerNameDockerRedis=Redis (Docker)
 russian.ServerNameDockerValkey=Valkey (Docker)
-russian.ServerNameGeneric=ÑÐµÑ€Ð²ÐµÑ€
+russian.ServerNameGeneric=сервер
 russian.ServerNameMemurai=Memurai
 russian.ServerNameWslRedis=Redis (WSL)
 russian.ServerNameWslValkey=Valkey (WSL)
-russian.ServerNone=ÐÐµÑ‚ - ÑÐµÑ€Ð²ÐµÑ€ ÑƒÐ¶Ðµ ÐµÑÑ‚ÑŒ (Ð¸Ð»Ð¸ Ð½Ð°ÑÑ‚Ñ€Ð¾ÑŽ Ð¿Ð¾Ð·Ð¶Ðµ)
-russian.ServerPageDesc=RedisExcel Ð½ÑƒÐ¶ÐµÐ½ ÑÐµÑ€Ð²ÐµÑ€ Redis (Ð¸Ð»Ð¸ Valkey). Ð’Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚, ÐµÑÐ»Ð¸ ÐµÐ³Ð¾ ÐµÑ‰Ñ‘ Ð½ÐµÑ‚. Ð¡Ð½Ð°Ñ‡Ð°Ð»Ð° ÑƒÑÑ‚Ð°Ð½Ð°Ð²Ð»Ð¸Ð²Ð°ÐµÑ‚ÑÑ ÑÐµÑ€Ð²ÐµÑ€, Ð·Ð°Ñ‚ÐµÐ¼ RedisExcel, Ð° Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ Ð¿Ñ€Ð¾Ð²ÐµÑ€ÑÐµÑ‚ÑÑ Ð² ÐºÐ¾Ð½Ñ†Ðµ. Docker - ÑÐ°Ð¼Ñ‹Ð¹ Ð¿Ñ€Ð¾ÑÑ‚Ð¾Ð¹ Ð²Ð°Ñ€Ð¸Ð°Ð½Ñ‚.
-russian.ServerPageSubtitle=Ð£ÑÑ‚Ð°Ð½Ð¾Ð²Ð¸Ñ‚ÑŒ ÑÐµÐ¹Ñ‡Ð°Ñ ÑÐ¾Ð²Ð¼ÐµÑÑ‚Ð¸Ð¼Ñ‹Ð¹ Ñ Redis ÑÐµÑ€Ð²ÐµÑ€?
-russian.ServerPageTitle=Ð¡ÐµÑ€Ð²ÐµÑ€ Redis
-russian.ServerWslRedis=Ð”Ð° - WSL2: Redis (apt install redis-server)
-russian.ServerWslValkey=Ð”Ð° - WSL2: Valkey (apt install valkey-server)
-russian.SummaryAdvanced=Ð Ð°ÑÑˆÐ¸Ñ€ÐµÐ½Ð½Ñ‹Ð¹
-russian.SummaryIntro=Ð­Ñ‚Ð¸ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ñ Ð±ÑƒÐ´ÑƒÑ‚ ÑÐ¾Ñ…Ñ€Ð°Ð½ÐµÐ½Ñ‹ Ð² RedisExcel.json Ð² Ð¿Ð°Ð¿ÐºÐµ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸.
-russian.SummaryLabel=ÐŸÐ¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ
-russian.SummaryMode=Ð ÐµÐ¶Ð¸Ð¼
-russian.SummaryPageSubtitle=ÐŸÑ€Ð¾Ð²ÐµÑ€ÑŒÑ‚Ðµ Ð¿Ð¾Ð´ÐºÐ»ÑŽÑ‡ÐµÐ½Ð¸Ðµ, ÐºÐ¾Ñ‚Ð¾Ñ€Ð¾Ðµ Ð±ÑƒÐ´ÐµÑ‚ Ð·Ð°Ð¿Ð¸ÑÐ°Ð½Ð¾ Ð² RedisExcel.json
-russian.SummaryPageTitle=Ð’Ð°ÑˆÐ¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸
-russian.SummarySimple=ÐŸÑ€Ð¾ÑÑ‚Ð¾Ð¹
-russian.TaskAutoLoadDesc=Ð—Ð°Ñ€ÐµÐ³Ð¸ÑÑ‚Ñ€Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ Ð°Ð´Ð´-Ð¸Ð½, Ñ‡Ñ‚Ð¾Ð±Ñ‹ Excel Ð·Ð°Ð³Ñ€ÑƒÐ¶Ð°Ð» ÐµÐ³Ð¾ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸ (Ñ€ÐµÐºÐ¾Ð¼ÐµÐ½Ð´ÑƒÐµÑ‚ÑÑ)
-russian.TaskConfigDesc=Ð¡Ð¾Ð·Ð´Ð°Ñ‚ÑŒ RedisExcel.json Ð² Ð¿Ð°Ð¿ÐºÐµ ÑƒÑÑ‚Ð°Ð½Ð¾Ð²ÐºÐ¸ (Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ Ñ…Ð¾ÑÑ‚Ð°)
-russian.TaskNlogDesc=Ð¡Ð¾Ð·Ð´Ð°Ñ‚ÑŒ NLog.config (Ð¿Ð¸ÑÐ°Ñ‚ÑŒ Ð»Ð¾Ð³-Ñ„Ð°Ð¹Ð» Ñ€ÑÐ´Ð¾Ð¼ Ñ Ð°Ð´Ð´-Ð¸Ð½Ð¾Ð¼)
-russian.TestFailed=Ð£ÑÑ‚Ð°Ð½Ð¾Ð²Ð»ÐµÐ½Ð¾, Ð½Ð¾ Redis Ð¿Ð¾ Ð°Ð´Ñ€ÐµÑÑƒ %1 Ð½Ðµ Ð¾Ñ‚Ð²ÐµÑ‚Ð¸Ð» Ð½Ð° PING.%nÐŸÑ€Ð¾Ð²ÐµÑ€ÑŒÑ‚Ðµ, Ñ‡Ñ‚Ð¾ ÑÐµÑ€Ð²ÐµÑ€ Ð·Ð°Ð¿ÑƒÑ‰ÐµÐ½ (docker ps), Ð¸ Ð¿Ð¾Ð¿Ñ€Ð°Ð²ÑŒÑ‚Ðµ RedisExcel.json, ÐµÑÐ»Ð¸ Ð¾Ð½ Ð½Ð° Ð´Ñ€ÑƒÐ³Ð¾Ð¼ Ñ…Ð¾ÑÑ‚Ðµ/Ð¿Ð¾Ñ€Ñ‚Ñƒ.
-russian.TestOk=Ð“Ð¾Ñ‚Ð¾Ð²Ð¾! Redis Ð¾Ñ‚Ð²ÐµÑ‚Ð¸Ð» Ð¿Ð¾ Ð°Ð´Ñ€ÐµÑÑƒ %1.%n%nÐ§Ñ‚Ð¾Ð±Ñ‹ Ð½Ð°Ñ‡Ð°Ñ‚ÑŒ: Ð¾Ñ‚ÐºÑ€Ð¾Ð¹Ñ‚Ðµ Excel. Ð•ÑÐ»Ð¸ Ð°Ð´Ð´-Ð¸Ð½ Ð½Ðµ Ð·Ð°Ð³Ñ€ÑƒÐ¶Ð°ÐµÑ‚ÑÑ Ð°Ð²Ñ‚Ð¾Ð¼Ð°Ñ‚Ð¸Ñ‡ÐµÑÐºÐ¸, Ð¿ÐµÑ€ÐµÐ¹Ð´Ð¸Ñ‚Ðµ Ð² Ð¤Ð°Ð¹Ð» > ÐŸÐ°Ñ€Ð°Ð¼ÐµÑ‚Ñ€Ñ‹ > ÐÐ°Ð´ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ > ÐŸÐµÑ€ÐµÐ¹Ñ‚Ð¸... > ÐžÐ±Ð·Ð¾Ñ€... Ð¸ Ð²Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ .xll Ð² %2.
-russian.UninstKeepConfig=Ð¡Ð¾Ñ…Ñ€Ð°Ð½Ð¸Ñ‚ÑŒ Ð²Ð°ÑˆÐ¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ RedisExcel.json?
-russian.UninstServerFound=%1  [Ð½Ð°Ð¹Ð´ÐµÐ½Ð¾]
-russian.UninstServerFailed=Не удалось автоматически удалить %1 (код %2). Удалите вручную при необходимости.
-russian.UninstServersDesc=Ð­Ñ‚Ð¸ ÑÐµÑ€Ð²ÐµÑ€Ñ‹ Ð½Ð°Ð¹Ð´ÐµÐ½Ñ‹ Ð½Ð° ÐºÐ¾Ð¼Ð¿ÑŒÑŽÑ‚ÐµÑ€Ðµ. ÐžÑ‚Ð¼ÐµÑ‚ÑŒÑ‚Ðµ Ñ‚Ðµ, ÐºÐ¾Ñ‚Ð¾Ñ€Ñ‹Ðµ Ð½ÑƒÐ¶Ð½Ð¾ ÑƒÐ´Ð°Ð»Ð¸Ñ‚ÑŒ Ð²Ð¼ÐµÑÑ‚Ðµ Ñ RedisExcel.%nÐŸÐ¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ ÐÐ˜Ð§Ð•Ð“Ðž Ð½Ðµ ÑƒÐ´Ð°Ð»ÑÐµÑ‚ÑÑ.
-russian.UninstServersSubtitle=Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ Ñ‚Ð°ÐºÐ¶Ðµ ÑÐ¾Ð²Ð¼ÐµÑÑ‚Ð¸Ð¼Ñ‹Ðµ Ñ Redis ÑÐµÑ€Ð²ÐµÑ€Ñ‹?
-russian.UninstServersTitle=Ð¡ÐµÑ€Ð²ÐµÑ€Ñ‹
-russian.UpgradeConfigKept=ÐÐ°Ð¹Ð´ÐµÐ½ ÑÑƒÑ‰ÐµÑÑ‚Ð²ÑƒÑŽÑ‰Ð¸Ð¹ RedisExcel.json, Ð¾Ð½ ÑÐ¾Ñ…Ñ€Ð°Ð½Ñ‘Ð½ (Ð²Ð°ÑˆÐ¸ Ð½Ð°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸ Ð½Ðµ Ð¿ÐµÑ€ÐµÐ·Ð°Ð¿Ð¸ÑÐ°Ð½Ñ‹).%n%nÐ­Ñ‚Ð¾ ÐšÐ Ð£ÐŸÐÐžÐ• Ð¾Ð±Ð½Ð¾Ð²Ð»ÐµÐ½Ð¸Ðµ: Ñ„Ð¾Ñ€Ð¼Ð°Ñ‚ ÐºÐ¾Ð½Ñ„Ð¸Ð³ÑƒÑ€Ð°Ñ†Ð¸Ð¸ Ð¸Ð·Ð¼ÐµÐ½Ð¸Ð»ÑÑ. Ð•ÑÐ»Ð¸ Ñ„Ð°Ð¹Ð» Ð² ÑÑ‚Ð°Ñ€Ð¾Ð¼ Ñ„Ð¾Ñ€Ð¼Ð°Ñ‚Ðµ, Ð² ÐºÐ°Ð¶Ð´Ð¾Ð¹ ÑÑ‡ÐµÐ¹ÐºÐµ Ð±ÑƒÐ´ÐµÑ‚ Ð¾ÑˆÐ¸Ð±ÐºÐ° #CONFIG, Ð¿Ð¾ÐºÐ° ÐµÐ³Ð¾ Ð½Ðµ Ð¿ÐµÑ€ÐµÐ½ÐµÑÑ‚Ð¸.%n%nÐ—Ð°Ð¿ÑƒÑÑ‚Ð¸Ñ‚Ðµ Validate-Config.cmd (Ð¸Ð»Ð¸ =RedisCheckConfigFile() Ð² Excel) Ð¸ ÑÐ¼. Ñ€Ð°Ð·Ð´ÐµÐ» README "Migrating from the old shape".
+russian.ServerNone=Нет - сервер уже есть (или настрою позже)
+russian.ServerPageDesc=RedisExcel нужен сервер Redis (или Valkey). Выберите вариант, если его ещё нет. Сначала устанавливается сервер, затем RedisExcel, а подключение проверяется в конце. Docker - самый простой вариант.
+russian.ServerPageSubtitle=Установить сейчас совместимый с Redis сервер?
+russian.ServerPageTitle=Сервер Redis
+russian.ServerWslRedis=Да - WSL2: Redis (apt install redis-server)
+russian.ServerWslValkey=Да - WSL2: Valkey (apt install valkey-server)
+russian.SummaryAdvanced=Расширенный
+russian.SummaryIntro=Эти значения будут сохранены в RedisExcel.json в папке установки.
+russian.SummaryLabel=Подключение
+russian.SummaryMode=Режим
+russian.SummaryPageSubtitle=Проверьте подключение, которое будет записано в RedisExcel.json
+russian.SummaryPageTitle=Ваши настройки
+russian.SummarySimple=Простой
+russian.TaskAutoLoadDesc=Зарегистрировать адд-ин, чтобы Excel загружал его автоматически (рекомендуется)
+russian.TaskConfigDesc=Создать RedisExcel.json в папке установки (настройки хоста)
+russian.TaskNlogDesc=Создать NLog.config (писать лог-файл рядом с адд-ином)
+russian.TestFailed=Установлено, но Redis по адресу %1 не ответил на PING.%nПроверьте, что сервер запущен (docker ps), и поправьте RedisExcel.json, если он на другом хосте/порту.
+russian.TestOk=Готово! Redis ответил по адресу %1.%n%nЧтобы начать: откройте Excel. Если адд-ин не загружается автоматически, перейдите в Файл > Параметры > Надстройки > Перейти... > Обзор... и выберите .xll в %2.
+russian.UninstKeepConfig=Сохранить ваши настройки RedisExcel.json?
+russian.UninstServerFound=%1  [найдено]
+russian.UninstServerFailed=?? ??????? ????????????? ??????? %1 (??? %2). ??????? ??????? ??? ?????????????.
+russian.UninstServersDesc=Эти серверы найдены на компьютере. Отметьте те, которые нужно удалить вместе с RedisExcel.%nПо умолчанию НИЧЕГО не удаляется.
+russian.UninstServersSubtitle=Удалить также совместимые с Redis серверы?
+russian.UninstServersTitle=Серверы
+russian.UpgradeConfigKept=Найден существующий RedisExcel.json, он сохранён (ваши настройки не перезаписаны).%n%nЭто КРУПНОЕ обновление: формат конфигурации изменился. Если файл в старом формате, в каждой ячейке будет ошибка #CONFIG, пока его не перенести.%n%nЗапустите Validate-Config.cmd (или =RedisCheckConfigFile() в Excel) и см. раздел README "Migrating from the old shape".
 
 ; ---- french ----
-french.AdvPageDesc=Voici tout votre RedisExcel.json, prÃªt Ã  modifier : chaque clÃ© est prÃ©remplie avec sa valeur par dÃ©faut et un court commentaire. Le complÃ©ment accepte les commentaires //, vous pouvez donc les laisser. Modifiez les hÃ´tes, alias, mode d'Ã©criture, ConflationMs, AsyncWrites - tout est ici.
-french.AdvPageTitle=Connexion avancÃ©e
-french.ConfigWriteFailed=Impossible d'Ã©crire %1. CrÃ©ez-le manuellement Ã  partir de l'exemple (RedisExcel.json).
-french.ConnHost=HÃ´te (ou hÃ´te:port) :
-french.ConnPageDesc=Cliquez sur Suivant pour la valeur par dÃ©faut (localhost:6379). Vous pourrez la modifier plus tard en Ã©ditant RedisExcel.json.
-french.ConnPageSubtitle=OÃ¹ RedisExcel doit-il se connecter ?
+french.AdvPageDesc=Voici tout votre RedisExcel.json, prêt à modifier : chaque clé est préremplie avec sa valeur par défaut et un court commentaire. Le complément accepte les commentaires //, vous pouvez donc les laisser. Modifiez les hôtes, alias, mode d'écriture, ConflationMs, AsyncWrites - tout est ici.
+french.AdvPageTitle=Connexion avancée
+french.ConfigWriteFailed=Impossible d'écrire %1. Créez-le manuellement à partir de l'exemple (RedisExcel.json).
+french.ConnHost=Hôte (ou hôte:port) :
+french.ConnPageDesc=Cliquez sur Suivant pour la valeur par défaut (localhost:6379). Vous pourrez la modifier plus tard en éditant RedisExcel.json.
+french.ConnPageSubtitle=Où RedisExcel doit-il se connecter ?
 french.ConnPageTitle=Connexion Redis
 french.ConnPassword=Mot de passe (facultatif) :
 french.ConnPort=Port :
-french.FinishedText=RedisExcel est installÃ© dans :%n%2%n%nSi le complÃ©ment ne se charge pas automatiquement, activez-le dans Excel :%nFichier > Options > ComplÃ©ments > Atteindre... > Parcourir... et choisissez RedisExcel64-packed.xll (ou RedisExcel-packed.xll pour Office 32 bits).%n%nEssayez ensuite =RedisUDFGet("preco_btc") dans une cellule.
+french.FinishedText=RedisExcel est installé dans :%n%2%n%nSi le complément ne se charge pas automatiquement, activez-le dans Excel :%nFichier > Options > Compléments > Atteindre... > Parcourir... et choisissez RedisExcel64-packed.xll (ou RedisExcel-packed.xll pour Office 32 bits).%n%nEssayez ensuite =RedisUDFGet("preco_btc") dans une cellule.
 french.GroupConfig=Configuration :
 french.GroupExcel=Excel :
-french.HostRequired=Veuillez saisir un hÃ´te Redis (par exemple localhost).
-french.IconUninstall=DÃ©sinstaller {#AppName}
-french.ModeAdvanced=AvancÃ© - dÃ©finir la base de donnÃ©es, SSL, le mode d'Ã©criture et le rÃ©glage des mises Ã  jour
-french.ModePageDesc=Simple ne demande que l'adresse du serveur. AvancÃ© permet de dÃ©finir la base de donnÃ©es, SSL/TLS, le mode d'Ã©criture et le rÃ©glage des mises Ã  jour en temps rÃ©el. Vous pourrez toujours modifier RedisExcel.json plus tard (ou exÃ©cuter Validate-Config.cmd).
-french.ModePageSubtitle=Installation simple ou avancÃ©e ?
+french.HostRequired=Veuillez saisir un hôte Redis (par exemple localhost).
+french.IconUninstall=Désinstaller {#AppName}
+french.ModeAdvanced=Avancé - définir la base de données, SSL, le mode d'écriture et le réglage des mises à jour
+french.ModePageDesc=Simple ne demande que l'adresse du serveur. Avancé permet de définir la base de données, SSL/TLS, le mode d'écriture et le réglage des mises à jour en temps réel. Vous pourrez toujours modifier RedisExcel.json plus tard (ou exécuter Validate-Config.cmd).
+french.ModePageSubtitle=Installation simple ou avancée ?
 french.ModePageTitle=Mode d'installation
-french.ModeSimple=Simple - juste l'adresse Redis (recommandÃ©)
-french.OptionsOpenExcel=Ouvrir un classeur RedisExcel d'exemple Ã  la fin
-french.OptionsPageDesc=L'installateur teste la connexion Ã  la fin. Ouvrez Ã©ventuellement un classeur Excel d'exemple montrant son fonctionnement.
-french.OptionsPageSubtitle=Presque terminÃ©
-french.OptionsPageTitle=VÃ©rifications supplÃ©mentaires
+french.ModeSimple=Simple - juste l'adresse Redis (recommandé)
+french.OptionsOpenExcel=Ouvrir un classeur RedisExcel d'exemple à la fin
+french.OptionsPageDesc=L'installateur teste la connexion à la fin. Ouvrez éventuellement un classeur Excel d'exemple montrant son fonctionnement.
+french.OptionsPageSubtitle=Presque terminé
+french.OptionsPageTitle=Vérifications supplémentaires
 french.ServerDockerRedis=Oui - Docker : Redis (redis:latest)
 french.ServerDockerValkey=Oui - Docker : Valkey (valkey/valkey:latest)
 french.ServerFailed=Impossible de configurer %1 automatiquement (code %2).%nVous pouvez installer un serveur plus tard et le pointer dans RedisExcel.json.
@@ -463,119 +463,119 @@ french.ServerNameGeneric=le serveur
 french.ServerNameMemurai=Memurai
 french.ServerNameWslRedis=Redis (WSL)
 french.ServerNameWslValkey=Valkey (WSL)
-french.ServerNone=Non - j'ai dÃ©jÃ  un serveur (ou je le configurerai plus tard)
-french.ServerPageDesc=RedisExcel a besoin d'un serveur Redis (ou Valkey). Choisissez une option si vous n'en avez pas encore. Le serveur est installÃ© d'abord, puis RedisExcel, et la connexion est testÃ©e Ã  la fin. Docker est le plus simple.
+french.ServerNone=Non - j'ai déjà un serveur (ou je le configurerai plus tard)
+french.ServerPageDesc=RedisExcel a besoin d'un serveur Redis (ou Valkey). Choisissez une option si vous n'en avez pas encore. Le serveur est installé d'abord, puis RedisExcel, et la connexion est testée à la fin. Docker est le plus simple.
 french.ServerPageSubtitle=Voulez-vous installer un serveur compatible Redis maintenant ?
 french.ServerPageTitle=Serveur Redis
 french.ServerWslRedis=Oui - WSL2 : Redis (apt install redis-server)
 french.ServerWslValkey=Oui - WSL2 : Valkey (apt install valkey-server)
-french.SummaryAdvanced=AvancÃ©
-french.SummaryIntro=Ces valeurs seront enregistrÃ©es dans RedisExcel.json, dans le dossier d'installation.
+french.SummaryAdvanced=Avancé
+french.SummaryIntro=Ces valeurs seront enregistrées dans RedisExcel.json, dans le dossier d'installation.
 french.SummaryLabel=Connexion
 french.SummaryMode=Mode
-french.SummaryPageSubtitle=VÃ©rifiez la connexion qui sera Ã©crite dans RedisExcel.json
-french.SummaryPageTitle=Vos paramÃ¨tres
+french.SummaryPageSubtitle=Vérifiez la connexion qui sera écrite dans RedisExcel.json
+french.SummaryPageTitle=Vos paramètres
 french.SummarySimple=Simple
-french.TaskAutoLoadDesc=Enregistrer le complÃ©ment pour qu'Excel le charge automatiquement (recommandÃ©)
-french.TaskConfigDesc=CrÃ©er RedisExcel.json dans le dossier d'installation (paramÃ¨tres de l'hÃ´te)
-french.TaskNlogDesc=CrÃ©er NLog.config (Ã©crire un journal Ã  cÃ´tÃ© du complÃ©ment)
-french.TestFailed=InstallÃ©, mais le Redis Ã  %1 n'a pas rÃ©pondu Ã  un PING.%nVÃ©rifiez que le serveur est dÃ©marrÃ© (docker ps) et ajustez RedisExcel.json s'il est sur un autre hÃ´te/port.
-french.TestOk=Tout est prÃªt ! Redis a rÃ©pondu Ã  %1.%n%nPour l'utiliser : ouvrez Excel. Si le complÃ©ment ne se charge pas automatiquement, allez dans Fichier > Options > ComplÃ©ments > Atteindre... > Parcourir... et choisissez le .xll dans %2.
-french.UninstKeepConfig=Conserver vos paramÃ¨tres RedisExcel.json ?
-french.UninstServerFound=%1  [trouvÃ©]
+french.TaskAutoLoadDesc=Enregistrer le complément pour qu'Excel le charge automatiquement (recommandé)
+french.TaskConfigDesc=Créer RedisExcel.json dans le dossier d'installation (paramètres de l'hôte)
+french.TaskNlogDesc=Créer NLog.config (écrire un journal à côté du complément)
+french.TestFailed=Installé, mais le Redis à %1 n'a pas répondu à un PING.%nVérifiez que le serveur est démarré (docker ps) et ajustez RedisExcel.json s'il est sur un autre hôte/port.
+french.TestOk=Tout est prêt ! Redis a répondu à %1.%n%nPour l'utiliser : ouvrez Excel. Si le complément ne se charge pas automatiquement, allez dans Fichier > Options > Compléments > Atteindre... > Parcourir... et choisissez le .xll dans %2.
+french.UninstKeepConfig=Conserver vos paramètres RedisExcel.json ?
+french.UninstServerFound=%1  [trouvé]
 french.UninstServerFailed=Impossible de supprimer %1 automatiquement (code %2). Supprimez-le manuellement si besoin.
-french.UninstServersDesc=Ces serveurs ont Ã©tÃ© trouvÃ©s sur cette machine. Cochez ceux Ã  supprimer avec RedisExcel.%nPar dÃ©faut, RIEN n'est supprimÃ©.
+french.UninstServersDesc=Ces serveurs ont été trouvés sur cette machine. Cochez ceux à supprimer avec RedisExcel.%nPar défaut, RIEN n'est supprimé.
 french.UninstServersSubtitle=Supprimer aussi les serveurs compatibles Redis ?
 french.UninstServersTitle=Serveurs
-french.UpgradeConfigKept=Un RedisExcel.json existant a Ã©tÃ© trouvÃ© et conservÃ© (vos paramÃ¨tres n'ont pas Ã©tÃ© Ã©crasÃ©s).%n%nIl s'agit d'une MISE Ã€ JOUR MAJEURE : le format de configuration a changÃ©. Si ce fichier utilise l'ancien format, chaque cellule affichera une erreur #CONFIG jusqu'Ã  sa migration.%n%nExÃ©cutez Validate-Config.cmd (ou =RedisCheckConfigFile() dans Excel) et consultez la section README "Migrating from the old shape".
+french.UpgradeConfigKept=Un RedisExcel.json existant a été trouvé et conservé (vos paramètres n'ont pas été écrasés).%n%nIl s'agit d'une MISE À JOUR MAJEURE : le format de configuration a changé. Si ce fichier utilise l'ancien format, chaque cellule affichera une erreur #CONFIG jusqu'à sa migration.%n%nExécutez Validate-Config.cmd (ou =RedisCheckConfigFile() dans Excel) et consultez la section README "Migrating from the old shape".
 
 ; ---- korean ----
-korean.AdvPageDesc=ì´ê²ƒì€ íŽ¸ì§‘í•  ìˆ˜ ìžˆëŠ” ì „ì²´ RedisExcel.jsonìž…ë‹ˆë‹¤. ê° í‚¤ì—ëŠ” ê¸°ë³¸ê°’ê³¼ ì§§ì€ ì„¤ëª…ì´ ë¯¸ë¦¬ ì±„ì›Œì ¸ ìžˆìŠµë‹ˆë‹¤. ì¶”ê°€ ê¸°ëŠ¥ì€ // ì£¼ì„ì„ í—ˆìš©í•˜ë¯€ë¡œ ê·¸ëŒ€ë¡œ ë‘ì–´ë„ ë©ë‹ˆë‹¤. í˜¸ìŠ¤íŠ¸, ë³„ì¹­, ì“°ê¸° ëª¨ë“œ, ConflationMs, AsyncWritesë¥¼ ì—¬ê¸°ì„œ ë³€ê²½í•˜ì„¸ìš”.
-korean.AdvPageTitle=ê³ ê¸‰ ì—°ê²°
-korean.ConfigWriteFailed=%1ì„(ë¥¼) ì“¸ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. ì˜ˆì œ(RedisExcel.json)ë¥¼ ì°¸ê³ í•´ ìˆ˜ë™ìœ¼ë¡œ ë§Œë“œì„¸ìš”.
-korean.ConnHost=í˜¸ìŠ¤íŠ¸(ë˜ëŠ” host:port):
-korean.ConnPageDesc=ê¸°ë³¸ê°’(localhost:6379)ì´ë©´ ë‹¤ìŒì„ ëˆ„ë¥´ì„¸ìš”. ë‚˜ì¤‘ì— RedisExcel.jsonì„ íŽ¸ì§‘í•´ ë³€ê²½í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤.
-korean.ConnPageSubtitle=RedisExcelì´ ì–´ë””ì— ì—°ê²°í•´ì•¼ í•©ë‹ˆê¹Œ?
-korean.ConnPageTitle=Redis ì—°ê²°
-korean.ConnPassword=ë¹„ë°€ë²ˆí˜¸(ì„ íƒ):
-korean.ConnPort=í¬íŠ¸:
-korean.FinishedText=RedisExcelì´ ë‹¤ìŒ ìœ„ì¹˜ì— ì„¤ì¹˜ë˜ì—ˆìŠµë‹ˆë‹¤:%n%2%n%nì¶”ê°€ ê¸°ëŠ¥ì´ ìžë™ìœ¼ë¡œ ë¡œë“œë˜ì§€ ì•Šìœ¼ë©´ Excelì—ì„œ í™œì„±í™”í•˜ì„¸ìš”:%níŒŒì¼ > ì˜µì…˜ > ì¶”ê°€ ê¸°ëŠ¥ > ì´ë™... > ì°¾ì•„ë³´ê¸°...ì—ì„œ RedisExcel64-packed.xll(32ë¹„íŠ¸ OfficeëŠ” RedisExcel-packed.xll)ì„ ì„ íƒí•©ë‹ˆë‹¤.%n%nê·¸ëŸ° ë‹¤ìŒ ì…€ì— =RedisUDFGet("preco_btc")ë¥¼ ìž…ë ¥í•´ ë³´ì„¸ìš”.
-korean.GroupConfig=êµ¬ì„±:
+korean.AdvPageDesc=이것은 편집할 수 있는 전체 RedisExcel.json입니다. 각 키에는 기본값과 짧은 설명이 미리 채워져 있습니다. 추가 기능은 // 주석을 허용하므로 그대로 두어도 됩니다. 호스트, 별칭, 쓰기 모드, ConflationMs, AsyncWrites를 여기서 변경하세요.
+korean.AdvPageTitle=고급 연결
+korean.ConfigWriteFailed=%1을(를) 쓸 수 없습니다. 예제(RedisExcel.json)를 참고해 수동으로 만드세요.
+korean.ConnHost=호스트(또는 host:port):
+korean.ConnPageDesc=기본값(localhost:6379)이면 다음을 누르세요. 나중에 RedisExcel.json을 편집해 변경할 수 있습니다.
+korean.ConnPageSubtitle=RedisExcel이 어디에 연결해야 합니까?
+korean.ConnPageTitle=Redis 연결
+korean.ConnPassword=비밀번호(선택):
+korean.ConnPort=포트:
+korean.FinishedText=RedisExcel이 다음 위치에 설치되었습니다:%n%2%n%n추가 기능이 자동으로 로드되지 않으면 Excel에서 활성화하세요:%n파일 > 옵션 > 추가 기능 > 이동... > 찾아보기...에서 RedisExcel64-packed.xll(32비트 Office는 RedisExcel-packed.xll)을 선택합니다.%n%n그런 다음 셀에 =RedisUDFGet("preco_btc")를 입력해 보세요.
+korean.GroupConfig=구성:
 korean.GroupExcel=Excel:
-korean.HostRequired=Redis í˜¸ìŠ¤íŠ¸ë¥¼ ìž…ë ¥í•˜ì„¸ìš”(ì˜ˆ: localhost).
-korean.IconUninstall={#AppName} ì œê±°
-korean.ModeAdvanced=ê³ ê¸‰ - ë°ì´í„°ë² ì´ìŠ¤, SSL, ì“°ê¸° ëª¨ë“œ ë° ì—…ë°ì´íŠ¸ íŠœë‹ ì„¤ì •
-korean.ModePageDesc=ê°„ë‹¨ì€ ì„œë²„ ì£¼ì†Œë§Œ ë¬»ìŠµë‹ˆë‹¤. ê³ ê¸‰ì€ ë°ì´í„°ë² ì´ìŠ¤, SSL/TLS, ì“°ê¸° ëª¨ë“œ, ì‹¤ì‹œê°„ ì—…ë°ì´íŠ¸ íŠœë‹ì„ ì„¤ì •í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤. RedisExcel.jsonì€ ë‚˜ì¤‘ì— ì–¸ì œë“ ì§€ íŽ¸ì§‘í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤(Validate-Config.cmd ì‹¤í–‰ ê°€ëŠ¥).
-korean.ModePageSubtitle=ê°„ë‹¨ ë˜ëŠ” ê³ ê¸‰ ì„¤ì¹˜?
-korean.ModePageTitle=ì„¤ì¹˜ ëª¨ë“œ
-korean.ModeSimple=ê°„ë‹¨ - Redis ì£¼ì†Œë§Œ(ê¶Œìž¥)
-korean.OptionsOpenExcel=ë§ˆì§€ë§‰ì— ìƒ˜í”Œ RedisExcel í†µí•© ë¬¸ì„œ ì—´ê¸°
-korean.OptionsPageDesc=ì„¤ì¹˜ í”„ë¡œê·¸ëž¨ì´ ëë‚  ë•Œ ì—°ê²°ì„ í…ŒìŠ¤íŠ¸í•©ë‹ˆë‹¤. ì›í•˜ë©´ ìž‘ë™ì„ ë³´ì—¬ ì£¼ëŠ” ìƒ˜í”Œ Excel í†µí•© ë¬¸ì„œë¥¼ ì—½ë‹ˆë‹¤.
-korean.OptionsPageSubtitle=ê±°ì˜ ì™„ë£Œ
-korean.OptionsPageTitle=ì¶”ê°€ í™•ì¸
-korean.ServerDockerRedis=ì˜ˆ - Docker: Redis(redis:latest)
-korean.ServerDockerValkey=ì˜ˆ - Docker: Valkey(valkey/valkey:latest)
-korean.ServerFailed=%1ì„(ë¥¼) ìžë™ìœ¼ë¡œ ì„¤ì •í•˜ì§€ ëª»í–ˆìŠµë‹ˆë‹¤(ì¢…ë£Œ ì½”ë“œ %2).%në‚˜ì¤‘ì— ì„œë²„ë¥¼ ì„¤ì¹˜í•˜ê³  RedisExcel.jsonì—ì„œ ì§€ì •í•  ìˆ˜ ìžˆìŠµë‹ˆë‹¤.
-korean.ServerMemurai=ì˜ˆ - Memurai(ë„¤ì´í‹°ë¸Œ Windows ì„œë¹„ìŠ¤, ê´€ë¦¬ìž í•„ìš”)
+korean.HostRequired=Redis 호스트를 입력하세요(예: localhost).
+korean.IconUninstall={#AppName} 제거
+korean.ModeAdvanced=고급 - 데이터베이스, SSL, 쓰기 모드 및 업데이트 튜닝 설정
+korean.ModePageDesc=간단은 서버 주소만 묻습니다. 고급은 데이터베이스, SSL/TLS, 쓰기 모드, 실시간 업데이트 튜닝을 설정할 수 있습니다. RedisExcel.json은 나중에 언제든지 편집할 수 있습니다(Validate-Config.cmd 실행 가능).
+korean.ModePageSubtitle=간단 또는 고급 설치?
+korean.ModePageTitle=설치 모드
+korean.ModeSimple=간단 - Redis 주소만(권장)
+korean.OptionsOpenExcel=마지막에 샘플 RedisExcel 통합 문서 열기
+korean.OptionsPageDesc=설치 프로그램이 끝날 때 연결을 테스트합니다. 원하면 작동을 보여 주는 샘플 Excel 통합 문서를 엽니다.
+korean.OptionsPageSubtitle=거의 완료
+korean.OptionsPageTitle=추가 확인
+korean.ServerDockerRedis=예 - Docker: Redis(redis:latest)
+korean.ServerDockerValkey=예 - Docker: Valkey(valkey/valkey:latest)
+korean.ServerFailed=%1을(를) 자동으로 설정하지 못했습니다(종료 코드 %2).%n나중에 서버를 설치하고 RedisExcel.json에서 지정할 수 있습니다.
+korean.ServerMemurai=예 - Memurai(네이티브 Windows 서비스, 관리자 필요)
 korean.ServerNameDockerRedis=Redis(Docker)
 korean.ServerNameDockerValkey=Valkey(Docker)
-korean.ServerNameGeneric=ì„œë²„
+korean.ServerNameGeneric=서버
 korean.ServerNameMemurai=Memurai
 korean.ServerNameWslRedis=Redis(WSL)
 korean.ServerNameWslValkey=Valkey(WSL)
-korean.ServerNone=ì•„ë‹ˆìš” - ì´ë¯¸ ì„œë²„ê°€ ìžˆìŠµë‹ˆë‹¤(ë˜ëŠ” ë‚˜ì¤‘ì— ì„¤ì •)
-korean.ServerPageDesc=RedisExcelì—ëŠ” Redis(ë˜ëŠ” Valkey) ì„œë²„ê°€ í•„ìš”í•©ë‹ˆë‹¤. ì•„ì§ ì—†ìœ¼ë©´ ì˜µì…˜ì„ ì„ íƒí•˜ì„¸ìš”. ì„œë²„ë¥¼ ë¨¼ì € ì„¤ì¹˜í•œ ë‹¤ìŒ RedisExcelì„ ì„¤ì¹˜í•˜ê³  ë§ˆì§€ë§‰ì— ì—°ê²°ì„ í…ŒìŠ¤íŠ¸í•©ë‹ˆë‹¤. Dockerê°€ ê°€ìž¥ ê°„ë‹¨í•©ë‹ˆë‹¤.
-korean.ServerPageSubtitle=ì§€ê¸ˆ Redis í˜¸í™˜ ì„œë²„ë¥¼ ì„¤ì¹˜í•˜ì‹œê² ìŠµë‹ˆê¹Œ?
-korean.ServerPageTitle=Redis ì„œë²„
-korean.ServerWslRedis=ì˜ˆ - WSL2: Redis(apt install redis-server)
-korean.ServerWslValkey=ì˜ˆ - WSL2: Valkey(apt install valkey-server)
-korean.SummaryAdvanced=ê³ ê¸‰
-korean.SummaryIntro=ì´ ê°’ë“¤ì€ ì„¤ì¹˜ í´ë”ì˜ RedisExcel.jsonì— ì €ìž¥ë©ë‹ˆë‹¤.
-korean.SummaryLabel=ì—°ê²°
-korean.SummaryMode=ëª¨ë“œ
-korean.SummaryPageSubtitle=RedisExcel.jsonì— ê¸°ë¡ë  ì—°ê²°ì„ í™•ì¸í•˜ì„¸ìš”
-korean.SummaryPageTitle=ì„¤ì •
-korean.SummarySimple=ê°„ë‹¨
-korean.TaskAutoLoadDesc=Excelì´ ìžë™ìœ¼ë¡œ ë¡œë“œí•˜ë„ë¡ ì¶”ê°€ ê¸°ëŠ¥ ë“±ë¡(ê¶Œìž¥)
-korean.TaskConfigDesc=ì„¤ì¹˜ í´ë”ì— RedisExcel.json ìƒì„±(í˜¸ìŠ¤íŠ¸ ì„¤ì •)
-korean.TaskNlogDesc=NLog.config ìƒì„±(ì¶”ê°€ ê¸°ëŠ¥ ì˜†ì— ë¡œê·¸ íŒŒì¼ ê¸°ë¡)
-korean.TestFailed=ì„¤ì¹˜ë˜ì—ˆì§€ë§Œ %1ì˜ Redisê°€ PINGì— ì‘ë‹µí•˜ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤.%nì„œë²„ê°€ ì‹¤í–‰ ì¤‘ì¸ì§€ í™•ì¸í•˜ê³ (docker ps) ë‹¤ë¥¸ í˜¸ìŠ¤íŠ¸/í¬íŠ¸ë¼ë©´ RedisExcel.jsonì„ ì¡°ì •í•˜ì„¸ìš”.
-korean.TestOk=ì¤€ë¹„ ì™„ë£Œ! %1ì˜ Redisê°€ ì‘ë‹µí–ˆìŠµë‹ˆë‹¤.%n%nì‚¬ìš©ë²•: Excelì„ ì—¬ì„¸ìš”. ì¶”ê°€ ê¸°ëŠ¥ì´ ìžë™ìœ¼ë¡œ ë¡œë“œë˜ì§€ ì•Šìœ¼ë©´ íŒŒì¼ > ì˜µì…˜ > ì¶”ê°€ ê¸°ëŠ¥ > ì´ë™... > ì°¾ì•„ë³´ê¸°...ì—ì„œ %2ì˜ .xllì„ ì„ íƒí•˜ì„¸ìš”.
-korean.UninstKeepConfig=RedisExcel.json ì„¤ì •ì„ ìœ ì§€í•˜ì‹œê² ìŠµë‹ˆê¹Œ?
-korean.UninstServerFound=%1  [ë°œê²¬]
-korean.UninstServerFailed=%1을(를) 자동으로 제거하지 못했습니다(종료 코드 %2). 필요하면 수동으로 제거하세요.
-korean.UninstServersDesc=ì´ ì„œë²„ë“¤ì´ ì´ ì»´í“¨í„°ì—ì„œ ë°œê²¬ë˜ì—ˆìŠµë‹ˆë‹¤. RedisExcelê³¼ í•¨ê»˜ ì œê±°í•  í•­ëª©ì„ ì„ íƒí•˜ì„¸ìš”.%nê¸°ë³¸ì ìœ¼ë¡œ ì•„ë¬´ê²ƒë„ ì œê±°ë˜ì§€ ì•ŠìŠµë‹ˆë‹¤.
-korean.UninstServersSubtitle=Redis í˜¸í™˜ ì„œë²„ë„ ì œê±°í•˜ì‹œê² ìŠµë‹ˆê¹Œ?
-korean.UninstServersTitle=ì„œë²„
-korean.UpgradeConfigKept=ê¸°ì¡´ RedisExcel.jsonì„ ì°¾ì•„ ìœ ì§€í–ˆìŠµë‹ˆë‹¤(ì„¤ì •ì´ ë®ì–´ì“°ì´ì§€ ì•Šì•˜ìŠµë‹ˆë‹¤).%n%nì´ê²ƒì€ ì£¼ìš” ì—…ë°ì´íŠ¸ìž…ë‹ˆë‹¤: êµ¬ì„± í˜•ì‹ì´ ë³€ê²½ë˜ì—ˆìŠµë‹ˆë‹¤. í•´ë‹¹ íŒŒì¼ì´ ì´ì „ í˜•ì‹ì´ë©´ ë§ˆì´ê·¸ë ˆì´ì…˜í•  ë•Œê¹Œì§€ ëª¨ë“  ì…€ì— #CONFIG ì˜¤ë¥˜ê°€ í‘œì‹œë©ë‹ˆë‹¤.%n%nValidate-Config.cmd(ë˜ëŠ” Excelì—ì„œ =RedisCheckConfigFile())ë¥¼ ì‹¤í–‰í•˜ê³  READMEì˜ "Migrating from the old shape" ì„¹ì…˜ì„ ì°¸ê³ í•˜ì„¸ìš”.
+korean.ServerNone=아니요 - 이미 서버가 있습니다(또는 나중에 설정)
+korean.ServerPageDesc=RedisExcel에는 Redis(또는 Valkey) 서버가 필요합니다. 아직 없으면 옵션을 선택하세요. 서버를 먼저 설치한 다음 RedisExcel을 설치하고 마지막에 연결을 테스트합니다. Docker가 가장 간단합니다.
+korean.ServerPageSubtitle=지금 Redis 호환 서버를 설치하시겠습니까?
+korean.ServerPageTitle=Redis 서버
+korean.ServerWslRedis=예 - WSL2: Redis(apt install redis-server)
+korean.ServerWslValkey=예 - WSL2: Valkey(apt install valkey-server)
+korean.SummaryAdvanced=고급
+korean.SummaryIntro=이 값들은 설치 폴더의 RedisExcel.json에 저장됩니다.
+korean.SummaryLabel=연결
+korean.SummaryMode=모드
+korean.SummaryPageSubtitle=RedisExcel.json에 기록될 연결을 확인하세요
+korean.SummaryPageTitle=설정
+korean.SummarySimple=간단
+korean.TaskAutoLoadDesc=Excel이 자동으로 로드하도록 추가 기능 등록(권장)
+korean.TaskConfigDesc=설치 폴더에 RedisExcel.json 생성(호스트 설정)
+korean.TaskNlogDesc=NLog.config 생성(추가 기능 옆에 로그 파일 기록)
+korean.TestFailed=설치되었지만 %1의 Redis가 PING에 응답하지 않았습니다.%n서버가 실행 중인지 확인하고(docker ps) 다른 호스트/포트라면 RedisExcel.json을 조정하세요.
+korean.TestOk=준비 완료! %1의 Redis가 응답했습니다.%n%n사용법: Excel을 여세요. 추가 기능이 자동으로 로드되지 않으면 파일 > 옵션 > 추가 기능 > 이동... > 찾아보기...에서 %2의 .xll을 선택하세요.
+korean.UninstKeepConfig=RedisExcel.json 설정을 유지하시겠습니까?
+korean.UninstServerFound=%1  [발견]
+korean.UninstServerFailed=%1?(?) ???? ???? ?????(?? ?? %2). ???? ???? ?????.
+korean.UninstServersDesc=이 서버들이 이 컴퓨터에서 발견되었습니다. RedisExcel과 함께 제거할 항목을 선택하세요.%n기본적으로 아무것도 제거되지 않습니다.
+korean.UninstServersSubtitle=Redis 호환 서버도 제거하시겠습니까?
+korean.UninstServersTitle=서버
+korean.UpgradeConfigKept=기존 RedisExcel.json을 찾아 유지했습니다(설정이 덮어쓰이지 않았습니다).%n%n이것은 주요 업데이트입니다: 구성 형식이 변경되었습니다. 해당 파일이 이전 형식이면 마이그레이션할 때까지 모든 셀에 #CONFIG 오류가 표시됩니다.%n%nValidate-Config.cmd(또는 Excel에서 =RedisCheckConfigFile())를 실행하고 README의 "Migrating from the old shape" 섹션을 참고하세요.
 
 ; ---- german ----
-german.AdvPageDesc=Dies ist Ihre gesamte RedisExcel.json, bereit zum Bearbeiten: jeder SchlÃ¼ssel ist mit seinem Standardwert und einem kurzen Kommentar vorbelegt. Das Add-in akzeptiert //-Kommentare, Sie kÃ¶nnen sie also stehen lassen. Ã„ndern Sie Hosts, Aliase, Schreibmodus, ConflationMs, AsyncWrites - alles hier.
+german.AdvPageDesc=Dies ist Ihre gesamte RedisExcel.json, bereit zum Bearbeiten: jeder Schlüssel ist mit seinem Standardwert und einem kurzen Kommentar vorbelegt. Das Add-in akzeptiert //-Kommentare, Sie können sie also stehen lassen. Ändern Sie Hosts, Aliase, Schreibmodus, ConflationMs, AsyncWrites - alles hier.
 german.AdvPageTitle=Erweiterte Verbindung
 german.ConfigWriteFailed=%1 konnte nicht geschrieben werden. Erstellen Sie es manuell nach dem Beispiel (RedisExcel.json).
 german.ConnHost=Host (oder host:port):
-german.ConnPageDesc=Klicken Sie auf Weiter fÃ¼r den Standard (localhost:6379). Sie kÃ¶nnen dies spÃ¤ter in RedisExcel.json Ã¤ndern.
+german.ConnPageDesc=Klicken Sie auf Weiter für den Standard (localhost:6379). Sie können dies später in RedisExcel.json ändern.
 german.ConnPageSubtitle=Womit soll sich RedisExcel verbinden?
 german.ConnPageTitle=Redis-Verbindung
 german.ConnPassword=Passwort (optional):
 german.ConnPort=Port:
-german.FinishedText=RedisExcel ist installiert in:%n%2%n%nWenn das Add-in nicht automatisch geladen wird, aktivieren Sie es in Excel:%nDatei > Optionen > Add-Ins > Gehe zu... > Durchsuchen... und wÃ¤hlen Sie RedisExcel64-packed.xll (oder RedisExcel-packed.xll fÃ¼r 32-Bit-Office).%n%nProbieren Sie dann =RedisUDFGet("preco_btc") in einer Zelle.
+german.FinishedText=RedisExcel ist installiert in:%n%2%n%nWenn das Add-in nicht automatisch geladen wird, aktivieren Sie es in Excel:%nDatei > Optionen > Add-Ins > Gehe zu... > Durchsuchen... und wählen Sie RedisExcel64-packed.xll (oder RedisExcel-packed.xll für 32-Bit-Office).%n%nProbieren Sie dann =RedisUDFGet("preco_btc") in einer Zelle.
 german.GroupConfig=Konfiguration:
 german.GroupExcel=Excel:
 german.HostRequired=Bitte geben Sie einen Redis-Host ein (z. B. localhost).
 german.IconUninstall={#AppName} deinstallieren
 german.ModeAdvanced=Erweitert - Datenbank, SSL, Schreibmodus und Update-Tuning festlegen
-german.ModePageDesc=Einfach fragt nur nach der Serveradresse. Erweitert erlaubt Datenbank, SSL/TLS, den Schreibmodus und das Echtzeit-Update-Tuning. Sie kÃ¶nnen RedisExcel.json spÃ¤ter jederzeit bearbeiten (oder Validate-Config.cmd ausfÃ¼hren).
+german.ModePageDesc=Einfach fragt nur nach der Serveradresse. Erweitert erlaubt Datenbank, SSL/TLS, den Schreibmodus und das Echtzeit-Update-Tuning. Sie können RedisExcel.json später jederzeit bearbeiten (oder Validate-Config.cmd ausführen).
 german.ModePageSubtitle=Einfache oder erweiterte Einrichtung?
 german.ModePageTitle=Einrichtungsmodus
 german.ModeSimple=Einfach - nur die Redis-Adresse (empfohlen)
-german.OptionsOpenExcel=Am Ende eine Beispiel-Arbeitsmappe RedisExcel Ã¶ffnen
-german.OptionsPageDesc=Der Installer testet die Verbindung am Ende. Optional wird eine Beispiel-Excel-Arbeitsmappe geÃ¶ffnet, die die Funktion zeigt.
+german.OptionsOpenExcel=Am Ende eine Beispiel-Arbeitsmappe RedisExcel öffnen
+german.OptionsPageDesc=Der Installer testet die Verbindung am Ende. Optional wird eine Beispiel-Excel-Arbeitsmappe geöffnet, die die Funktion zeigt.
 german.OptionsPageSubtitle=Fast fertig
-german.OptionsPageTitle=ZusÃ¤tzliche PrÃ¼fungen
+german.OptionsPageTitle=Zusätzliche Prüfungen
 german.ServerDockerRedis=Ja - Docker: Redis (redis:latest)
 german.ServerDockerValkey=Ja - Docker: Valkey (valkey/valkey:latest)
-german.ServerFailed=%1 konnte nicht automatisch eingerichtet werden (Code %2).%nSie kÃ¶nnen spÃ¤ter einen Server installieren und RedisExcel.json darauf verweisen.
+german.ServerFailed=%1 konnte nicht automatisch eingerichtet werden (Code %2).%nSie können später einen Server installieren und RedisExcel.json darauf verweisen.
 german.ServerMemurai=Ja - Memurai (nativer Windows-Dienst, Admin erforderlich)
 german.ServerNameDockerRedis=Redis (Docker)
 german.ServerNameDockerValkey=Valkey (Docker)
@@ -583,9 +583,9 @@ german.ServerNameGeneric=der Server
 german.ServerNameMemurai=Memurai
 german.ServerNameWslRedis=Redis (WSL)
 german.ServerNameWslValkey=Valkey (WSL)
-german.ServerNone=Nein - ich habe bereits einen Server (oder richte ihn spÃ¤ter ein)
-german.ServerPageDesc=RedisExcel benÃ¶tigt einen Redis- (oder Valkey-)Server. WÃ¤hlen Sie eine Option, wenn Sie noch keinen haben. Zuerst wird der Server installiert, dann RedisExcel, und am Ende wird die Verbindung getestet. Docker ist am einfachsten.
-german.ServerPageSubtitle=MÃ¶chten Sie jetzt einen Redis-kompatiblen Server installieren?
+german.ServerNone=Nein - ich habe bereits einen Server (oder richte ihn später ein)
+german.ServerPageDesc=RedisExcel benötigt einen Redis- (oder Valkey-)Server. Wählen Sie eine Option, wenn Sie noch keinen haben. Zuerst wird der Server installiert, dann RedisExcel, und am Ende wird die Verbindung getestet. Docker ist am einfachsten.
+german.ServerPageSubtitle=Möchten Sie jetzt einen Redis-kompatiblen Server installieren?
 german.ServerPageTitle=Redis-Server
 german.ServerWslRedis=Ja - WSL2: Redis (apt install redis-server)
 german.ServerWslValkey=Ja - WSL2: Valkey (apt install valkey-server)
@@ -593,81 +593,81 @@ german.SummaryAdvanced=Erweitert
 german.SummaryIntro=Diese Werte werden in RedisExcel.json im Installationsordner gespeichert.
 german.SummaryLabel=Verbindung
 german.SummaryMode=Modus
-german.SummaryPageSubtitle=PrÃ¼fen Sie die Verbindung, die in RedisExcel.json geschrieben wird
+german.SummaryPageSubtitle=Prüfen Sie die Verbindung, die in RedisExcel.json geschrieben wird
 german.SummaryPageTitle=Ihre Einstellungen
 german.SummarySimple=Einfach
-german.TaskAutoLoadDesc=Das Add-in registrieren, damit Excel es automatisch lÃ¤dt (empfohlen)
+german.TaskAutoLoadDesc=Das Add-in registrieren, damit Excel es automatisch lädt (empfohlen)
 german.TaskConfigDesc=RedisExcel.json im Installationsordner erstellen (Host-Einstellungen)
 german.TaskNlogDesc=NLog.config erstellen (Logdatei neben dem Add-in schreiben)
-german.TestFailed=Installiert, aber der Redis unter %1 hat nicht auf einen PING geantwortet.%nPrÃ¼fen Sie, ob der Server lÃ¤uft (docker ps), und passen Sie RedisExcel.json an, wenn er auf einem anderen Host/Port ist.
-german.TestOk=Alles bereit! Redis hat unter %1 geantwortet.%n%nSo verwenden Sie es: Excel Ã¶ffnen. Wenn das Add-in nicht automatisch geladen wird, gehen Sie zu Datei > Optionen > Add-Ins > Gehe zu... > Durchsuchen... und wÃ¤hlen Sie die .xll in %2.
+german.TestFailed=Installiert, aber der Redis unter %1 hat nicht auf einen PING geantwortet.%nPrüfen Sie, ob der Server läuft (docker ps), und passen Sie RedisExcel.json an, wenn er auf einem anderen Host/Port ist.
+german.TestOk=Alles bereit! Redis hat unter %1 geantwortet.%n%nSo verwenden Sie es: Excel öffnen. Wenn das Add-in nicht automatisch geladen wird, gehen Sie zu Datei > Optionen > Add-Ins > Gehe zu... > Durchsuchen... und wählen Sie die .xll in %2.
 german.UninstKeepConfig=Ihre RedisExcel.json-Einstellungen behalten?
 german.UninstServerFound=%1  [gefunden]
 german.UninstServerFailed=%1 konnte nicht automatisch entfernt werden (Code %2). Entfernen Sie es bei Bedarf manuell.
-german.UninstServersDesc=Diese Server wurden auf diesem Computer gefunden. Markieren Sie die, die mit RedisExcel entfernt werden sollen.%nStandardmÃ¤ÃŸig wird NICHTS entfernt.
+german.UninstServersDesc=Diese Server wurden auf diesem Computer gefunden. Markieren Sie die, die mit RedisExcel entfernt werden sollen.%nStandardmäßig wird NICHTS entfernt.
 german.UninstServersSubtitle=Auch Redis-kompatible Server entfernen?
 german.UninstServersTitle=Server
-german.UpgradeConfigKept=Eine vorhandene RedisExcel.json wurde gefunden und behalten (Ihre Einstellungen wurden nicht Ã¼berschrieben).%n%nDies ist ein GROSSES Update: Das Konfigurationsformat hat sich geÃ¤ndert. Wenn diese Datei das alte Format verwendet, zeigt jede Zelle einen #CONFIG-Fehler, bis sie migriert ist.%n%nFÃ¼hren Sie Validate-Config.cmd (oder =RedisCheckConfigFile() in Excel) aus und lesen Sie den README-Abschnitt "Migrating from the old shape".
+german.UpgradeConfigKept=Eine vorhandene RedisExcel.json wurde gefunden und behalten (Ihre Einstellungen wurden nicht überschrieben).%n%nDies ist ein GROSSES Update: Das Konfigurationsformat hat sich geändert. Wenn diese Datei das alte Format verwendet, zeigt jede Zelle einen #CONFIG-Fehler, bis sie migriert ist.%n%nFühren Sie Validate-Config.cmd (oder =RedisCheckConfigFile() in Excel) aus und lesen Sie den README-Abschnitt "Migrating from the old shape".
 
 ; ---- japanese ----
-japanese.AdvPageDesc=ã“ã‚Œã¯ RedisExcel.json ã®å…¨ä½“ã§ã™ã€‚å„ã‚­ãƒ¼ã«ã¯æ—¢å®šå€¤ã¨çŸ­ã„ã‚³ãƒ¡ãƒ³ãƒˆãŒã‚ã‚‰ã‹ã˜ã‚å…¥åŠ›ã•ã‚Œã¦ã„ã¾ã™ã€‚ã‚¢ãƒ‰ã‚¤ãƒ³ã¯ // ã‚³ãƒ¡ãƒ³ãƒˆã‚’å—ã‘ä»˜ã‘ã‚‹ã®ã§ãã®ã¾ã¾æ®‹ã›ã¾ã™ã€‚ãƒ›ã‚¹ãƒˆã€ã‚¨ã‚¤ãƒªã‚¢ã‚¹ã€æ›¸ãè¾¼ã¿ãƒ¢ãƒ¼ãƒ‰ã€ConflationMsã€AsyncWrites ã‚’ã“ã“ã§å¤‰æ›´ã§ãã¾ã™ã€‚
-japanese.AdvPageTitle=è©³ç´°æŽ¥ç¶š
-japanese.ConfigWriteFailed=%1 ã«æ›¸ãè¾¼ã‚ã¾ã›ã‚“ã§ã—ãŸã€‚ã‚µãƒ³ãƒ—ãƒ«ï¼ˆRedisExcel.jsonï¼‰ã‹ã‚‰æ‰‹å‹•ã§ä½œæˆã—ã¦ãã ã•ã„ã€‚
-japanese.ConnHost=ãƒ›ã‚¹ãƒˆï¼ˆã¾ãŸã¯ host:portï¼‰:
-japanese.ConnPageDesc=æ—¢å®šå€¤ï¼ˆlocalhost:6379ï¼‰ã§ã‚ˆã‘ã‚Œã°ã€Œæ¬¡ã¸ã€ã€‚å¾Œã§ RedisExcel.json ã‚’ç·¨é›†ã—ã¦å¤‰æ›´ã§ãã¾ã™ã€‚
-japanese.ConnPageSubtitle=RedisExcel ã¯ã©ã“ã«æŽ¥ç¶šã—ã¾ã™ã‹ï¼Ÿ
-japanese.ConnPageTitle=Redis æŽ¥ç¶š
-japanese.ConnPassword=ãƒ‘ã‚¹ãƒ¯ãƒ¼ãƒ‰ï¼ˆä»»æ„ï¼‰:
-japanese.ConnPort=ãƒãƒ¼ãƒˆ:
-japanese.FinishedText=RedisExcel ã¯æ¬¡ã«ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã•ã‚Œã¾ã—ãŸ:%n%2%n%nã‚¢ãƒ‰ã‚¤ãƒ³ãŒè‡ªå‹•ã§èª­ã¿è¾¼ã¾ã‚Œãªã„å ´åˆã¯ Excel ã§æœ‰åŠ¹åŒ–ã—ã¦ãã ã•ã„:%nãƒ•ã‚¡ã‚¤ãƒ« > ã‚ªãƒ—ã‚·ãƒ§ãƒ³ > ã‚¢ãƒ‰ã‚¤ãƒ³ > è¨­å®š... > å‚ç…§... ã§ RedisExcel64-packed.xllï¼ˆ32 ãƒ“ãƒƒãƒˆ Office ãªã‚‰ RedisExcel-packed.xllï¼‰ã‚’é¸æŠžã—ã¾ã™ã€‚%n%nãã®å¾Œã€ã‚»ãƒ«ã« =RedisUDFGet("preco_btc") ã‚’å…¥åŠ›ã—ã¦ã¿ã¦ãã ã•ã„ã€‚
-japanese.GroupConfig=æ§‹æˆ:
+japanese.AdvPageDesc=これは RedisExcel.json の全体です。各キーには既定値と短いコメントがあらかじめ入力されています。アドインは // コメントを受け付けるのでそのまま残せます。ホスト、エイリアス、書き込みモード、ConflationMs、AsyncWrites をここで変更できます。
+japanese.AdvPageTitle=詳細接続
+japanese.ConfigWriteFailed=%1 に書き込めませんでした。サンプル（RedisExcel.json）から手動で作成してください。
+japanese.ConnHost=ホスト（または host:port）:
+japanese.ConnPageDesc=既定値（localhost:6379）でよければ「次へ」。後で RedisExcel.json を編集して変更できます。
+japanese.ConnPageSubtitle=RedisExcel はどこに接続しますか？
+japanese.ConnPageTitle=Redis 接続
+japanese.ConnPassword=パスワード（任意）:
+japanese.ConnPort=ポート:
+japanese.FinishedText=RedisExcel は次にインストールされました:%n%2%n%nアドインが自動で読み込まれない場合は Excel で有効化してください:%nファイル > オプション > アドイン > 設定... > 参照... で RedisExcel64-packed.xll（32 ビット Office なら RedisExcel-packed.xll）を選択します。%n%nその後、セルに =RedisUDFGet("preco_btc") を入力してみてください。
+japanese.GroupConfig=構成:
 japanese.GroupExcel=Excel:
-japanese.HostRequired=Redis ãƒ›ã‚¹ãƒˆã‚’å…¥åŠ›ã—ã¦ãã ã•ã„ï¼ˆä¾‹: localhostï¼‰ã€‚
-japanese.IconUninstall={#AppName} ã‚’ã‚¢ãƒ³ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«
-japanese.ModeAdvanced=è©³ç´° - ãƒ‡ãƒ¼ã‚¿ãƒ™ãƒ¼ã‚¹ã€SSLã€æ›¸ãè¾¼ã¿ãƒ¢ãƒ¼ãƒ‰ã€æ›´æ–°ãƒãƒ¥ãƒ¼ãƒ‹ãƒ³ã‚°ã‚’è¨­å®š
-japanese.ModePageDesc=ç°¡æ˜“ã¯ã‚µãƒ¼ãƒãƒ¼ã‚¢ãƒ‰ãƒ¬ã‚¹ã®ã¿å°‹ã­ã¾ã™ã€‚è©³ç´°ã§ã¯ãƒ‡ãƒ¼ã‚¿ãƒ™ãƒ¼ã‚¹ã€SSL/TLSã€æ›¸ãè¾¼ã¿ãƒ¢ãƒ¼ãƒ‰ã€ãƒªã‚¢ãƒ«ã‚¿ã‚¤ãƒ æ›´æ–°ãƒãƒ¥ãƒ¼ãƒ‹ãƒ³ã‚°ã‚’è¨­å®šã§ãã¾ã™ã€‚RedisExcel.json ã¯å¾Œã§ã„ã¤ã§ã‚‚ç·¨é›†ã§ãã¾ã™ï¼ˆValidate-Config.cmd ã®å®Ÿè¡Œã§ã‚‚å¯ï¼‰ã€‚
-japanese.ModePageSubtitle=ç°¡æ˜“ã¾ãŸã¯è©³ç´°ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ï¼Ÿ
-japanese.ModePageTitle=ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ãƒ¢ãƒ¼ãƒ‰
-japanese.ModeSimple=ç°¡æ˜“ - Redis ã‚¢ãƒ‰ãƒ¬ã‚¹ã®ã¿ï¼ˆæŽ¨å¥¨ï¼‰
-japanese.OptionsOpenExcel=æœ€å¾Œã«ã‚µãƒ³ãƒ—ãƒ«ã® RedisExcel ãƒ–ãƒƒã‚¯ã‚’é–‹ã
-japanese.OptionsPageDesc=ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ©ãƒ¼ã¯çµ‚äº†æ™‚ã«æŽ¥ç¶šã‚’ãƒ†ã‚¹ãƒˆã—ã¾ã™ã€‚å¿…è¦ã«å¿œã˜ã¦ã€å‹•ä½œã‚’ç¤ºã™ã‚µãƒ³ãƒ—ãƒ« Excel ãƒ–ãƒƒã‚¯ã‚’é–‹ãã¾ã™ã€‚
-japanese.OptionsPageSubtitle=ã¾ã‚‚ãªãå®Œäº†
-japanese.OptionsPageTitle=è¿½åŠ ãƒã‚§ãƒƒã‚¯
-japanese.ServerDockerRedis=ã¯ã„ - Docker: Redisï¼ˆredis:latestï¼‰
-japanese.ServerDockerValkey=ã¯ã„ - Docker: Valkeyï¼ˆvalkey/valkey:latestï¼‰
-japanese.ServerFailed=%1 ã‚’è‡ªå‹•ã§ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ã§ãã¾ã›ã‚“ã§ã—ãŸï¼ˆçµ‚äº†ã‚³ãƒ¼ãƒ‰ %2ï¼‰ã€‚%nå¾Œã§ã‚µãƒ¼ãƒãƒ¼ã‚’ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã—ã€RedisExcel.json ã§æŒ‡å®šã§ãã¾ã™ã€‚
-japanese.ServerMemurai=ã¯ã„ - Memuraiï¼ˆWindows ãƒã‚¤ãƒ†ã‚£ãƒ– ã‚µãƒ¼ãƒ“ã‚¹ã€ç®¡ç†è€…æ¨©é™ãŒå¿…è¦ï¼‰
-japanese.ServerNameDockerRedis=Redisï¼ˆDockerï¼‰
-japanese.ServerNameDockerValkey=Valkeyï¼ˆDockerï¼‰
-japanese.ServerNameGeneric=ã‚µãƒ¼ãƒãƒ¼
+japanese.HostRequired=Redis ホストを入力してください（例: localhost）。
+japanese.IconUninstall={#AppName} をアンインストール
+japanese.ModeAdvanced=詳細 - データベース、SSL、書き込みモード、更新チューニングを設定
+japanese.ModePageDesc=簡易はサーバーアドレスのみ尋ねます。詳細ではデータベース、SSL/TLS、書き込みモード、リアルタイム更新チューニングを設定できます。RedisExcel.json は後でいつでも編集できます（Validate-Config.cmd の実行でも可）。
+japanese.ModePageSubtitle=簡易または詳細セットアップ？
+japanese.ModePageTitle=セットアップモード
+japanese.ModeSimple=簡易 - Redis アドレスのみ（推奨）
+japanese.OptionsOpenExcel=最後にサンプルの RedisExcel ブックを開く
+japanese.OptionsPageDesc=インストーラーは終了時に接続をテストします。必要に応じて、動作を示すサンプル Excel ブックを開きます。
+japanese.OptionsPageSubtitle=まもなく完了
+japanese.OptionsPageTitle=追加チェック
+japanese.ServerDockerRedis=はい - Docker: Redis（redis:latest）
+japanese.ServerDockerValkey=はい - Docker: Valkey（valkey/valkey:latest）
+japanese.ServerFailed=%1 を自動でセットアップできませんでした（終了コード %2）。%n後でサーバーをインストールし、RedisExcel.json で指定できます。
+japanese.ServerMemurai=はい - Memurai（Windows ネイティブ サービス、管理者権限が必要）
+japanese.ServerNameDockerRedis=Redis（Docker）
+japanese.ServerNameDockerValkey=Valkey（Docker）
+japanese.ServerNameGeneric=サーバー
 japanese.ServerNameMemurai=Memurai
-japanese.ServerNameWslRedis=Redisï¼ˆWSLï¼‰
-japanese.ServerNameWslValkey=Valkeyï¼ˆWSLï¼‰
-japanese.ServerNone=ã„ã„ãˆ - æ—¢ã«ã‚µãƒ¼ãƒãƒ¼ãŒã‚ã‚‹ï¼ˆã¾ãŸã¯å¾Œã§ç”¨æ„ã™ã‚‹ï¼‰
-japanese.ServerPageDesc=RedisExcel ã«ã¯ Redisï¼ˆã¾ãŸã¯ Valkeyï¼‰ã‚µãƒ¼ãƒãƒ¼ãŒå¿…è¦ã§ã™ã€‚ã¾ã ç„¡ã„å ´åˆã¯ã‚ªãƒ—ã‚·ãƒ§ãƒ³ã‚’é¸æŠžã—ã¦ãã ã•ã„ã€‚å…ˆã«ã‚µãƒ¼ãƒãƒ¼ã‚’ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã—ã€æ¬¡ã« RedisExcel ã‚’ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã—ã€æœ€å¾Œã«æŽ¥ç¶šã‚’ãƒ†ã‚¹ãƒˆã—ã¾ã™ã€‚Docker ãŒæœ€ã‚‚ç°¡å˜ã§ã™ã€‚
-japanese.ServerPageSubtitle=ä»Šã€Redis äº’æ›ã‚µãƒ¼ãƒãƒ¼ã‚’ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã—ã¾ã™ã‹ï¼Ÿ
-japanese.ServerPageTitle=Redis ã‚µãƒ¼ãƒãƒ¼
-japanese.ServerWslRedis=ã¯ã„ - WSL2: Redisï¼ˆapt install redis-serverï¼‰
-japanese.ServerWslValkey=ã¯ã„ - WSL2: Valkeyï¼ˆapt install valkey-serverï¼‰
-japanese.SummaryAdvanced=è©³ç´°
-japanese.SummaryIntro=ã“ã‚Œã‚‰ã®å€¤ã¯ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ãƒ•ã‚©ãƒ«ãƒ€ãƒ¼ã® RedisExcel.json ã«ä¿å­˜ã•ã‚Œã¾ã™ã€‚
-japanese.SummaryLabel=æŽ¥ç¶š
-japanese.SummaryMode=ãƒ¢ãƒ¼ãƒ‰
-japanese.SummaryPageSubtitle=RedisExcel.json ã«æ›¸ãè¾¼ã¾ã‚Œã‚‹æŽ¥ç¶šã‚’ç¢ºèªã—ã¦ãã ã•ã„
-japanese.SummaryPageTitle=è¨­å®šå†…å®¹
-japanese.SummarySimple=ç°¡æ˜“
-japanese.TaskAutoLoadDesc=Excel ãŒè‡ªå‹•ã§èª­ã¿è¾¼ã‚€ã‚ˆã†ã‚¢ãƒ‰ã‚¤ãƒ³ã‚’ç™»éŒ²ï¼ˆæŽ¨å¥¨ï¼‰
-japanese.TaskConfigDesc=ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ãƒ•ã‚©ãƒ«ãƒ€ãƒ¼ã« RedisExcel.json ã‚’ä½œæˆï¼ˆãƒ›ã‚¹ãƒˆè¨­å®šï¼‰
-japanese.TaskNlogDesc=NLog.config ã‚’ä½œæˆï¼ˆã‚¢ãƒ‰ã‚¤ãƒ³ã®éš£ã«ãƒ­ã‚° ãƒ•ã‚¡ã‚¤ãƒ«ã‚’æ›¸ãè¾¼ã‚€ï¼‰
-japanese.TestFailed=ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«æ¸ˆã¿ã§ã™ãŒã€%1 ã® Redis ãŒ PING ã«å¿œç­”ã—ã¾ã›ã‚“ã§ã—ãŸã€‚%nã‚µãƒ¼ãƒãƒ¼ãŒèµ·å‹•ã—ã¦ã„ã‚‹ã‹ç¢ºèªã—ï¼ˆdocker psï¼‰ã€åˆ¥ã®ãƒ›ã‚¹ãƒˆ/ãƒãƒ¼ãƒˆãªã‚‰ RedisExcel.json ã‚’èª¿æ•´ã—ã¦ãã ã•ã„ã€‚
-japanese.TestOk=æº–å‚™å®Œäº†ï¼ %1 ã® Redis ãŒå¿œç­”ã—ã¾ã—ãŸã€‚%n%nä½¿ã„æ–¹: Excel ã‚’é–‹ãã¾ã™ã€‚ã‚¢ãƒ‰ã‚¤ãƒ³ãŒè‡ªå‹•ã§èª­ã¿è¾¼ã¾ã‚Œãªã„å ´åˆã¯ã€ãƒ•ã‚¡ã‚¤ãƒ« > ã‚ªãƒ—ã‚·ãƒ§ãƒ³ > ã‚¢ãƒ‰ã‚¤ãƒ³ > è¨­å®š... > å‚ç…§... ã§ %2 ã® .xll ã‚’é¸æŠžã—ã¦ãã ã•ã„ã€‚
-japanese.UninstKeepConfig=RedisExcel.json ã®è¨­å®šã‚’ä¿æŒã—ã¾ã™ã‹ï¼Ÿ
-japanese.UninstServerFound=%1  [æ¤œå‡º]
-japanese.UninstServerFailed=%1 を自動で削除できませんでした（終了コード %2）。必要なら手動で削除してください。
-japanese.UninstServersDesc=ã“ã‚Œã‚‰ã®ã‚µãƒ¼ãƒãƒ¼ãŒã“ã®ã‚³ãƒ³ãƒ”ãƒ¥ãƒ¼ã‚¿ãƒ¼ã§è¦‹ã¤ã‹ã‚Šã¾ã—ãŸã€‚RedisExcel ã¨ä¸€ç·’ã«å‰Šé™¤ã™ã‚‹ã‚‚ã®ã‚’ãƒã‚§ãƒƒã‚¯ã—ã¦ãã ã•ã„ã€‚%næ—¢å®šã§ã¯ä½•ã‚‚å‰Šé™¤ã•ã‚Œã¾ã›ã‚“ã€‚
-japanese.UninstServersSubtitle=Redis äº’æ›ã‚µãƒ¼ãƒãƒ¼ã‚‚å‰Šé™¤ã—ã¾ã™ã‹ï¼Ÿ
-japanese.UninstServersTitle=ã‚µãƒ¼ãƒãƒ¼
-japanese.UpgradeConfigKept=æ—¢å­˜ã® RedisExcel.json ãŒè¦‹ã¤ã‹ã‚Šã€ä¿æŒã•ã‚Œã¾ã—ãŸï¼ˆè¨­å®šã¯ä¸Šæ›¸ãã•ã‚Œã¦ã„ã¾ã›ã‚“ï¼‰ã€‚%n%nã“ã‚Œã¯å¤§å¹…ãªæ›´æ–°ã§ã™: æ§‹æˆå½¢å¼ãŒå¤‰ã‚ã‚Šã¾ã—ãŸã€‚ãã®ãƒ•ã‚¡ã‚¤ãƒ«ãŒæ—§å½¢å¼ã®å ´åˆã€ç§»è¡Œã™ã‚‹ã¾ã§å„ã‚»ãƒ«ã« #CONFIG ã‚¨ãƒ©ãƒ¼ãŒè¡¨ç¤ºã•ã‚Œã¾ã™ã€‚%n%nValidate-Config.cmdï¼ˆã¾ãŸã¯ Excel ã§ =RedisCheckConfigFile()ï¼‰ã‚’å®Ÿè¡Œã—ã€README ã® "Migrating from the old shape" ã‚’å‚ç…§ã—ã¦ãã ã•ã„ã€‚
+japanese.ServerNameWslRedis=Redis（WSL）
+japanese.ServerNameWslValkey=Valkey（WSL）
+japanese.ServerNone=いいえ - 既にサーバーがある（または後で用意する）
+japanese.ServerPageDesc=RedisExcel には Redis（または Valkey）サーバーが必要です。まだ無い場合はオプションを選択してください。先にサーバーをインストールし、次に RedisExcel をインストールし、最後に接続をテストします。Docker が最も簡単です。
+japanese.ServerPageSubtitle=今、Redis 互換サーバーをインストールしますか？
+japanese.ServerPageTitle=Redis サーバー
+japanese.ServerWslRedis=はい - WSL2: Redis（apt install redis-server）
+japanese.ServerWslValkey=はい - WSL2: Valkey（apt install valkey-server）
+japanese.SummaryAdvanced=詳細
+japanese.SummaryIntro=これらの値はインストールフォルダーの RedisExcel.json に保存されます。
+japanese.SummaryLabel=接続
+japanese.SummaryMode=モード
+japanese.SummaryPageSubtitle=RedisExcel.json に書き込まれる接続を確認してください
+japanese.SummaryPageTitle=設定内容
+japanese.SummarySimple=簡易
+japanese.TaskAutoLoadDesc=Excel が自動で読み込むようアドインを登録（推奨）
+japanese.TaskConfigDesc=インストールフォルダーに RedisExcel.json を作成（ホスト設定）
+japanese.TaskNlogDesc=NLog.config を作成（アドインの隣にログ ファイルを書き込む）
+japanese.TestFailed=インストール済みですが、%1 の Redis が PING に応答しませんでした。%nサーバーが起動しているか確認し（docker ps）、別のホスト/ポートなら RedisExcel.json を調整してください。
+japanese.TestOk=準備完了！ %1 の Redis が応答しました。%n%n使い方: Excel を開きます。アドインが自動で読み込まれない場合は、ファイル > オプション > アドイン > 設定... > 参照... で %2 の .xll を選択してください。
+japanese.UninstKeepConfig=RedisExcel.json の設定を保持しますか？
+japanese.UninstServerFound=%1  [検出]
+japanese.UninstServerFailed=%1 ??????????????(????? %2)?????????????????
+japanese.UninstServersDesc=これらのサーバーがこのコンピューターで見つかりました。RedisExcel と一緒に削除するものをチェックしてください。%n既定では何も削除されません。
+japanese.UninstServersSubtitle=Redis 互換サーバーも削除しますか？
+japanese.UninstServersTitle=サーバー
+japanese.UpgradeConfigKept=既存の RedisExcel.json が見つかり、保持されました（設定は上書きされていません）。%n%nこれは大幅な更新です: 構成形式が変わりました。そのファイルが旧形式の場合、移行するまで各セルに #CONFIG エラーが表示されます。%n%nValidate-Config.cmd（または Excel で =RedisCheckConfigFile()）を実行し、README の "Migrating from the old shape" を参照してください。
 [Tasks]
 Name: "addinconfig"; Description: "{cm:TaskConfigDesc}"; GroupDescription: "{cm:GroupConfig}"
 Name: "nlogconfig";  Description: "{cm:TaskNlogDesc}"; GroupDescription: "{cm:GroupConfig}"
@@ -963,6 +963,15 @@ begin
 end;
 
 // ---- Simple-mode host string (advanced mode edits the JSON directly) ------
+// Escapes a value for a JSON string literal (backslash and double quote), so a
+// password like "pa\ss" does not produce invalid JSON (audit H2/D3).
+function JsonEscape(S: String): String;
+begin
+  StringChangeEx(S, '\', '\\', True);
+  StringChangeEx(S, '"', '\"', True);
+  Result := S;
+end;
+
 function HostString(): String;
 var
   H, Port, Pw: String;
@@ -1005,7 +1014,7 @@ end;
 function SimpleConfigJson(): String;
 var HostLine: String;
 begin
-  HostLine := HostString();
+  HostLine := JsonEscape(HostString());
   Result :=
     '{' + #13#10 +
     '  "Default": "local",' + #13#10 +
@@ -1042,6 +1051,7 @@ begin
   if (Pos(':', H) = 0) and (Port <> '') then H := H + ':' + Port;
   H := H + ',defaultDatabase=0,ssl=False,abortConnect=False';
   if Pw <> '' then H := H + ',password=' + Pw;
+  H := JsonEscape(H); // the template embeds H in a JSON string literal
   Result :=
     '{' + #13#10 +
     '  // RedisExcel.json - comments (// and /* */) are allowed.' + #13#10 +
