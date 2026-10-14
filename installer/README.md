@@ -60,6 +60,16 @@ The wizard is localized in 10 languages (English - the default, 简体中文,
 screen. This is **install-time only**: the add-in always uses English inside
 Excel, so volatile functions return the same strings on every machine.
 
+> **Vendored translations:** eight of the ten language files ship with Inno Setup;
+> the two Chinese ones are vendored under `installer/languages/` because the
+> official Inno package has no Chinese. `ChineseSimplified.isl` matches Inno
+> 6.5+; `ChineseTraditional.isl` is a community translation based on Inno 6.4,
+> so `iscc` prints ~23 warnings for it (four unknown message names plus ~19
+> new 6.5 messages that fall back to English). Those messages belong to the
+> download/extraction/verification features this installer does not use, so the
+> effect is cosmetic. **When a 6.5+ Traditional Chinese file is available, drop it
+> in and re-run `iscc` - the warnings should go to zero.**
+
 The silent uninstaller can also remove a server it can still see. It only
 removes what you name:
 
