@@ -59,7 +59,11 @@ jobs:
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             Write-Host "memurai install attempt $attempt/3"
             choco install memurai-developer -y --no-progress
-            if ($LASTEXITCODE -eq 0) { Write-Host "memurai installed"; exit 0 }
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "memurai installed"
+              Get-Service -Name Memurai -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "service $($_.Name): $($_.Status)" }
+              exit 0
+            }
             Write-Host "memurai install failed (exit $LASTEXITCODE)"
             if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
           }
@@ -70,8 +74,17 @@ jobs:
         run: |
           # AbortOnConnectFail=False makes the smoke client swallow a server that
           # is still starting; probe the raw Redis protocol until PONG before
-          # running the smoke tests, so a slow service start cannot fail the job.
-          $deadline = (Get-Date).AddSeconds(30)
+          # running the smoke tests. While waiting, (re)start the Memurai service:
+          # a slow first start on a loaded runner must not fail the job.
+          function Start-Memurai {
+            $svc = Get-Service -Name Memurai -ErrorAction SilentlyContinue
+            if ($svc -and $svc.Status -ne 'Running') {
+              try { Start-Service -Name Memurai -ErrorAction Stop } catch { }
+            }
+          }
+          Start-Memurai
+          $deadline = (Get-Date).AddSeconds(120)
+          $nextServiceCheck = (Get-Date)
           while ((Get-Date) -lt $deadline) {
             try {
               $client = New-Object System.Net.Sockets.TcpClient
@@ -86,9 +99,14 @@ jobs:
               if ($response -match 'PONG') { Write-Host "Redis is ready: $response"; exit 0 }
             }
             catch { }
+            if ((Get-Date) -ge $nextServiceCheck) {
+              Start-Memurai
+              $nextServiceCheck = (Get-Date).AddSeconds(10)
+            }
             Start-Sleep -Seconds 1
           }
-          throw "Redis on 127.0.0.1:6379 did not answer PING within 30s"
+          Get-Service -Name Memurai -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "service $($_.Name): $($_.Status)" }
+          throw "Redis on 127.0.0.1:6379 did not answer PING within 120s"
 
       - name: Run smoke tests
         shell: pwsh
