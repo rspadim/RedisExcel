@@ -105,8 +105,8 @@ namespace RedisExcel.Tests
         /// <summary>
         /// Every volatile [ExcelFunction] that owns a ...NonVolatile twin must
         /// be one of the 24 write functions in the explicit list, and vice
-        /// versa. The suite has 42 volatile functions in total: 24 writes with
-        /// twins plus 18 read/status helpers that are volatile by design and
+        /// versa. The suite has 44 volatile functions in total: 24 writes with
+        /// twins plus 20 read/status helpers that are volatile by design and
         /// intentionally have no twin. The total is pinned so a new volatile
         /// function cannot enter unclassified: it either needs a twin and a
         /// TwinPairs entry, or an update to these counts.
@@ -130,9 +130,9 @@ namespace RedisExcel.Tests
                 .OrderBy(name => name, StringComparer.Ordinal)
                 .ToList();
 
-            // 42 reads/status writes + the config validator + the schema dump = 44
-            // volatile functions; 24 have a NonVolatile write twin, so 20 are
-            // reads/status with no twin.
+            // 44 volatile functions in total: 24 write functions (each with a
+            // NonVolatile twin) plus 20 read/status helpers (volatile by design,
+            // no twin).
             Assert.Equal(44, volatileFunctions.Count);
             Assert.Equal(24, volatileWithTwin.Count);
             Assert.Equal(20, volatileFunctions.Count - volatileWithTwin.Count);

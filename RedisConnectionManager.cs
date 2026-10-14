@@ -167,6 +167,12 @@ namespace RedisExcel
                     // a failed factory on .NET Framework): reclaim it so failed
                     // host entries cannot sit past the cap forever. No wrappers
                     // can exist for a multiplexer that never materialized.
+                    // NOTE: under ExecutionAndPublication IsValueCreated is also
+                    // false while a Connect is IN FLIGHT; such an entry may be
+                    // reclaimed here, so GetConnection re-inserts its multiplexer
+                    // after the factory publishes (audit I1). We must not force
+                    // the value here - that would block the Excel thread for up to
+                    // ConnectTimeout.
                     RemoveConnectionEntry(dictionary, kv.Key, kv.Value);
                     continue;
                 }
@@ -394,6 +400,28 @@ namespace RedisExcel
                     closeFirst: true, allowCommandsToComplete: true);
                 dictionary.TryRemove(host, out _);
                 throw ShuttingDown();
+            }
+            // An eviction pass can reclaim this entry while the factory is still
+            // running: under ExecutionAndPublication IsValueCreated stays false for
+            // the whole Connect, so the eviction walk treats it as a
+            // never-materialized entry and drops it without disposing. The
+            // materialized multiplexer would then escape tracking (never closed by
+            // Shutdown, and the next call builds a duplicate). Re-insert it, and if
+            // a concurrent caller already installed a different entry, ours is a
+            // duplicate: dispose it and return the winner (audit I1).
+            if (!dictionary.TryGetValue(host, out var published) || !ReferenceEquals(published, lazy))
+            {
+                if (dictionary.TryAdd(host, lazy))
+                {
+                    // Tracked again: fall through and hand ours out.
+                }
+                else if (dictionary.TryGetValue(host, out var winner) && !ReferenceEquals(winner, lazy))
+                {
+                    DisposeConnection(connection,
+                        "GetConnection: error disposing a duplicate multiplexer (pool entry replaced concurrently)",
+                        closeFirst: true, allowCommandsToComplete: false);
+                    connection = winner.Value; // never block on connect: already materialized
+                }
             }
             if (dictionary.Count > MaxCachedConnectionsPerPool)
                 EvictDisconnectedConnections(dictionary, host, pool);

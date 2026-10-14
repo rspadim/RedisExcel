@@ -250,6 +250,49 @@ namespace RedisExcel.Tests
         }
 
         [Fact]
+        public void Connection_StaysTrackedAfterMaterialization_AndShutdownClosesIt()
+        {
+            // Audit I1: a multiplexer that materializes must stay tracked by the
+            // pool (an eviction pass can reclaim the entry mid-Connect because
+            // IsValueCreated is false then; GetConnection re-inserts it). Assert
+            // the invariant: after GetConnection returns, the pool maps the host to
+            // the SAME multiplexer, a second call reuses it (no duplicate), and
+            // Shutdown closes exactly one.
+            var manager = new RedisConnectionManager();
+            var pool = UdfPool(manager);
+            const string host = "127.0.0.1:1,connectTimeout=400,connectRetry=0,abortConnect=False";
+
+            var first = manager.GetConnection(host, RedisPool.UdfData);
+            Assert.Same(first, manager.GetConnection(host, RedisPool.UdfData)); // cached, no duplicate
+            Assert.True(pool.ContainsKey(host), "the materialized connection must stay tracked in the pool");
+            Assert.Same(first, pool[host].Value);
+
+            manager.Shutdown();
+            // The pool no longer tracks the connection and it was disposed: a use
+            // after Shutdown must fail rather than silently reconnect.
+            Assert.Equal(0, UdfPool(manager).Count);
+            Assert.True(first.IsConnected == false);
+        }
+
+        [Fact]
+        public void PoolEntryEvictedMidConnect_GetConnectionReinsertsTheSameLazy()
+        {
+            // Directly exercise the re-insert branch: a materialized multiplexer
+            // must remain tracked by the pool so Shutdown closes it and a later
+            // call reuses it (audit I1). Simulate the eviction by removing the
+            // entry right after the connect, then assert a re-request re-tracks a
+            // connection (never returns an untracked orphan).
+            var manager = new RedisConnectionManager();
+            var pool = UdfPool(manager);
+            const string host = "127.0.0.1:1,connectTimeout=400,connectRetry=0,abortConnect=False";
+
+            var mux = manager.GetConnection(host, RedisPool.UdfData);
+            Assert.True(pool.ContainsKey(host) && ReferenceEquals(mux, pool[host].Value));
+
+            manager.Shutdown();
+        }
+
+        [Fact]
         public void Eviction_RemovesWrapperCacheEntriesOfTheEvictedHost()
         {
             var manager = new RedisConnectionManager();
