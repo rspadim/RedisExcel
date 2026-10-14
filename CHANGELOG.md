@@ -10,8 +10,8 @@
   signing provided by the SignPath Foundation, and the support section invites
   new translations.
 - **`LICENSE` (MIT)** with the bundled third-party licenses listed.
-- **`SIGNING.md`** with the code-signing plan (packed XLLs + installer, after
-  packing, with an RFC 3161 timestamp).
+- **`SIGNING.md`** with the code-signing plan (packed XLLs, the managed DLL and
+  the installer, after packing, with an RFC 3161 timestamp).
 
 ### Changed (BREAKING - configuration, v1.6)
 

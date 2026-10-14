@@ -9,18 +9,21 @@ the time of writing.
 | Artifact | Why |
 | --- | --- |
 | `RedisExcel-packed.xll`, `RedisExcel64-packed.xll` | the add-ins the user loads; an unsigned XLL is a classic SmartScreen/AV false positive |
+| `RedisExcel.dll` | the managed assembly shipped next to the XLLs (manual installs use it); every binary a user receives should be verifiable |
 | `RedisExcelSetup-<version>.exe` (Inno Setup) | the installer is the first file a new user runs and the #1 false-positive target |
 
-`RedisExcel.dll` ships next to the XLLs; sign it too if the signing policy
-covers loose DLLs (the packed XLLs already embed their dependencies).
+The packed XLLs embed their own copies of the managed dependencies; the loose
+`RedisExcel.dll` is the one a manual install puts next to the XLL.
 
 ## Where the step enters the pipeline
 
-1. `build.yml` packs the XLLs - sign **after** packing.
-2. The Inno Setup compile produces `RedisExcelSetup-<version>.exe` - sign
-   **after** it exists and **before** the artifact upload.
-3. Use an RFC 3161 timestamp server (the SignPath action does this by default),
+1. `build.yml` produces the release payload (the packed XLLs, `RedisExcel.dll`
+   and the installer) - sign each binary **after** it is built and **before**
+   the artifact upload.
+2. Use an RFC 3161 timestamp server (the SignPath action does this by default),
    so the signatures stay valid after the certificate expires.
+3. The SignPath **artifact configuration** lists all four PE files: the two
+   packed XLLs, `RedisExcel.dll` and `RedisExcelSetup-<version>.exe`.
 
 ## Service
 
