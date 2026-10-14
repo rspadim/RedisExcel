@@ -342,10 +342,10 @@ delivery + completion, error text, an observer whose `OnNext` throws is still
 completed, one-shot subscribe with duplicate delivery, no-op dispose while
 queued, synchronous enqueue, the enqueue-failure latch and pathological error
 messages), the `WaitBounded` pipelined-wait bound (completed/faulted tasks
-return true, a never-completing task reports the timeout), and a project-file
-parity test that keeps the
-unit project's `Compile` list complete (RedisRtd.cs is the intentional
-exclusion).
+return true, a never-completing task reports the timeout), the public-surface
+baseline parity (the shipped assembly against the frozen 79-function surface and
+the linked sources, plus the twin/signature pins), and the unbounded-blocking
+scan of the root sources.
 
 The unit, smoke, load and liveness test projects compile the production
 sources directly (linked `Compile` items) from ONE shared list,

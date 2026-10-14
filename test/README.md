@@ -3,15 +3,31 @@
 Five test layers: unit, smoke, Excel end-to-end, load and liveness. See
 `AGENTS.md` for the full guidance and the Excel automation lessons.
 
+All four host-side layers (unit, smoke, load, liveness) compile the production
+sources from ONE shared list, `test\TestSupport\ProductionSources.props`
+(`RedisRtd.cs` is the only intentional exclusion), so a new production file is
+added there once and every suite picks it up. `ProjectFileParityTests` enforces
+that, `PublicSurfaceParityTests` freezes the public Excel surface in
+`test\RedisExcel.Tests\PublicSurface.baseline.txt` (refresh it deliberately with
+`REDISEXCEL_REFRESH_PUBLIC_SURFACE=1`), and `NoUnboundedBlockingTests` fails on an
+unbounded wait (`.Result` / `.Wait(` / `GetAwaiter().GetResult()`) in the root
+sources outside its explicit allow-list.
+
+Local one-shot run (builds once, then unit + smoke + liveness in parallel off that
+build, each server layer against a disposable `redis:7-alpine` container unless
+`-RedisHost` is given):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File test\TestSupport\Run-Tests.ps1
+```
+
 ## 1. Unit tests (no Redis, no Excel)
 
 ```powershell
 dotnet test test\RedisExcel.Tests\RedisExcel.Tests.csproj -c Release
 ```
 
-The test project compiles the production sources directly (no add-in build), so
-every top-level production file except the intentionally excluded `RedisRtd.cs`
-must be in its `Compile` list (a parity test enforces it).
+The test project compiles the production sources directly (no add-in build).
 Coverage includes the JSON conversions and the matrix size/total-cell budget,
 config load/sanitize (including alias trim/case-insensitivity, the undefined-style
 reset and the tolerant per-value parsing), the real-time conflation window
@@ -27,8 +43,8 @@ error text, OnNext-throw still completed, one-shot subscribe with duplicate
 delivery, no-op dispose while queued, synchronous enqueue, the enqueue-failure
 latch and pathological error messages), the `WaitBounded` pipelined-wait bound
 (completed/faulted tasks return true, a never-completing task reports the
-timeout), and a project-file parity test that keeps the unit project's
-`Compile` list complete (`RedisRtd.cs` is the intentional exclusion).
+timeout), the guards described at the top, and the shipped-assembly surface
+parity against the linked sources.
 
 ## 2. Smoke tests (requires Redis, no Excel)
 
@@ -74,9 +90,18 @@ Useful parameters: `-RepoRoot <path>` (repository root; defaults to the
 script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,
 `-RealChannel`, `-RealPattern`, `-SkipClientKill`, `-RedisCli`,
 `-SyncWrite <mode>` (write mode for the run: `sync`/`fireforget`/
-`fireforget-all`, default `fireforget`), `-AsyncWrites`, `-KeepExcelOpen`.
-Supplying a custom `-RedisCli` (e.g.
+`fireforget-all`, default `fireforget`), `-AsyncWrites`, `-KeepExcelOpen`,
+`-CloseExcelLeftovers`. Supplying a custom `-RedisCli` (e.g.
 `docker exec my-redis redis-cli`) disables the automatic `CLIENT KILL` step.
+
+The "Excel dies mid-stream" step kills this run's own hidden Excel on purpose
+and verifies the server drops every subscription. Office reacts to that crash by
+relaunching the instance to show document recovery (`EXCEL.EXE /restore`), which
+never exits by itself: the script closes that relaunch (dismissing the automatic
+pane, not the recovery data). Any other hidden `EXCEL.EXE` leftover is reported
+with its PID and command line, and closed only with `-CloseExcelLeftovers` -
+the harness never kills an Excel it cannot attribute to the run (this machine
+environment spawns hidden `/automation -Embedding` instances by itself).
 
 Security software (AV/EDR) is the top cause of flaky Excel COM automation, so
 the script reports the AV state up front and a `COM retries: total=...` summary
