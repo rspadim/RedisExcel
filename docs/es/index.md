@@ -17,10 +17,6 @@ de claves, hashes, listas, conjuntos y contadores, conversión JSON ↔ matriz y
 Sentinel/Cluster de punta a punta. Construido con Excel-DNA sobre .NET Framework
 4.8, usando StackExchange.Redis, NLog y Newtonsoft.Json.
 
-Los binarios para Windows están **firmados digitalmente**; la firma de código es
-ofrecida gratuitamente a proyectos de código abierto por la
-[SignPath Foundation](https://signpath.org/).
-
 [![Licencia: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://github.com/rspadim/RedisExcel/blob/main/LICENSE)
 [![Última versión](https://img.shields.io/github/v/release/rspadim/RedisExcel?sort=semver)](https://github.com/rspadim/RedisExcel/releases/latest)
 
@@ -63,10 +59,6 @@ Descarga la última versión en la
 | `RedisExcel.dll` | Ensamblado gestionado del complemento (va junto al XLL) |
 | `NLog.config` | Configuración del log |
 | `RedisExcel.json` | Configuración inicial (ejemplo) |
-
-Los releases están firmados digitalmente; el servicio de firma es proporcionado
-por la [SignPath Foundation](https://signpath.org/), que emite certificados para
-proyectos de código abierto.
 
 ¿Todavía no tienes un servidor Redis? El instalador puede levantar uno por ti
 (Redis o Valkey vía Docker/WSL, o Memurai) y prueba la conexión al final.
@@ -152,8 +144,6 @@ Documentación
   y [NLog.config](https://github.com/rspadim/RedisExcel/blob/main/NLog.config)
 - **Instalador:**
   [installer/README.md](https://github.com/rspadim/RedisExcel/blob/main/installer/README.md)
-- **Firma de código:**
-  [SIGNING.md](https://github.com/rspadim/RedisExcel/blob/main/SIGNING.md)
 
 
 Privacidad

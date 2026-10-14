@@ -6,9 +6,7 @@
 
 - **Project landing page** (GitHub Pages) in pt-BR, English and Spanish, built
   with MkDocs Material (`docs/`, `mkdocs.yml`) and published by the new
-  `Deploy landing page` workflow; the download section mentions the free code
-  signing provided by the SignPath Foundation, and the support section invites
-  new translations.
+  `Deploy landing page` workflow; the support section invites new translations.
 - **`LICENSE` (MIT)** with the bundled third-party licenses listed.
 - **`SIGNING.md`** with the code-signing plan (packed XLLs, the managed DLL and
   the installer, after packing, with an RFC 3161 timestamp).

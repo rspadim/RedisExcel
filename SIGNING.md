@@ -28,11 +28,12 @@ The packed XLLs embed their own copies of the managed dependencies; the loose
 ## Service
 
 Free code signing for open-source projects is provided by the
-[SignPath Foundation](https://signpath.org/); the landing page mentions it in the
-download section (required for the application). After approval, the remaining
-steps (organization, signing policy and artifact configuration on signpath.io, an
-API token in GitHub Secrets, then the workflow step) follow the SignPath
-documentation at <https://docs.signpath.io/>.
+[SignPath Foundation](https://signpath.org/); the landing page does not advertise
+signing while no certificate exists - add the required download-section mention
+back once signing is live. After approval, the remaining steps (organization,
+signing policy and artifact configuration on signpath.io, an API token in GitHub
+Secrets, then the workflow step) follow the SignPath documentation at
+<https://docs.signpath.io/>.
 
 ## Never
 
