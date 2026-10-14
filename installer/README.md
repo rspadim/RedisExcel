@@ -32,11 +32,13 @@ XLLs (removing the one that does not match your Office bitness). It runs
    with `requirepass` answers `-NOAUTH` to a bare PING, so an unauthenticated
    probe used to report a healthy install as unreachable), then PINGs the server
    and, if you ticked the box, opens a visible Excel workbook (XLL loaded) titled
-   *"RedisExcel instalado com sucesso!"* with the server time and a live `Set`/`Get`
-   round trip. With a password the sheet uses the no-argument form of the UDFs, so
-   the secret never lands in a cell formula. The password reaches the check
-   through a private temp file, not the argument list (a password with a quote or
-   a space cannot be passed as one argument safely, and a command line is
+   *"RedisExcel installed successfully!"* with the server time and a live
+   `Set`/`Get` round trip. The messages and the sample sheet are **English**: the
+   add-in is English-only inside Excel on purpose, and the sheet is the first
+   thing a new user sees. With a password the sheet uses the no-argument form of
+   the UDFs, so the secret never lands in a cell formula. The password reaches the
+   check through a private temp file, not the argument list (a password with a
+   quote or a space cannot be passed as one argument safely, and a command line is
    readable by other local users).
 6. On the last page it explains the one manual step: add the `.xll` in Excel via
    **File > Options > Add-ins > Go... > Browse...** (Excel exposes no safe

@@ -50,47 +50,62 @@ jobs:
       - name: Run unit tests
         run: dotnet test test/RedisExcel.Tests/RedisExcel.Tests.csproj -c Release
 
-      - name: Install Redis server (Memurai developer edition)
+      - name: Install Redis server (portable build, Memurai fallback)
         shell: pwsh
         run: |
-          # The community feed flakes (406/504) and, when it does, Chocolatey can
-          # exit 0 after installing nothing ("Chocolatey installed 0/0 packages"),
-          # so validate by the installed service - not by the exit code. If
-          # Memurai never lands, fall back to a portable Redis build from the
-          # GitHub releases (same wire protocol; the suite only needs a server).
+          # ORDER MATTERS: the portable Redis build from the GitHub releases first
+          # (a direct download, deterministic, seconds), Memurai via Chocolatey as
+          # the fallback. The community feed flakes (406/504) and, when it does,
+          # Chocolatey can even exit 0 after installing nothing ("Chocolatey
+          # installed 0/0 packages"); that path used to be primary, so every run
+          # paid 1-2 choco failures (~20s sleep each) before falling back. The
+          # suites only need a Redis endpoint, and the installer's own Memurai
+          # path is exercised by hand.
           #
           # ErrorActionPreference = Continue is load-bearing: the runner runs this
           # script with Stop, and a native command that writes to stderr (choco
           # prints its download errors there) then becomes a TERMINATING error, so
-          # the step aborted on the first choco failure and never reached the
-          # fallback below (that is how the memurai-developer 4.1.8 download
-          # failure turned into a red build). Every real failure still fails the
-          # step: Invoke-WebRequest/Expand-Archive/the final probe throw, and the
-          # waits below have their own bounds.
+          # the step aborted on the first failure and never reached the fallback
+          # (that is how the memurai-developer 4.1.8 download failure turned into a
+          # red build). Every real failure still fails the step: the downloads use
+          # -ErrorAction Stop inside the try, each branch validates what it
+          # installed, and the final throw catches "neither worked".
           $ErrorActionPreference = 'Continue'
-          $installed = $false
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            Write-Host "memurai install attempt $attempt/3"
-            choco install memurai-developer -y --no-progress
-            $svc = Get-Service -Name Memurai -ErrorAction SilentlyContinue
-            if ($svc) {
-              Write-Host "service $($svc.Name): $($svc.Status)"
-              $installed = $true
-              break
-            }
-            Write-Host "memurai install failed (exit $LASTEXITCODE; no Memurai service found)"
-            if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
-          }
-          if (-not $installed) {
-            Write-Host "falling back to a portable Redis build (GitHub releases)"
+          $provisioned = $false
+
+          try {
+            Write-Host "downloading the portable Redis build (GitHub releases)"
             $zip = Join-Path $env:RUNNER_TEMP "redis-windows.zip"
             $dir = Join-Path $env:RUNNER_TEMP "redis-windows"
-            Invoke-WebRequest -Uri "https://github.com/redis-windows/redis-windows/releases/download/8.10.2/Redis-8.10.2-Windows-x64-msys2.zip" -OutFile $zip
-            Expand-Archive -Path $zip -DestinationPath $dir -Force
+            Invoke-WebRequest -Uri "https://github.com/redis-windows/redis-windows/releases/download/8.10.2/Redis-8.10.2-Windows-x64-msys2.zip" -OutFile $zip -ErrorAction Stop
+            Expand-Archive -Path $zip -DestinationPath $dir -Force -ErrorAction Stop
             $server = Get-ChildItem -Path $dir -Recurse -Filter "redis-server.exe" | Select-Object -First 1
-            if (-not $server) { throw "redis-server.exe not found in the fallback archive" }
+            if (-not $server) { throw "redis-server.exe not found in the archive" }
             Start-Process -FilePath $server.FullName -ArgumentList "--port", "6379" -WorkingDirectory $server.DirectoryName -WindowStyle Hidden
             Write-Host "portable redis-server started from $($server.DirectoryName)"
+            $provisioned = $true
+          }
+          catch {
+            Write-Host "portable Redis failed ($($_.Exception.Message)); falling back to Memurai via Chocolatey"
+          }
+
+          if (-not $provisioned) {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              Write-Host "memurai install attempt $attempt/3"
+              choco install memurai-developer -y --no-progress
+              $svc = Get-Service -Name Memurai -ErrorAction SilentlyContinue
+              if ($svc) {
+                Write-Host "service $($svc.Name): $($svc.Status)"
+                $provisioned = $true
+                break
+              }
+              Write-Host "memurai install failed (exit $LASTEXITCODE; no Memurai service found)"
+              if ($attempt -lt 3) { Start-Sleep -Seconds 20 }
+            }
+          }
+
+          if (-not $provisioned) {
+            throw "no Redis server could be provisioned (portable download and the Memurai package both failed)"
           }
 
       - name: Wait for Redis to answer PING

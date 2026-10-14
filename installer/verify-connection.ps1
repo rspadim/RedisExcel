@@ -122,18 +122,18 @@ Write-Host "[verify] testing Redis at $target ..."
 $ok = Test-Redis $serverHost $serverPort
 
 if (-not $ok) {
-  Show ("Nao consegui conectar no Redis em $target.`r`n`r`n" +
-        "- Confira se o servidor esta rodando (docker ps, ou o servico).`r`n" +
-        "- Se ele esta em outro host/porta, ajuste o RedisExcel.json.") "RedisExcel - conexao"
+  Show ("Could not connect to Redis at $target.`r`n`r`n" +
+        "- Check that the server is running (docker ps, or the service).`r`n" +
+        "- If it is on another host/port, adjust RedisExcel.json.") "RedisExcel - connection"
   exit 1
 }
 
 Write-Host "[verify] Redis answered PONG at $target"
 
 if (-not $OpenExcel) {
-  Show ("Tudo certo!`r`n`r`nO Redis respondeu em $target.`r`n" +
-        "Abra o Excel, registre o XLL (File > Options > Add-ins > Go... > Browse...) " +
-        "e use, por exemplo, =RedisUDFGet(`"chave`").") "RedisExcel - instalado"
+  Show ("All set!`r`n`r`nRedis answered at $target.`r`n" +
+        "Open Excel, register the XLL (File > Options > Add-ins > Go... > Browse...) " +
+        "and use, for example, =RedisUDFGet(`"key`").") "RedisExcel - installed"
   exit 0
 }
 
@@ -142,14 +142,14 @@ $xll64 = Join-Path $AddInDir 'RedisExcel64-packed.xll'
 $xll32 = Join-Path $AddInDir 'RedisExcel-packed.xll'
 $xll = if (Test-Path $xll64) { $xll64 } elseif (Test-Path $xll32) { $xll32 } else { $null }
 if (-not $xll) {
-  Show ("Nao encontrei o XLL em $AddInDir.") "RedisExcel"
+  Show ("Could not find the XLL in $AddInDir.") "RedisExcel"
   exit 0
 }
 
 # With a password the cells must NOT pass an explicit host: the no-argument form
 # makes the add-in use the configured server (RedisExcel.json carries the secret),
 # so no password ever reaches a cell formula - and the status cell would otherwise
-# read FALHOU against a server that requires AUTH.
+# read FAILED against a server that requires AUTH.
 $hostArg = if ($Password -ne '') { '' } else { '("' + $target + '")' }
 $exampleArg = if ($Password -ne '') { '' } else { ', "' + $target + '"' }
 
@@ -162,28 +162,30 @@ try {
   $ws = $wb.Worksheets.Item(1)
   $ws.Name = 'RedisExcel'
 
-  # Nice title block.
-  $ws.Range('A1').Value2 = 'RedisExcel instalado com sucesso!'
+  # Nice title block. English on purpose: the add-in is English-only inside
+  # Excel (a localized volatile result would differ per machine), and a sample
+  # sheet is the first thing a user sees.
+  $ws.Range('A1').Value2 = 'RedisExcel installed successfully!'
   $ws.Range('A1').Font.Size = 16
   $ws.Range('A1').Font.Bold = $true
-  $ws.Range('A2').Value2 = 'Teste de conexao com o Redis - ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+  $ws.Range('A2').Value2 = 'Redis connection test - ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
   $ws.Range('A2').Font.Italic = $true
 
-  $ws.Range('A4').Value2 = 'Servidor:'
+  $ws.Range('A4').Value2 = 'Server:'
   $ws.Range('B4').Value2 = $target
   $ws.Range('A5').Value2 = 'Status:'
   # ServerTime is a real round trip; if it errors the cell shows Error:.
-  $ws.Range('B5').Formula = '=IF(ISERROR(RedisUDFServerTime' + $hostArg + '),"FALHOU","OK - Redis respondeu")'
-  $ws.Range('A6').Value2 = 'Servidor diz:'
+  $ws.Range('B5').Formula = '=IF(ISERROR(RedisUDFServerTime' + $hostArg + '),"FAILED","OK - Redis answered")'
+  $ws.Range('A6').Value2 = 'Server says:'
   $ws.Range('B6').Formula = '=RedisUDFServerTime' + $hostArg
 
-  $ws.Range('A8').Value2 = 'Teste leitura/escrita (pressione F9 para atualizar):'
+  $ws.Range('A8').Value2 = 'Read/write test (press F9 to refresh):'
   $ws.Range('A9').Value2 = 'Set:'
-  $ws.Range('B9').Formula = '=RedisUDFSet("redisexcel:install_test","ola do instalador")'
+  $ws.Range('B9').Formula = '=RedisUDFSet("redisexcel:install_test","hello from the installer")'
   $ws.Range('A10').Value2 = 'Get:'
   $ws.Range('B10').Formula = '=RedisUDFGet("redisexcel:install_test")'
 
-  $ws.Range('A12').Value2 = 'Exemplo: =RedisUDFGet("preco_btc"' + $exampleArg + ')'
+  $ws.Range('A12').Value2 = 'Example: =RedisUDFGet("price_btc"' + $exampleArg + ')'
   $ws.Range('A4:A6').Font.Bold = $true
   $ws.Range('A9:A10').Font.Bold = $true
   $ws.Columns.Item('A').ColumnWidth = 42
@@ -194,6 +196,6 @@ try {
   Write-Host "[verify] sample workbook opened (XLL registered: $registered)"
   exit 0
 } catch {
-  Show ("Nao consegui abrir o Excel: " + $_.Exception.Message) "RedisExcel"
+  Show ("Could not open Excel: " + $_.Exception.Message) "RedisExcel"
   exit 0
 }

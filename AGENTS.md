@@ -312,6 +312,11 @@ to three times (5s apart): a shared runner can stall the whole process or trip a
 best-effort race on infrastructure noise, and the bounds themselves are
 unchanged, so a real regression fails every attempt. The unit step has no
 retry (a unit regression cannot be masked).
+The Redis endpoint the suites run against comes from the **portable Windows build**
+(a direct download from the redis-windows releases), with the Memurai Chocolatey
+package as the fallback: the community feed flakes, and the choco path used to be
+primary, so every run paid for its retries before falling back. Both paths are
+fail-closed (the step throws when neither provisioned a server).
 
 ## Tests
 
@@ -561,8 +566,9 @@ Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
 the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
-release: `v1.6.1` (installer/uninstaller fixes on top of the v1.6.0 named-server
-configuration - see the root `CHANGELOG.md`).
+release: `v1.6.2` (installer end-of-install fixes - it authenticates, cannot hang,
+and its messages/sample sheet are English - on top of the v1.6.0 named-server
+configuration; see the root `CHANGELOG.md`).
 
 On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
 guard fails the release otherwise and names this line); work in progress keeps an

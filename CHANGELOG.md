@@ -1,4 +1,4 @@
-## v1.6.2 (unreleased)
+## v1.6.2
 
 ### Fixed
 
@@ -18,6 +18,13 @@
   ~20-40s) when the host is unreachable or firewalled, and they report the actual
   reason ("the target machine actively refused it") rather than a bare
   "Exception calling Wait with 1 argument(s)".
+### Changed
+
+- **The installer's end-of-install messages and its sample sheet are now in
+  English.** They were Brazilian Portuguese while the wizard itself is translated
+  into 10 languages; the add-in is deliberately English-only inside Excel (a
+  localized volatile result would differ per machine) and the sample sheet is the
+  first thing a new user sees, so it follows the same rule.
 ## v1.6.1
 
 ### Fixed
