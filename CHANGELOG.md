@@ -1,3 +1,23 @@
+## v1.6.2 (unreleased)
+
+### Fixed
+
+- **The end-of-install check now authenticates.** A server configured with a
+  password (`requirepass`) answers `-NOAUTH` to a bare PING, so the installer
+  reported a perfectly good setup as "did not answer a PING" (and the sample
+  sheet's status cell as `FALHOU`). Both checks - and the sample workbook - now
+  use the password you gave. The secret reaches them through a private temp file
+  instead of the argument list: a password containing a quote or a space cannot be
+  passed as a single command-line argument safely, and a process command line is
+  readable by other local users. `AUTH` is sent as a RESP command, so a password
+  with spaces or other special characters works, and with a password the sample
+  sheet uses the no-argument form of the UDFs, so no secret is ever written into a
+  cell formula.
+- **The end-of-install check can no longer hang the wizard.** Both helper scripts
+  now bound the TCP connect (5s) instead of waiting for the OS SYN timeout (up to
+  ~20-40s) when the host is unreachable or firewalled, and they report the actual
+  reason ("the target machine actively refused it") rather than a bare
+  "Exception calling Wait with 1 argument(s)".
 ## v1.6.1
 
 ### Fixed

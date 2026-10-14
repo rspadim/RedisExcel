@@ -28,9 +28,16 @@ XLLs (removing the one that does not match your Office bitness). It runs
    `scripts\install-server.ps1`, which uses Docker if available and otherwise
    falls back to WSL or points you at Memurai - so you do not need a server
    beforehand.
-5. **End-of-install check.** It PINGs the server and, if you ticked the box,
-   opens a visible Excel workbook (XLL loaded) titled *"RedisExcel instalado com
-   sucesso!"* with the server time and a live `Set`/`Get` round trip.
+5. **End-of-install check.** It authenticates when you gave a password (a server
+   with `requirepass` answers `-NOAUTH` to a bare PING, so an unauthenticated
+   probe used to report a healthy install as unreachable), then PINGs the server
+   and, if you ticked the box, opens a visible Excel workbook (XLL loaded) titled
+   *"RedisExcel instalado com sucesso!"* with the server time and a live `Set`/`Get`
+   round trip. With a password the sheet uses the no-argument form of the UDFs, so
+   the secret never lands in a cell formula. The password reaches the check
+   through a private temp file, not the argument list (a password with a quote or
+   a space cannot be passed as one argument safely, and a command line is
+   readable by other local users).
 6. On the last page it explains the one manual step: add the `.xll` in Excel via
    **File > Options > Add-ins > Go... > Browse...** (Excel exposes no safe
    automation for that).
@@ -145,6 +152,10 @@ the GitHub release on a `v*` tag.
 - The XLL is **not code-signed**, so Windows SmartScreen and some antivirus
   products may warn; the installer cannot fix that without a code-signing
   certificate.
+- The end-of-install check probes the **wizard's** host/port/password. On the
+  advanced page you can edit the whole `RedisExcel.json` after those fields are
+  filled, and an edit made *only* there (say a different host) is not what the
+  check probes - validate such a file with `scripts\Validate-Config.cmd`.
 - Excel must be **closed** while installing/updating (the `.XLL` file is locked
   while loaded).
 - The add-in folder is only the *first* place searched for `RedisExcel.json`;

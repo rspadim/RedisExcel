@@ -1204,14 +1204,33 @@ end;
 // ---- Finish: TEST the configuration, then optionally open a sample sheet ---
 procedure DeinitializeSetup();
 var
-  HostPort, Args, Msg: String;
+  HostPort, Args, PwFile, Msg: String;
 begin
   // Only on a successful install (never during uninstall/cancel).
   if not InstallCompleted then Exit;
 
   HostPort := HostString();
   if Pos(',', HostPort) > 0 then HostPort := Copy(HostPort, 1, Pos(',', HostPort) - 1);
+
+  // The end-of-install checks must AUTH: a server configured with a password
+  // answers -NOAUTH to a bare PING, and the wizard would then report a healthy
+  // install as "did not answer a PING" (and the sample sheet's status cell as
+  // FALHOU). The secret travels through a private temp file rather than the
+  // argument list: a password containing a quote or a space cannot be passed as a
+  // single argument safely, and a process command line is readable by other local
+  // users. (A silent install still receives /PASSWORD= on ITS command line, which
+  // the setup log records - that one is the operator's own choice.)
+  PwFile := '';
+  if PasswordValue() <> '' then
+  begin
+    PwFile := ExpandConstant('{tmp}\redisexcel-pw.txt');
+    if not SaveStringToFile(PwFile, PasswordValue(), False) then
+      PwFile := ''; // unreadable temp: fall back to the unauthenticated probe
+  end;
+
   Args := '-ServerHost "' + HostPort + '"';
+  if PwFile <> '' then
+    Args := Args + ' -PasswordFile "' + PwFile + '"';
   TestOk := (RunScript('test-connection.ps1', Args) = 0);
 
   if not TestOk then
@@ -1227,8 +1246,15 @@ begin
     MsgBox(Msg, mbInformation, MB_OK);
 
   if OpenExcelChecked() then
-    RunScript('verify-connection.ps1',
-      '-AddInDir "' + ExpandConstant('{app}') + '" -ServerHost "' + HostPort + '" -OpenExcel -Quiet');
+  begin
+    Args := '-AddInDir "' + ExpandConstant('{app}') + '" -ServerHost "' + HostPort + '" -OpenExcel -Quiet';
+    if PwFile <> '' then
+      Args := Args + ' -PasswordFile "' + PwFile + '"';
+    RunScript('verify-connection.ps1', Args);
+  end;
+
+  if PwFile <> '' then
+    DeleteFile(PwFile);
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

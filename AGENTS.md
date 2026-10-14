@@ -553,9 +553,10 @@ release: `v1.6.1` (installer/uninstaller fixes on top of the v1.6.0 named-server
 configuration - see the root `CHANGELOG.md`).
 
 On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
-guard fails the release otherwise and names this line), (2) update the `Current
-release` value above, and (3) if the Excel surface changed, refresh the frozen
-baseline - `PublicSurfaceParityTests.BaselineHeader`/the generated
+guard fails the release otherwise and names this line); work in progress keeps an
+`(unreleased)` suffix on that heading, which the tag step removes. (2) update the
+`Current release` value above, and (3) if the Excel surface changed, refresh the
+frozen baseline - `PublicSurfaceParityTests.BaselineHeader`/the generated
 `test\RedisExcel.Tests\PublicSurface.baseline.txt` - with
 `REDISEXCEL_REFRESH_PUBLIC_SURFACE=1` and review the diff. The landing pages
 (`docs\`) carry no version, so they only change when their text changes.
