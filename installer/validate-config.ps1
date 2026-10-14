@@ -351,6 +351,52 @@ foreach ($name in $json.PSObject.Properties.Name) {
   Line ("  checked  /$name")
 }
 
+# Connection-string sanity the JSON schema cannot express: StackExchange.Redis
+# splits options on commas, so a `password=` value that continues after a comma
+# is SILENTLY TRUNCATED (password=a,b -> the client uses "a" and reads "b" as
+# another option; there is no quoting that works and the URI form carries no
+# credentials). Warn on the shape that looks like a truncated password: a
+# comma-separated segment after password= that is neither key=value nor host:port.
+function Test-TruncatedPassword([string]$conn) {
+  $i = $conn.IndexOf('password=', [System.StringComparison]::OrdinalIgnoreCase)
+  if ($i -lt 0) { return $false }
+  $rest = $conn.Substring($i + 9)
+  $segments = $rest -split ','
+  for ($k = 1; $k -lt $segments.Count; $k++) {
+    $s = $segments[$k].Trim()
+    if ($s -eq '') { continue }
+    if ($s -match '=') { continue }                       # key=value option
+    # A host segment: a name/ip WITH a port, a dotted name, localhost, or a
+    # bracketed IPv6. A bare word (no port/dot) is not treated as a host: it is
+    # the signature of a password that continued after the comma.
+    if ($s -match '^\[[0-9A-Fa-f:]+\](:\d+)?$') { continue }   # [::1]:6379
+    if ($s -match '^[A-Za-z0-9\-\.]*[A-Za-z\-][A-Za-z0-9\-\.]*:\d+$') { continue } # name:port
+    if ($s -match '^([A-Za-z0-9\-]+\.)+[A-Za-z0-9\-]+(:\d+)?$') { continue }  # dotted name
+    if ($s -match '^localhost(:\d+)?$') { continue }
+    return $true
+  }
+  return $false
+}
+function Check-ConnectionStrings($node, [string]$path) {
+  if ($null -eq $node) { return }
+  if ($node -is [string]) {
+    if (Test-TruncatedPassword $node) {
+      $warnings.Add("$path : the password looks truncated - a comma after password= starts a new option (use a password without commas)")
+    }
+    return
+  }
+  if ($node -is [System.Management.Automation.PSCustomObject]) {
+    foreach ($p in $node.PSObject.Properties) { Check-ConnectionStrings $p.Value ("$path/" + $p.Name) }
+    return
+  }
+  if ($node -is [System.Collections.IEnumerable] -and -not ($node -is [string])) {
+    $n = 0
+    foreach ($item in $node) { Check-ConnectionStrings $item ("$path[" + $n + "]"); $n++ }
+  }
+}
+Check-ConnectionStrings $json.Default '/Default'
+if ($json.Servers) { Check-ConnectionStrings $json.Servers '/Servers' }
+
 Line ''
 Line '----------------------------------------------------------------------'
 if ($problems.Count -eq 0) {

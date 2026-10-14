@@ -52,6 +52,13 @@ RedisExcelSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel"
 `RedisExcel64-packed.xll`), `RedisExcel.dll`, `NLog.config` and `RedisExcel.json`
 into one folder and register the XLL from Excel.
 
+> **Passwords**: the value is embedded in the Redis connection string, which
+> StackExchange.Redis splits on commas, so a password containing a **comma**
+> cannot be represented (the client silently uses only the part before it, and
+> there is no quoting that works). A password with `;` is fine. `Validate-Config.cmd`
+> warns when a connection string looks like a truncated password. For such a
+> password, set it in `RedisExcel.json` by hand with a form your client accepts.
+
 ### Languages
 
 The wizard is localized in 10 languages (English - the default, 简体中文,
