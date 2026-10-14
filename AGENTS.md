@@ -566,6 +566,18 @@ These cost real debugging time — read before writing automation.
    PONG. The message now names the CLI and its exit code
    (`CLI 'redis-cli ' exit=-1073741515`), and `-RedisCli "docker exec <container>
    redis-cli"` sidesteps the local CLI entirely.
+9. **The installer's interactive flow can be verified without stealing focus.**
+   `SetForegroundWindow` is refused to a background process (and
+   `AttachThreadInput` fails when the current foreground window belongs to a
+   higher-integrity process), so keystrokes would land in whatever the user has
+   focused. Capture each page with `PrintWindow` (it renders an unfocused window)
+   and advance by posting `BM_CLICK` to the wizard's own button controls. Inno's
+   option pages are ONE owner-drawn `TNewCheckListBox` - the items have no child
+   windows and it is not a Win32 LISTBOX - so select an option by posting
+   `VK_DOWN` to that list. Two traps: the installer and the uninstaller
+   re-launch themselves from `{tmp}` (`RedisExcelSetup-*.tmp`, `_unins.tmp`), so
+   track the window rather than the launched process, and the uninstaller does
+   nothing until its confirmation is answered Yes.
 
 ## Release
 
