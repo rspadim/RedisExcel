@@ -674,7 +674,10 @@ Name: "nlogconfig";  Description: "{cm:TaskNlogDesc}"; GroupDescription: "{cm:Gr
 Name: "excelautoload"; Description: "{cm:TaskAutoLoadDesc}"; GroupDescription: "{cm:GroupExcel}"
 
 [Icons]
-Name: "{group}\{cm:IconUninstall}"; Filename: "{uninstallexe}"
+; The shortcut FILE name must be language-independent: using the localized
+; {cm:IconUninstall} made a reinstall in another language create a SECOND
+; shortcut and leave the old one orphaned (audit J1/C2). The AppName is stable.
+Name: "{group}\{#AppName}"; Filename: "{uninstallexe}"; Comment: "{cm:IconUninstall}"
 
 [Files]
 Source: "{#BuildDir}\RedisExcel.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -1418,6 +1421,15 @@ begin
     UnregisterExcelAutoLoad();
     // The add-in registers this ProgId under HKCU on load; remove it.
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\RedisRtd');
+    // Excel-DNA's ComServer registers the CLSID -> InProcServer32 mapping under
+    // HKCU too (RedisRtd.cs AutoOpen); the uninstaller deletes files directly so
+    // that path never runs, leaving an orphaned key pointing at the deleted XLL
+    // (audit J1/C1). Remove it explicitly. Excel-DNA (64-bit Office) writes it in
+    // the 64-BIT registry view, and the Inno uninstaller is 32-bit, so the plain
+    // HKCU root would look in the wrong view - use HKCU64. The braces are built
+    // with Chr(123)/Chr(125) so Inno does not read '{...}' as a constant.
+    RegDeleteKeyIncludingSubkeys(HKCU64,
+      'Software\Classes\CLSID\' + Chr(123) + '7067CF61-FE6B-3C78-A522-F5602308B418' + Chr(125));
     // Snapshot the ticked servers while the page still exists, then remove them.
     // This MUST run at usUninstall: the [UninstallDelete] entry removes
     // {app}\scripts (and the helper) BEFORE usPostUninstall, so calling it there
