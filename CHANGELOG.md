@@ -1,3 +1,41 @@
+## v1.6.1
+
+### Fixed
+
+- **Installer, silent mode: an unknown `/SERVER=<kind>` value** (a typo such as
+  `/SERVER=docker`) used to install no server at all and still finish with exit
+  code 0, so an automated install could not tell that the server step had been
+  skipped (its message is suppressed in silent mode). It now stops the install
+  **before any file is copied**, with a non-zero exit code and the reason in the
+  setup log; the documented values stay case-insensitive.
+- **Uninstaller: a server removal that did not take effect** (the container is
+  still there, the package is still installed, the Memurai service is still
+  present) was reported as a success. The result is now verified by detection -
+  the same checks `scripts\detect-servers.ps1` uses - and the "could not remove"
+  message appears with a non-zero exit code. Re-running an uninstall whose servers
+  are already gone stays quiet (exit 0).
+- **The bundled config validator**: the `Validate-Config.cmd` improvements
+  announced with v1.6.0 (a root that is not a JSON object rejected, a case-variant
+  duplicate key tolerated instead of reported as invalid JSON, the same `Servers`
+  verdict as the add-in, and the warning for a password that looks truncated by a
+  comma) landed just after that tag, so the v1.6.0 installer shipped the previous
+  script. They ship here.
+
+### Added
+
+- **A stable installer download.** Each release now also publishes the installer
+  without a version in its name, so
+  `https://github.com/rspadim/RedisExcel/releases/latest/download/RedisExcelSetup.exe`
+  always downloads the newest release. The versioned
+  `RedisExcelSetup-<version>.exe` is unchanged (it is still the file the wizard
+  and the CI name), but a versioned name under `/releases/latest/` starts
+  returning 404 as soon as the next release is published.
+
+### Changed
+
+- **No functional change in the add-in itself.** The 1.6.1 XLL/DLL is a rebuild of
+  the 1.6.0 sources (one internal refactor, no behavior change), so this release
+  is about the installer, the uninstaller and the validator it ships.
 # Changelog
 
 ## v1.6.0
