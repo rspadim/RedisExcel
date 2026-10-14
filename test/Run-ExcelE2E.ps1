@@ -1012,6 +1012,19 @@ try {
     Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd", 'ALTA') | Out-Null
     Check (Wait-CellText $rtd 'B7' 'ALTA')                   'RTD SUB received the published message'
     Check (Wait-CellText $rtd 'B8' 'ALTA')                   'RTD PSUB received the published message'
+
+    # Cross-talk: each RTD topic must show ITS OWN message. Publishing the SAME
+    # payload to both (above) cannot detect a swapped or shared value, so this
+    # publishes to a channel that ONLY the pattern matches (B7 subscribes to the
+    # exact channel, B8 to "<prefix>.rtd*") and asserts both cells: the PSUB cell
+    # must take the new payload AND the SUB cell must keep its old one. A topic
+    # registry keyed by channel instead of TopicId, a shared per-channel cache or
+    # any index mix-up shows up here as the wrong text in one of the two cells.
+    Invoke-RedisCli @('PUBLISH', "$KeyPrefix.rtd2", 'PSUB_ONLY') | Out-Null
+    Check (Wait-CellText $rtd 'B8' 'PSUB_ONLY')              'RTD PSUB shows the pattern-only payload'
+    Start-Sleep -Milliseconds 800
+    $subCellText = Get-CellText $rtd 'B7'
+    Check ($subCellText -eq 'ALTA')                          ('RTD SUB kept its own payload (got "' + $subCellText + '")')
     Check (Wait-CellNumberMin $rtd 'B9' 1)                   'RTD ConnectionCount >= 1'
     Check (Wait-CellNumberMin $rtd 'B10' 5)                  'RTD TopicCount >= 5'
     Check (Wait-CellNumberMin $rtd 'B11' 2)                  'RTD SubscriptionCount >= 2'
