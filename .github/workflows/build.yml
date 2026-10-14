@@ -32,6 +32,21 @@ jobs:
         shell: pwsh
         run: msbuild RedisExcel.sln /p:Configuration=Release /p:InformationalVersion=dev
 
+      - name: Build every test project (catches a missing reference offline)
+        shell: pwsh
+        run: |
+          $projects = @(
+            'test/RedisExcel.Tests/RedisExcel.Tests.csproj',
+            'test/SmokeTests/RedisExcel.SmokeTests.csproj',
+            'test/LivenessTests/LivenessTests.csproj',
+            'test/LoadTests/RedisExcel.LoadTests.csproj'
+          )
+          foreach ($p in $projects) {
+            Write-Host "== build $p"
+            dotnet build $p -c Release --nologo
+            if ($LASTEXITCODE -ne 0) { throw "build failed: $p" }
+          }
+
       - name: Run unit tests
         run: dotnet test test/RedisExcel.Tests/RedisExcel.Tests.csproj -c Release
 

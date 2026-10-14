@@ -1404,7 +1404,12 @@ namespace RedisExcel.LivenessTests
                 }
                 else
                 {
-                    try { AdminDb().Execute("CLIENT", "PAUSE", "3000"); }
+                    // The pause must OUTLAST the configured sync timeout, or the
+                    // write legitimately completes inside it and the assertion
+                    // below is a false failure (the v1.6 default syncTimeout is
+                    // 5000ms, so the old fixed 3000ms pause no longer faults).
+                    int pauseMs = RedisUDF.ResponseTimeoutMs() + 3000;
+                    try { AdminDb().Execute("CLIENT", "PAUSE", pauseMs.ToString(Inv)); }
                     catch (Exception ex) { Failures.Add(id + " :: CLIENT PAUSE failed: " + ex.Message); }
                     MarkOutage();
                     Thread.Sleep(250);

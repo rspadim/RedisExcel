@@ -12,6 +12,8 @@
     <PackageReference Include="StackExchange.Redis" Version="2.8.41" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="NJsonSchema" Version="10.9.0" />
+    <!-- Config.cs resolves the add-in folder via ExcelDnaUtil.XllPath. -->
+    <PackageReference Include="ExcelDna.Integration" Version="1.9.0-beta2" />
   </ItemGroup>
 
   <ItemGroup>
