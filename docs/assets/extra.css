@@ -1,0 +1,15 @@
+/* Hero image and light page polish. */
+
+.md-typeset .rdx-hero {
+  display: block;
+  width: min(100%, 42rem);
+  height: auto;
+  margin: 0.6rem auto 1.2rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--md-default-fg-color--lightest, #d8d8d8);
+}
+
+/* Keep the lead paragraph close to the hero image. */
+.md-typeset .rdx-hero + p {
+  margin-top: 0.2rem;
+}

@@ -8,6 +8,7 @@ packages/
 *.log
 .vs/
 TestResults/
+_site/
 *.xll
 t1.xlsx
 t2.xlsx

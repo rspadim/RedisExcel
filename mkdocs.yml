@@ -1,0 +1,93 @@
+site_name: RedisExcel
+site_description: Add-in do Excel (XLL) que conecta o Excel ao Redis via RTD e funções de planilha
+site_author: rspadim
+site_url: https://rspadim.github.io/RedisExcel/
+repo_url: https://github.com/rspadim/RedisExcel
+repo_name: rspadim/RedisExcel
+edit_uri: edit/main/docs/
+copyright: >-
+  RedisExcel é um projeto independente e não é afiliado nem endossado pela Redis
+  Ltd. Licença MIT.
+
+docs_dir: docs
+site_dir: _site
+use_directory_urls: true
+
+theme:
+  name: material
+  language: pt-BR
+  favicon: assets/favicon.svg
+  features:
+    - navigation.top
+    - navigation.tracking
+    - toc.follow
+    - content.code.copy
+    - content.code.select
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: red
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Mudar para o modo escuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: red
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Mudar para o modo claro
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/rspadim/RedisExcel
+      name: Repositório no GitHub
+
+extra_css:
+  - assets/extra.css
+
+# pt-BR is the default language; translations live in docs/<locale>/index.md
+# (currently English and Spanish - new languages are welcome).
+plugins:
+  - search:
+      lang:
+        - pt
+        - en
+  - i18n:
+      docs_structure: folder
+      fallback_to_default: true
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: pt-BR
+          default: true
+          name: Português (Brasil)
+          build: true
+        - locale: en
+          name: English
+          build: true
+          nav_translations:
+            Início: Home
+        - locale: es
+          name: Español
+          build: true
+          nav_translations:
+            Início: Inicio
+
+nav:
+  - Início: index.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
