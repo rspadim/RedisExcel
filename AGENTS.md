@@ -59,6 +59,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
 | `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
 | `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). The wizard ships **10 languages** (English, both Chinese, pt-BR, es, ru, fr, ko, de, ja; the two Chinese `.isl` live in `installer/languages/`, the rest come with Inno). The add-in inside Excel is **English-only** on purpose (localized cell text would make volatile functions locale-dependent). Built by CI; see `installer/README.md`. |
+| `docs/`, `overrides/`, `mkdocs.yml`, `tools/make-social-cards.py` | The landing page (MkDocs Material, pt-BR/en/es via `mkdocs-static-i18n`) published by `pages.yml`. Each language has its own social card (`docs/assets/social-card*.png`) used as the page hero and as `og:image` (set per page through the `og_image` front matter, read by `overrides/main.html`); `tools/make-social-cards.py` regenerates them from the original by repainting only the subtitle, so a new language needs one line there. |
 
 ## Runtime model (why it is the way it is)
 
