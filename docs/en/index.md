@@ -1,10 +1,12 @@
 ---
 description: Excel add-in (XLL) that connects Excel to Redis through RTD and worksheet functions
+og_image: assets/social-card-en.png
+og_locale: en
 ---
 
 # RedisExcel
 
-![RedisExcel — Excel and Redis, via UDF, RTD and Pub/Sub](../assets/redisexcel.jpg){: .rdx-hero }
+![RedisExcel - Excel and Redis, via UDF, RTD and Pub/Sub](../assets/social-card-en.png){: .rdx-hero }
 
 **Excel add-in (XLL) that connects Excel to [Redis](https://redis.io/)** through
 RTD (Real-Time Data) and UDFs (worksheet functions): type a formula, the Redis

@@ -1,10 +1,12 @@
 ---
 description: Complemento de Excel (XLL) que conecta Excel a Redis mediante RTD y funciones de hoja de cálculo
+og_image: assets/social-card-es.png
+og_locale: es
 ---
 
 # RedisExcel
 
-![RedisExcel — Excel y Redis, vía UDF, RTD y Pub/Sub](../assets/redisexcel.jpg){: .rdx-hero }
+![RedisExcel - Excel y Redis, vía UDF, RTD y Pub/Sub](../assets/social-card-es.png){: .rdx-hero }
 
 **Complemento de Excel (XLL) que conecta Excel a [Redis](https://redis.io/)**
 mediante RTD (Real-Time Data) y UDF (funciones definidas por el usuario):
