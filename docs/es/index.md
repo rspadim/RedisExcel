@@ -117,14 +117,25 @@ Ejemplos
 =RedisUDFJSONToMatrix(RedisUDFChannelLatest("rango")) ' payload JSON → matriz de la hoja
 ```
 
-Y el camino inverso, publicando desde fuera con Python:
+Y desde fuera de Excel, con Python puedes leer, suscribirte y publicar:
 
 ```python
 import redis
 
 r = redis.StrictRedis(host="localhost", port=6379, db=0)
+
+# Python -> Excel: escribe una clave y publica en un canal en vivo
 r.set("precio_btc", "67000.50")   # Excel lo lee con  =RedisUDFGet("precio_btc")
 r.publish("alertas", "ALTA")      # aparece en  =RedisUDFChannelLatest("alertas")
+
+# Excel -> Python: lee lo que escribió la hoja con  =RedisUDFSet("precio_btc", ...)
+print(r.get("precio_btc"))
+
+# Excel -> Python: suscríbete a lo que publica la hoja con  =RedisUDFChannelPublish("alertas", ...)
+pubsub = r.pubsub()
+pubsub.subscribe("alertas")
+for message in pubsub.listen():
+    print(message)
 ```
 
 

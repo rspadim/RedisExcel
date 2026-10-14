@@ -219,18 +219,28 @@ error cells and logs).
 
 ---
 
-## 🚀 Example: Publishing from Python
+## 🚀 Example: Reading and publishing from Python
 
 ```python
 import redis
 
 r = redis.StrictRedis(host='localhost', port=6379, db=0)
 
-# Set a key
+# Set a key the sheet reads with =RedisUDFGet("preco_btc")
 r.set("preco_btc", "67000.50")
 
-# Publish to a channel
+# Publish to a channel that feeds =RedisUDFChannelLatest("canal_alerta")
+# or =RTD("RedisRtd", , "SUB", "canal_alerta")
 r.publish("canal_alerta", "ALTA")
+
+# Read a key the sheet wrote with =RedisUDFSet("preco_btc", ...)
+print(r.get("preco_btc"))
+
+# Subscribe to what the sheet publishes with =RedisUDFChannelPublish("canal_alerta", ...)
+pubsub = r.pubsub()
+pubsub.subscribe("canal_alerta")
+for message in pubsub.listen():
+    print(message)
 ```
 
 ---

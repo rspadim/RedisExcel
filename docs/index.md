@@ -117,14 +117,25 @@ Exemplos
 =RedisUDFJSONToMatrix(RedisUDFChannelLatest("range"))  ' payload JSON → matriz do Excel
 ```
 
-E o caminho inverso, publicando de fora com Python:
+E de fora do Excel, com Python dá para ler, assinar e publicar:
 
 ```python
 import redis
 
 r = redis.StrictRedis(host="localhost", port=6379, db=0)
-r.set("preco_btc", "67000.50")   # o Excel lê com  =RedisUDFGet("preco_btc")
-r.publish("alertas", "ALTA")     # aparece na célula  =RedisUDFChannelLatest("alertas")
+
+# Python → Excel: grava uma chave e publica num canal ao vivo
+r.set("preco_btc", "67000.50")     # o Excel lê com  =RedisUDFGet("preco_btc")
+r.publish("alertas", "ALTA")       # aparece na célula  =RedisUDFChannelLatest("alertas")
+
+# Excel → Python: lê o que a planilha gravou com  =RedisUDFSet("preco_btc", ...)
+print(r.get("preco_btc"))
+
+# Excel → Python: assina o que a planilha publica com  =RedisUDFChannelPublish("alertas", ...)
+pubsub = r.pubsub()
+pubsub.subscribe("alertas")
+for message in pubsub.listen():
+    print(message)
 ```
 
 
