@@ -134,9 +134,12 @@ $script:Excel = $null
 $script:Workbook = $null
 $script:ExcelPidsBefore = @()
 # Set when the "Excel dies mid-stream" scenario intentionally kills this run's
-# hidden Excel: the finally must then skip the COM close/quit calls and the
-# wait-for-exit loop (the COM proxy is dead; the process is already gone).
+# hidden Excel: the finally must then skip the COM close/quit loop (the COM proxy
+# is dead; the process is already gone) and the leftover observer knows the kill
+# time, so an Office recovery relaunch is attributed to THIS run only when it
+# appeared right after it.
 $script:ExcelKilled = $false
+$script:ExcelKillTime = $null
 
 # ------------------------------------------------------------- write mode ----
 # v1.3.0 SyncWrite/AsyncWrites (written to RedisExcel.json before Excel starts;
@@ -1196,15 +1199,41 @@ try {
         Check ($preRtd -ge 1) ('RTD subscription exists before the kill (NUMSUB ' + $rtdChannel + ' = ' + $preRtd + ', expected >= 1)')
         Check ($prePat -ge 1) ('PSUB pattern state exists before the kill (NUMPAT = ' + $prePat + ', expected >= 1)')
 
-        # 2) Kill this run's hidden Excel. The baseline diff leaves exactly one
-        #    candidate by design; any other count means we cannot tell which
-        #    process is ours, so fail loudly and do not kill anything.
+        # 2) Kill this run's hidden Excel. Identify it by the XLL MODULE it has
+        #    loaded, not merely by "an EXCEL.EXE outside the pre-run baseline":
+        #    this repo and a sibling Excel-automation repo (natsexcel) can be
+        #    under test at the same time, each with its own hidden Excel, and the
+        #    baseline diff alone would then see two candidates - failing the
+        #    check at best, killing a foreign instance at worst. The module check
+        #    is exact: our instance has THIS run's packed XLL loaded.
+        function Test-HasOurXll($excelProcess, [string]$expectedXll) {
+            try {
+                return [bool](@($excelProcess.Modules |
+                    Where-Object { $_.ModuleName -eq $expectedXll }).Count)
+            }
+            catch {
+                # Access denied (a process we may not inspect): treat as "not ours"
+                # - never a reason to kill something.
+                return $false
+            }
+        }
+
         $newExcel = @(Get-Process EXCEL -ErrorAction SilentlyContinue |
             Where-Object { $script:ExcelPidsBefore -notcontains $_.Id })
-        if ($newExcel.Count -eq 1) {
-            $killedPid = $newExcel[0].Id
-            Write-Host ("      Stopping this run's hidden Excel (PID {0}) with Stop-Process -Force." -f $killedPid) -ForegroundColor DarkGray
+        $candidates = @($newExcel | Where-Object { Test-HasOurXll $_ $xllName })
+        if ($candidates.Count -eq 0 -and $newExcel.Count -eq 1) {
+            # No module info at all (e.g. access denied on our own instance) but
+            # exactly one new process: same behavior as before the module check.
+            $candidates = $newExcel
+        }
+        if ($candidates.Count -eq 1) {
+            $killedPid = $candidates[0].Id
+            Write-Host ("      Stopping this run's hidden Excel (PID {0}, XLL '{1}') with Stop-Process -Force." -f $killedPid, $xllName) -ForegroundColor DarkGray
+            if ($newExcel.Count -gt 1) {
+                Write-Host ("      (ignoring {0} other EXCEL.EXE process(es) without this run's XLL - a concurrent test)" -f ($newExcel.Count - 1)) -ForegroundColor DarkGray
+            }
             $script:ExcelKilled = $true
+            $script:ExcelKillTime = Get-Date
             try {
                 Stop-Process -Id $killedPid -Force -ErrorAction Stop
             }
@@ -1215,7 +1244,7 @@ try {
             }
         }
         else {
-            Check $false ('expected exactly one EXCEL.EXE outside the pre-run baseline to kill, found ' + $newExcel.Count + ' (not killing anything)')
+            Check $false ('expected exactly one EXCEL.EXE running this run''s XLL to kill, found ' + $candidates.Count + ' of ' + $newExcel.Count + ' new EXCEL.EXE process(es) (not killing anything)')
         }
 
         # 3) The killed process must tear its subscriptions down server-side
@@ -1317,7 +1346,20 @@ finally {
                         Title = $leftoverProcess.MainWindowTitle
                         CommandLine = $leftoverCommandLine
                     }
-                    if ($leftoverCommandLine -match '/restore') { $recoveryRelaunch += $entry }
+                    # Office relaunches an abnormally terminated Excel as
+                    # "EXCEL.EXE /restore" within seconds; only a relaunch inside
+                    # that window is THIS run's. A concurrent Excel-automation run
+                    # (another repo's suite) can start one too, and that one must
+                    # be reported rather than closed. StartTime is read defensively:
+                    # the process may exit between the snapshot and this read.
+                    $startedAt = $null
+                    try { $startedAt = $leftoverProcess.StartTime } catch { $startedAt = $null }
+                    $isOurRelaunch = ($leftoverCommandLine -match '/restore') -and
+                        ($script:ExcelKillTime -ne $null) -and
+                        ($startedAt -ne $null) -and
+                        ($startedAt -ge $script:ExcelKillTime) -and
+                        ($startedAt -le $script:ExcelKillTime.AddSeconds(20))
+                    if ($isOurRelaunch) { $recoveryRelaunch += $entry }
                     else { $unattributed += $entry }
                 }
 

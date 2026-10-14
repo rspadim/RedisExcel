@@ -95,13 +95,13 @@ script's parent folder, the repo root), `-RedisHost`, `-KeyPrefix`,
 `docker exec my-redis redis-cli`) disables the automatic `CLIENT KILL` step.
 
 The "Excel dies mid-stream" step kills this run's own hidden Excel on purpose
-and verifies the server drops every subscription. Office reacts to that crash by
-relaunching the instance to show document recovery (`EXCEL.EXE /restore`), which
-never exits by itself: the script closes that relaunch (dismissing the automatic
-pane, not the recovery data). Any other hidden `EXCEL.EXE` leftover is reported
-with its PID and command line, and closed only with `-CloseExcelLeftovers` -
-the harness never kills an Excel it cannot attribute to the run (this machine
-environment spawns hidden `/automation -Embedding` instances by itself).
+and verifies the server drops every subscription. The victim is identified by the
+XLL module it has loaded, so a concurrent Excel-automation suite (another repo's
+tests) is never a candidate; the Office recovery relaunch (`EXCEL.EXE /restore`)
+that the crash starts is closed when it appeared right after the kill, and any
+other hidden `EXCEL.EXE` leftover is reported with its PID and command line,
+closed only with `-CloseExcelLeftovers` - the harness never kills an Excel it
+cannot attribute to the run.
 
 Security software (AV/EDR) is the top cause of flaky Excel COM automation, so
 the script reports the AV state up front and a `COM retries: total=...` summary

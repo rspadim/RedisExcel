@@ -540,8 +540,20 @@ These cost real debugging time — read before writing automation.
    - Prefer `Range("A1")` addresses over `Cells.Item(r, c)` for clear errors.
    - Scriptblocks invoked with `&` see variables through dynamic scoping; pass
      parameters explicitly when in doubt.
-6. **RTD cells display `#N/D` when the RTD server could not be created** —
+6. **RTD cells display `#N/D` when the RTD server could not be created** -
    check COM registration before suspecting the add-in logic.
+7. **A sibling Excel-automation suite may be under test at the same time**
+   (`../natsexcel` here, and its E2E also kills its own hidden Excel). Its
+   instances - hidden `/automation -Embedding` and the Office `/restore` relaunch
+   its crash test triggers - are indistinguishable from ours by command line, so
+   the E2E identifies ITS victim by the **XLL module loaded**
+   (`RedisExcel-packed.xll` / `RedisExcel64-packed.xll`), never by "an EXCEL.EXE
+   outside the pre-run baseline", and auto-closes a `/restore` only when it
+   appeared within 20s of its own kill. Everything else is reported, never closed:
+   killing a concurrent run's instance would break that run (and closing the wrong
+   recovery pane can hide a real crashed-document list). When Excel processes keep
+   appearing every ~15-30s with no XLL loaded, the other repo is being tested -
+   not a leak of ours.
 
 ## Release
 
