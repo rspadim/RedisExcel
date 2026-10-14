@@ -21,30 +21,14 @@
     <Reference Include="System.Management" />
   </ItemGroup>
 
-  <!-- Compiles the production sources directly. The UDF sources need the
-       managed ExcelDna.Integration assembly only: the smoke test never enables
-       AsyncWrites and never calls a worksheet function, so no Excel process is
-       involved. -->
-  <ItemGroup>
-    <Compile Include="..\..\Config.cs" />
-    <Compile Include="..\..\ConfigSchema.cs" />
-    <Compile Include="..\..\Conflation.cs" />
-    <Compile Include="..\..\ExcelJson.cs" />
-    <Compile Include="..\..\RedisConnectionManager.cs" />
-    <Compile Include="..\..\RedisResultFormatter.cs" />
-    <Compile Include="..\..\RedisSubscriptionManager.cs" />
-    <Compile Include="..\..\RedisRuntime.cs" />
-    <Compile Include="..\..\RedisUDF.cs" />
-    <Compile Include="..\..\RedisUdfAsync.cs" />
-    <Compile Include="..\..\TickGate.cs" />
-    <Compile Include="..\..\UpdateCheck.cs" />
-    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
-  </ItemGroup>
+  <!-- Compiles the production sources directly (ONE shared list). The UDF
+       sources need the managed ExcelDna.Integration assembly only: the smoke
+       test never enables AsyncWrites and never calls a worksheet function, so
+       no Excel process is involved. -->
+  <Import Project="..\TestSupport\ProductionSources.props" />
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\RedisExcel.schema.json">
-      <LogicalName>RedisExcel.schema.json</LogicalName>
-    </EmbeddedResource>
+    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
   </ItemGroup>
 
 </Project>

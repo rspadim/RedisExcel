@@ -8,38 +8,76 @@ using Xunit;
 namespace RedisExcel.Tests
 {
     /// <summary>
-    /// Guards the hand-maintained Compile list in RedisExcel.Tests.csproj: the
-    /// unit tests compile the production sources directly (no ProjectReference),
-    /// so a new root production file silently excluded there would never be
-    /// exercised by the unit suite. RedisRtd.cs is the only intentional
-    /// exclusion: its RTD/COM surface is covered by the E2E script instead.
+    /// Guards the SINGLE production-source list every test project imports
+    /// (test\TestSupport\ProductionSources.props): the suites compile the
+    /// production sources directly (no ProjectReference), so a new root
+    /// production file silently missing there would never be exercised by any
+    /// suite. RedisRtd.cs is the only intentional exclusion: its RTD/COM surface
+    /// is covered by the E2E script and the shipped-assembly public-surface test.
     /// </summary>
     public class ProjectFileParityTests
     {
         [Fact]
-        public void TestsProject_CompilesEveryRootProductionSourceExceptRedisRtd()
+        public void EveryTestProject_ImportsTheSharedProductionSourceList()
         {
             string repoRoot = FindRepoRoot();
-            string projectPath = Path.Combine(
-                repoRoot, "test", "RedisExcel.Tests", "RedisExcel.Tests.csproj");
-            Assert.True(File.Exists(projectPath), "test project not found at " + projectPath);
+            foreach (string project in new[]
+            {
+                Path.Combine("test", "RedisExcel.Tests", "RedisExcel.Tests.csproj"),
+                Path.Combine("test", "SmokeTests", "RedisExcel.SmokeTests.csproj"),
+                Path.Combine("test", "LivenessTests", "LivenessTests.csproj"),
+                Path.Combine("test", "LoadTests", "RedisExcel.LoadTests.csproj"),
+            })
+            {
+                string path = Path.Combine(repoRoot, project);
+                Assert.True(File.Exists(path), "test project not found at " + path);
+                var document = XDocument.Load(path);
+                XNamespace ns = document.Root.Name.Namespace;
+                bool imports = document.Descendants(ns + "Import")
+                    .Any(item => ((string)item.Attribute("Project") ?? string.Empty)
+                        .IndexOf("ProductionSources.props", StringComparison.OrdinalIgnoreCase) >= 0);
+                Assert.True(imports,
+                    project + " must import ..\\TestSupport\\ProductionSources.props "
+                    + "(the single production-source list; a per-project copy drifts)");
 
-            string projectDirectory = Path.GetDirectoryName(projectPath);
+                // A hand list in the project itself is what we removed: it must not
+                // come back (the props is the only place the sources are declared).
+                bool hasOwnProductionCompile = document.Descendants(ns + "Compile")
+                    .Any(item => ((string)item.Attribute("Include") ?? string.Empty)
+                        .Replace('\\', '/').StartsWith("../../", StringComparison.Ordinal));
+                Assert.False(hasOwnProductionCompile,
+                    project + " must not declare production sources itself; add them to "
+                    + "ProductionSources.props instead");
+            }
+        }
+
+        [Fact]
+        public void SharedList_CompilesEveryRootProductionSourceExceptRedisRtd()
+        {
+            string repoRoot = FindRepoRoot();
+            string propsPath = Path.Combine(repoRoot, "test", "TestSupport", "ProductionSources.props");
+            Assert.True(File.Exists(propsPath), "shared props not found at " + propsPath);
+
+            string propsDirectory = Path.GetDirectoryName(propsPath);
             var compiled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var project = XDocument.Load(projectPath);
-            XNamespace ns = project.Root.Name.Namespace;
-            foreach (var compile in project.Descendants(ns + "Compile"))
+            var document = XDocument.Load(propsPath);
+            XNamespace ns = document.Root.Name.Namespace;
+            foreach (var compile in document.Descendants(ns + "Compile"))
             {
                 var include = (string)compile.Attribute("Include");
                 if (string.IsNullOrWhiteSpace(include))
-                    continue; // Remove/Update items carry no Include
-                foreach (string file in ExpandCompileItem(projectDirectory, include))
-                    compiled.Add(file);
+                    continue;
+                // The props uses $(MSBuildThisFileDirectory) for the repo root.
+                string normalized = include
+                    .Replace("$(MSBuildThisFileDirectory)", propsDirectory + Path.DirectorySeparatorChar)
+                    .Replace('\\', Path.DirectorySeparatorChar)
+                    .Replace('/', Path.DirectorySeparatorChar);
+                compiled.Add(Path.GetFullPath(normalized));
             }
 
             // Every top-level production source (the root is the only place
-            // production .cs files live) must be compiled by the test project,
-            // except the deliberately excluded RTD/COM file.
+            // production .cs files live) must be listed, except the deliberately
+            // excluded RTD/COM file.
             List<string> required = Directory.GetFiles(repoRoot, "*.cs", SearchOption.TopDirectoryOnly)
                 .Select(Path.GetFullPath)
                 .Where(path => !string.Equals(
@@ -49,11 +87,11 @@ namespace RedisExcel.Tests
 
             List<string> missing = required.Where(path => !compiled.Contains(path)).ToList();
             Assert.True(missing.Count == 0,
-                "production sources missing from RedisExcel.Tests.csproj's Compile list: "
+                "production sources missing from test\\TestSupport\\ProductionSources.props: "
                 + string.Join(", ", missing));
 
             // The exclusion is intentional: adding RedisRtd.cs here would pull
-            // the RTD/COM surface into the unit suite and mask that gap.
+            // the RTD/COM surface into every suite and mask that gap.
             Assert.DoesNotContain(
                 Path.GetFullPath(Path.Combine(repoRoot, "RedisRtd.cs")), compiled);
         }

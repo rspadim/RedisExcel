@@ -87,8 +87,17 @@ namespace RedisExcel
         private const string ResourceSuffix = "RedisExcel.schema.json";
 
         private static readonly Lazy<string> _schemaText = new Lazy<string>(ReadSchemaText);
-        private static readonly Lazy<JsonSchema> _schema =
-            new Lazy<JsonSchema>(() => JsonSchema.FromJsonAsync(_schemaText.Value).GetAwaiter().GetResult());
+        private static readonly Lazy<JsonSchema> _schema = new Lazy<JsonSchema>(LoadSchema);
+
+        /// <summary>Builds the compiled schema on first use. The synchronous wait
+        /// here is the ONE sanctioned site outside RedisUDF.WaitBounded: it parses
+        /// the embedded schema text (no network) and is named so the
+        /// unbounded-blocking tripwire (NoUnboundedBlockingTests) can allow it
+        /// explicitly instead of it being an anonymous lambda.</summary>
+        private static JsonSchema LoadSchema()
+        {
+            return JsonSchema.FromJsonAsync(_schemaText.Value).GetAwaiter().GetResult();
+        }
 
         /// <summary>The embedded schema document, verbatim (for the Excel function
         /// and for tooling).</summary>

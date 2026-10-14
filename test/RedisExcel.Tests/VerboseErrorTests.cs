@@ -118,7 +118,7 @@ namespace RedisExcel.Tests
                 var grid = (object[,])RedisUDF.RedisUDFPubSubChannelsInfo(ExcelDna.Integration.ExcelMissing.Value);
                 Assert.True(grid.GetLength(0) == 1 && grid.GetLength(1) == 1,
                     "expected the #CONFIG 1x1 cell, got " + grid.GetLength(0) + "x" + grid.GetLength(1)
-                    + " first=[" + grid[0, 0] + "]");
+                    + " first=[" + grid[0, 0] + "]" + (grid.GetLength(1) > 1 ? " second=[" + grid[0, 1] + "]" : ""));
                 string cell = grid[0, 0] as string;
                 Assert.StartsWith("#CONFIG: ", cell);
                 Assert.Contains("expected an integer", cell);

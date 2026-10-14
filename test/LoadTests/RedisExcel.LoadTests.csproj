@@ -17,26 +17,15 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Reference Include="System.Net.Http" />
     <Reference Include="System.Management" />
   </ItemGroup>
 
-  <!-- Compiles the production sources directly: no Excel dependency for these files. -->
-  <ItemGroup>
-    <Compile Include="..\..\Config.cs" />
-    <Compile Include="..\..\ConfigSchema.cs" />
-    <Compile Include="..\..\Conflation.cs" />
-    <Compile Include="..\..\RedisConnectionManager.cs" />
-    <Compile Include="..\..\RedisResultFormatter.cs" />
-    <Compile Include="..\..\RedisSubscriptionManager.cs" />
-    <Compile Include="..\..\RedisRuntime.cs" />
-    <Compile Include="..\..\TickGate.cs" />
-    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
-  </ItemGroup>
+  <!-- Compiles the production sources directly (ONE shared list). -->
+  <Import Project="..\TestSupport\ProductionSources.props" />
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\RedisExcel.schema.json">
-      <LogicalName>RedisExcel.schema.json</LogicalName>
-    </EmbeddedResource>
+    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
   </ItemGroup>
 
 </Project>

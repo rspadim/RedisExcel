@@ -24,35 +24,16 @@
   </ItemGroup>
 
   <!--
-    Link the production sources instead of a ProjectReference to RedisExcel.csproj:
-    referencing the add-in project would run the full ExcelDna packing step on every
-    test run. The add-in itself is still built by CI and the release build.
-    RedisRtd.cs is intentionally NOT linked: it is the RTD/COM surface, and its
-    ConnectData/PollHost behavior is exercised by the E2E script instead.
-    Any NEW production source file needed by unit tests must be added to this
-    Compile list (and possibly to test\SmokeTests\Program.cs's equivalent list).
+    The production sources are linked from test\TestSupport\ProductionSources.props
+    (ONE list for every test project; RedisRtd.cs is the only intentional
+    exclusion - it is covered by the Excel E2E and the shipped-assembly
+    public-surface test).
   -->
-  <ItemGroup>
-    <Compile Include="..\..\Config.cs" Link="Production\Config.cs" />
-    <Compile Include="..\..\ConfigSchema.cs" Link="Production\ConfigSchema.cs" />
-    <Compile Include="..\..\Conflation.cs" Link="Production\Conflation.cs" />
-    <Compile Include="..\..\ExcelJson.cs" Link="Production\ExcelJson.cs" />
-    <Compile Include="..\..\RedisConnectionManager.cs" Link="Production\RedisConnectionManager.cs" />
-    <Compile Include="..\..\RedisResultFormatter.cs" Link="Production\RedisResultFormatter.cs" />
-    <Compile Include="..\..\RedisSubscriptionManager.cs" Link="Production\RedisSubscriptionManager.cs" />
-    <Compile Include="..\..\RedisRuntime.cs" Link="Production\RedisRuntime.cs" />
-    <Compile Include="..\..\TickGate.cs" Link="Production\TickGate.cs" />
-    <Compile Include="..\..\UpdateCheck.cs" Link="Production\UpdateCheck.cs" />
-    <Compile Include="..\..\RedisUDF.cs" Link="Production\RedisUDF.cs" />
-    <Compile Include="..\..\RedisUdfAsync.cs" Link="Production\RedisUdfAsync.cs" />
-    <Compile Include="..\TestSupport\ObserverDoubles.cs" Link="TestSupport\ObserverDoubles.cs" />
-    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
-  </ItemGroup>
+  <Import Project="..\TestSupport\ProductionSources.props" />
 
   <ItemGroup>
-    <EmbeddedResource Include="..\..\RedisExcel.schema.json">
-      <LogicalName>RedisExcel.schema.json</LogicalName>
-    </EmbeddedResource>
+    <Compile Include="..\TestSupport\ObserverDoubles.cs" Link="TestSupport\ObserverDoubles.cs" />
+    <Compile Include="..\TestSupport\AntivirusInfo.cs" Link="TestSupport\AntivirusInfo.cs" />
   </ItemGroup>
 
 </Project>

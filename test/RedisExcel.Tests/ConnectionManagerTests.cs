@@ -270,7 +270,7 @@ namespace RedisExcel.Tests
             manager.Shutdown();
             // The pool no longer tracks the connection and it was disposed: a use
             // after Shutdown must fail rather than silently reconnect.
-            Assert.Equal(0, UdfPool(manager).Count);
+            Assert.Empty(UdfPool(manager));
             Assert.True(first.IsConnected == false);
         }
 
@@ -534,35 +534,52 @@ namespace RedisExcel.Tests
     /// <summary>
     /// Offline RedisRuntime reload tests: the add-in can be unloaded/reloaded
     /// in the same process, so the shutdown tombstone must be clearable.
-    /// Shares the runtime-singleton collection with ConnectionManagerTests:
-    /// Shutdown/Reset touch the process-wide managers, which no other test in
-    /// this collection may observe mid-swap.
+    /// Shares the write-mode-seam collection: Shutdown/Reset touch the
+    /// PROCESS-WIDE managers, and any test that reads RedisRuntime (even to
+    /// produce a <c>#CONFIG</c> cell) must not observe them mid-swap. xUnit runs
+    /// different collections in parallel, so a separate collection here raced the
+    /// seam tests (a flaky "RedisRuntime is shutting down" Error cell); the
+    /// collection is the serialization unit for process-wide state.
     /// </summary>
-    [Collection("runtime-singleton")]
+    [Collection("write-mode-seam")]
     public class RedisRuntimeReloadTests
     {
         [Fact]
         public void ResetAfterAddInReload_AfterShutdown_RecreatesManagers()
         {
-            RedisRuntime.Shutdown();
-            RedisRuntime.ResetAfterAddInReload();
+            try
+            {
+                RedisRuntime.Shutdown();
+                RedisRuntime.ResetAfterAddInReload();
 
-            Assert.NotNull(RedisRuntime.Connections);
-            Assert.NotNull(RedisRuntime.Subscriptions);
-
-            RedisRuntime.Shutdown(); // leave a clean state for other tests
+                Assert.NotNull(RedisRuntime.Connections);
+                Assert.NotNull(RedisRuntime.Subscriptions);
+            }
+            finally
+            {
+                // Leave the process-wide runtime LIVE (lazily rebuildable), not
+                // tombstoned: a reader in another collection must never see
+                // "RedisRuntime is shutting down".
+                RedisRuntime.ResetAfterAddInReload();
+            }
         }
 
         [Fact]
         public void ResetAfterAddInReload_IsNoOpWhileRuntimeIsLive()
         {
-            RedisRuntime.ResetAfterAddInReload(); // known state, even if a previous test shut down
-            var connections = RedisRuntime.Connections;
+            try
+            {
+                RedisRuntime.ResetAfterAddInReload(); // known state, even if a previous test shut down
+                var connections = RedisRuntime.Connections;
 
-            RedisRuntime.ResetAfterAddInReload();
+                RedisRuntime.ResetAfterAddInReload();
 
-            Assert.Same(connections, RedisRuntime.Connections);
-            RedisRuntime.Shutdown();
+                Assert.Same(connections, RedisRuntime.Connections);
+            }
+            finally
+            {
+                RedisRuntime.ResetAfterAddInReload();
+            }
         }
     }
 }

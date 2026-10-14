@@ -346,11 +346,19 @@ unit project's `Compile` list complete (RedisRtd.cs is the intentional
 exclusion).
 
 The unit, smoke, load and liveness test projects compile the production
-sources directly (linked `Compile` items), so a new production `.cs` needed by
-tests must be added to their `Compile` lists; a unit parity test pins the unit
-project's list (every top-level source except the intentionally excluded
-`RedisRtd.cs`). `dotnet test` does not build or pack the
-add-in; CI builds it with msbuild.
+sources directly (linked `Compile` items) from ONE shared list,
+`test\TestSupport\ProductionSources.props`; a new production `.cs` is added
+there ONCE and every suite picks it up (a per-project copy drifted - the round-K
+LoadTests defect). `ProjectFileParityTests` enforces that every top-level
+production source is listed there (except the intentionally excluded
+`RedisRtd.cs`) and that no project declares production sources itself.
+`PublicSurfaceParityTests` freezes the public Excel surface in
+`test\RedisExcel.Tests\PublicSurface.baseline.txt` (refresh deliberately with
+`REDISEXCEL_REFRESH_PUBLIC_SURFACE=1`), and `NoUnboundedBlockingTests` scans the
+root sources for an unbounded wait (`.Result` / `.Wait(` /
+`GetAwaiter().GetResult()`) outside its allow-list. `dotnet test` does not build
+or pack the add-in; CI builds it with msbuild.
+`test\TestSupport\Run-Tests.ps1` builds once and runs the layers locally.
 
 ### 2. Smoke tests (requires a Redis server, no Excel)
 
