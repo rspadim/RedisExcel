@@ -58,6 +58,16 @@ jobs:
           # so validate by the installed service - not by the exit code. If
           # Memurai never lands, fall back to a portable Redis build from the
           # GitHub releases (same wire protocol; the suite only needs a server).
+          #
+          # ErrorActionPreference = Continue is load-bearing: the runner runs this
+          # script with Stop, and a native command that writes to stderr (choco
+          # prints its download errors there) then becomes a TERMINATING error, so
+          # the step aborted on the first choco failure and never reached the
+          # fallback below (that is how the memurai-developer 4.1.8 download
+          # failure turned into a red build). Every real failure still fails the
+          # step: Invoke-WebRequest/Expand-Archive/the final probe throw, and the
+          # waits below have their own bounds.
+          $ErrorActionPreference = 'Continue'
           $installed = $false
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             Write-Host "memurai install attempt $attempt/3"
@@ -129,6 +139,12 @@ jobs:
           # trip a documented best-effort race (duplicate suppression, delivery
           # convergence) that is not an add-in defect. Retry once before failing,
           # consistent with the liveness step below; a real regression fails both.
+          #
+          # Continue, not the runner's Stop: a non-zero native exit (or stderr
+          # output) would otherwise TERMINATE this step and the retry would never
+          # run - see the Memurai step above. The $LASTEXITCODE checks and the
+          # final throw below still fail the step.
+          $ErrorActionPreference = 'Continue'
           for ($attempt = 1; $attempt -le 2; $attempt++) {
             Write-Host "smoke attempt $attempt/2"
             dotnet run --project test/SmokeTests -c Release -- "127.0.0.1:6379"
@@ -148,6 +164,11 @@ jobs:
           # phase-B delivery gap is ~1.5-3.5s (bound 5s) and udfErrors is 0, so
           # retry before failing the job: infrastructure noise must not block a
           # release. A real regression stalls every attempt.
+          #
+          # Continue for the same reason as the smoke step above: the runner's
+          # Stop preference would abort the step on the first native failure
+          # instead of retrying it.
+          $ErrorActionPreference = 'Continue'
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             Write-Host "liveness attempt $attempt/3"
             dotnet run --project test/LivenessTests -c Release -- "127.0.0.1:6379" --quick --skip-restart
@@ -182,7 +203,10 @@ jobs:
         shell: pwsh
         run: |
           # Same community-feed flake as the Memurai install above: retry
-          # before failing the job on infrastructure noise.
+          # before failing the job on infrastructure noise. Continue, not the
+          # runner's Stop, so a failed choco attempt retries instead of aborting
+          # the step (see the Memurai step).
+          $ErrorActionPreference = 'Continue'
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             Write-Host "innosetup install attempt $attempt/3"
             choco install innosetup -y --no-progress

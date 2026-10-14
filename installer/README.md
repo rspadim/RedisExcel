@@ -47,7 +47,9 @@ RedisExcelSetup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES /DIR="C:\RedisExcel"
 
 `/HOST`, `/PORT`, `/PASSWORD`, `/SERVER` (`none`|`docker-redis`|`docker-valkey`|
 `wsl-redis`|`wsl-valkey`|`memurai`) and `/OPENEXCEL` (`0`|`1`) are optional
-(defaults: `localhost`, `6379`, empty, `none`, `0`). The installer is a normal
+(defaults: `localhost`, `6379`, empty, `none`, `0`). An unknown `/SERVER` value
+aborts the whole install with a non-zero exit code (rather than silently
+installing no server), so a typo cannot pass unnoticed in automation. The installer is a normal
 `.exe`, so you can also install by hand: copy `RedisExcel-packed.xll` (or
 `RedisExcel64-packed.xll`), `RedisExcel.dll`, `NLog.config` and `RedisExcel.json`
 into one folder and register the XLL from Excel.

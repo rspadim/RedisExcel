@@ -1135,6 +1135,19 @@ begin
   Kind := ServerKind();
   if Kind = 'none' then Exit;
 
+  // Fail closed on an unknown /SERVER value. install-server.ps1 validates -Kind
+  // with a ValidateSet, so a typo aborts its own run, and the "server failed"
+  // message below is suppressed in silent mode: a /VERYSILENT install with
+  // /SERVER=docker (typo) would otherwise finish with exit code 0 and no server,
+  // which automation cannot detect. Raising here aborts BEFORE any file is
+  // installed and writes the reason to the setup log. CompareText keeps the
+  // case-insensitive acceptance the ValidateSet always had.
+  if (CompareText(Kind, 'docker-redis') <> 0) and (CompareText(Kind, 'docker-valkey') <> 0)
+     and (CompareText(Kind, 'wsl-redis') <> 0) and (CompareText(Kind, 'wsl-valkey') <> 0)
+     and (CompareText(Kind, 'memurai') <> 0) then
+    RaiseException('Unknown /SERVER value "' + Kind +
+      '": use none, docker-redis, docker-valkey, wsl-redis, wsl-valkey or memurai. Nothing was installed.');
+
   ExtractTemporaryFile('install-server.ps1');
   Script := ExpandConstant('{tmp}\install-server.ps1');
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Kind ' + Kind +
