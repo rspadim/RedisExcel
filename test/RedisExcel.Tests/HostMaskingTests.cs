@@ -218,6 +218,24 @@ namespace RedisExcel.Tests
             Assert.Contains("password=****", masked);
         }
 
+        [Theory]
+        // A URI with a database PATH after the authority must be masked too (audit
+        // J3: the old lookahead missed host/path and leaked the secret).
+        [InlineData("redis://user:secret@127.0.0.1:6379/0")]
+        [InlineData("rediss://user:secret@127.0.0.1/0")]
+        [InlineData("redis://:secret@127.0.0.1:6379/0")]
+        [InlineData("redis://user:secret@127.0.0.1:6379/0,abortConnect=False")]
+        [InlineData("redis://user:secret@[::1]:6379/0?x=1")]
+        [InlineData("redis://user:p@leakpart@127.0.0.1:6379/0")]
+        public void MaskHost_MasksUriUserInfoWithAPath(string input)
+        {
+            string masked = AppConfig.MaskHost(input);
+            Assert.DoesNotContain("secret", masked);
+            Assert.DoesNotContain("leakpart", masked);
+            Assert.DoesNotContain("user:", masked);
+            Assert.Contains("****", masked); // the userinfo was redacted, not removed wholesale
+        }
+
         [Fact]
         public void MaskHost_IsLinearOnALongRunOfSpaces()
         {

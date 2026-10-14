@@ -122,17 +122,50 @@ function Normalize-Json([string]$text) {
   return $sb.ToString()
 }
 
+# Best-effort: true when two property names in the document differ only by case
+# (the add-in merges these with a warning; PowerShell refuses to parse them).
+function Test-HasCaseVariantDuplicateKey([string]$text) {
+  $seen = @{}
+  foreach ($m in [regex]::Matches($text, '"((?:[^"\\]|\\.)*)"\s*:')) {
+    $name = $m.Groups[1].Value
+    $key = $name.ToLowerInvariant()
+    if ($seen.ContainsKey($key) -and $seen[$key] -cne $name) { return $true }
+    $seen[$key] = $name
+  }
+  return $false
+}
+
 $json = $null
+$duplicateKeys = $false
+$parseError = $null
 try {
   $json = $raw | ConvertFrom-Json
 } catch {
   $stripped = Normalize-Json $raw
   try { $json = $stripped | ConvertFrom-Json }
   catch {
-    Line 'FAIL: the file is not valid JSON.'
-    Line ("      " + $_.Exception.Message)
-    exit 2
+    # PowerShell's ConvertFrom-Json rejects duplicate keys (case-variant too),
+    # but the add-in accepts them (a warning). Do not report a hard FAIL for a
+    # file the add-in loads. The exception text is localized, so detect the
+    # duplicate case by scanning the object keys instead of the message wording.
+    if (Test-HasCaseVariantDuplicateKey $stripped) { $duplicateKeys = $true }
+    else { $parseError = $_.Exception.Message }
   }
+}
+
+if ($duplicateKeys) {
+  Line 'WARNING: the file has duplicate keys (PowerShell cannot parse them).'
+  Line '         The add-in accepts case-variant duplicates with a warning; remove the'
+  Line '         duplicates for a full check (e.g. "Default" and "default").'
+  Line 'RESULT: OK (with 1 warning: duplicate keys) - not fully validated.'
+  exit 0
+}
+if ($null -eq $json) {
+  # The file IS JSON the add-in can read, but PowerShell could not parse it (a
+  # dialect the add-in tolerates). Do not claim it is invalid.
+  Line 'FAIL: the file is not valid JSON.'
+  if ($parseError) { Line ("      " + $parseError) }
+  exit 2
 }
 # The root must be a JSON OBJECT: the add-in rejects anything else (empty file,
 # array, number, string, bool, null, comment-only) with #CONFIG - the validator

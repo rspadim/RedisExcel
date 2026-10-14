@@ -503,10 +503,13 @@ namespace RedisExcel
         // whatever sits between '//' and the LAST '@' before the authority is
         // userinfo and must be redacted. Matching to the FIRST '@' leaked the
         // rest when the userinfo itself contained an '@' (e.g.
-        // redis://user:p@leakpart@host); the greedy run up to the last '@' that
-        // precedes a host character redacts the whole userinfo.
+        // redis://user:p@leakpart@host); the greedy run up to the last '@' whose
+        // remainder is a host[:port] optionally followed by a path/query/fragment
+        // redacts the whole userinfo. The trailing [/?#]|$ lookahead is required:
+        // without it a database path (redis://user:SECRET@host:6379/0) matched
+        // neither branch and the password leaked (audit J3).
         private static readonly Regex UriUserInfo = new Regex(
-            @"(?<=//)[^/\s]*@(?=[^@/\s]*$|/)", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+            @"(?<=//)[^/\s]*@(?=[^@/\s]*(?:[/?#]|$))", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // A bare "user:pass@host" (no scheme) also carries userinfo the key=value
         // regex cannot see (audit F1). A COLON is required before the '@' so a
