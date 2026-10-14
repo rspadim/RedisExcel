@@ -897,6 +897,9 @@ namespace RedisExcel
         {
             int rows = range.GetLength(0);
             int cols = range.GetLength(1);
+            // Same worksheet/budget bound as the siblings (audit I3/A1): without it
+            // a programmatic 2x30M range allocated ~8 GB on the Excel thread.
+            EnsureKeyRangeFits(rows, cols);
             var pairs = new List<KeyValuePair<object, object>>();
             if (cols == 2)
             {
@@ -1069,6 +1072,14 @@ namespace RedisExcel
             }
             catch (FormatException)
             {
+                throw new ArgumentException("numeric argument is not valid");
+            }
+            catch (InvalidCastException)
+            {
+                // A non-numeric IConvertible (e.g. a DateTime passed
+                // programmatically) would otherwise leak a localized
+                // "cannot convert DateTime to Int64" message into the cell (audit
+                // I3/A2) instead of the stable invariant text.
                 throw new ArgumentException("numeric argument is not valid");
             }
         }

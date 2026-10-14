@@ -318,6 +318,30 @@ namespace RedisExcel.Tests
             Assert.Equal("Error: expected a range with 2 columns or 2 rows", result);
         }
 
+        [Fact]
+        public void FlattenPairRange_RejectsAnOversizedRange()
+        {
+            // Audit I3/A1: FlattenPairRange had no worksheet/budget guard, so a
+            // programmatic 2x30M range allocated ~8 GB. It now calls the same
+            // EnsureKeyRangeFits as its siblings; assert that bound (without
+            // allocating the huge array).
+            Assert.Throws<ArgumentException>(() => RedisUDF.EnsureKeyRangeFits(2, 30000000));
+            RedisUDF.EnsureKeyRangeFits(3, 2); // a normal pair range stays valid
+        }
+
+        [Fact]
+        public void NumericArgument_DateTime_IsRejectedWithTheInvariantText()
+        {
+            // Audit I3/A2: a non-numeric IConvertible (DateTime) leaked a
+            // localized "cannot convert DateTime to Int64" message; it must be the
+            // stable invariant text.
+            string result = (string)RedisUDF.RedisUDFSetEx("k", "v", new DateTime(2026, 1, 1), ExcelMissing.Value);
+            Assert.StartsWith("Error: ", result);
+            Assert.Contains("not valid", result);
+            Assert.DoesNotContain("DateTime", result);
+            Assert.DoesNotContain("Int64", result);
+        }
+
         private static List<KeyValuePair<object, object>> FlattenPairRange(object[,] range)
         {
             // The pair-shape helper is private; drive the exact production code
