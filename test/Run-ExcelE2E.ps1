@@ -184,7 +184,12 @@ function Get-RedisEndpoint([string]$ConnectionString) {
 }
 
 function Invoke-RedisCli([string[]]$Arguments) {
-    return (& $script:RedisExe @($script:RedisPrefix + $script:RedisArgs + $Arguments))
+    $reply = (& $script:RedisExe @($script:RedisPrefix + $script:RedisArgs + $Arguments))
+    # Remember the CLI's exit code: a CLI that cannot run at all (a redis-cli.exe
+    # copied out of its folder without the msys DLLs beside it answers nothing and
+    # exits 0xC0000135) must be distinguishable from a server that is down.
+    $script:RedisLastExit = $LASTEXITCODE
+    return $reply
 }
 
 # Reads the numeric part of a redis-cli PUBSUB reply: NUMSUB answers
@@ -535,7 +540,11 @@ Write-Host ("Redis host: {0}" -f $RedisHost)
 Write-Host ("Key prefix: {0}.*" -f $KeyPrefix)
 
 if ((Get-RedisValue @('PING')) -ne 'PONG') {
-    throw "Redis is not responding at $RedisHost"
+    # The CLI's own exit code and raw reply are part of the message: a CLI that
+    # cannot run (the .exe without its DLLs) answers nothing, and "Redis is not
+    # responding" would then blame a server that is perfectly healthy.
+    throw ("Redis is not responding at $RedisHost (CLI '" + $script:RedisExe + " " +
+        ($script:RedisPrefix -join ' ') + "' exit=" + $script:RedisLastExit + ")")
 }
 
 $isLocalHost = $RedisHost -match '^(localhost|127\.0\.0\.1)(:\d+)?$'
