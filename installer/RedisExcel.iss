@@ -101,7 +101,8 @@ english.ServerFailed=Could not set up %1 automatically (exit %2).%nYou can insta
 english.ConfigWriteFailed=Could not write %1. Create it manually from the sample (RedisExcel.json).
 english.TestFailed=Installed, but the Redis at %1 did not answer a PING.%nCheck that the server is running (docker ps) and adjust RedisExcel.json if it is on another host/port.
 english.TestOk=All set! Redis answered at %1.%n%nTo use it: open Excel. If the add-in does not load automatically, go to File > Options > Add-ins > Go... > Browse... and pick the .xll in %2.
-english.UpgradeConfigKept=An existing RedisExcel.json was found and kept (your settings were not overwritten).%n%nThis is a MAJOR update: the configuration format changed. If that file uses the old format, every cell will show a #CONFIG error until it is migrated.%n%nRun Validate-Config.cmd (or =RedisCheckConfigFile() in Excel) and see the README section "Migrating from the old shape".
+english.UpgradeConfigKept=An existing RedisExcel.json was found and KEPT (your settings were not overwritten): it is compatible with this version, so nothing was migrated.%n%nRun Validate-Config.cmd any time to check the file yourself.
+english.UpgradeConfigMigrated=The RedisExcel.json found in this folder used the OLD (pre-1.6) format, which this add-in rejects - every cell would have shown a #CONFIG error.%n%nIt was saved as %1 and a new RedisExcel.json was written from the settings you entered.
 english.FinishedText=RedisExcel is installed in:%n%2%n%nIf the add-in does not load automatically, enable it in Excel:%nFile > Options > Add-ins > Go... > Browse... and pick RedisExcel64-packed.xll (or RedisExcel-packed.xll for 32-bit Office).%n%nThen try =RedisUDFGet("preco_btc") in a cell.
 english.UninstServersTitle=Servers
 english.UninstServersSubtitle=Remove Redis-compatible servers too?
@@ -160,7 +161,8 @@ spanish.ServerFailed=No se pudo configurar %1 automáticamente (salida %2).%nPue
 spanish.ConfigWriteFailed=No se pudo escribir %1. Créelo manualmente desde el ejemplo (RedisExcel.json).
 spanish.TestFailed=Instalado, pero el Redis en %1 no respondió a PING.%nCompruebe que el servidor esté en ejecución (docker ps) y ajuste RedisExcel.json si está en otro host/puerto.
 spanish.TestOk=¡Todo listo! Redis respondió en %1.%n%nPara usarlo: abra Excel. Si el complemento no se carga solo, vaya a Archivo > Opciones > Complementos > Ir... > Examinar... y elija el .xll en %2.
-spanish.UpgradeConfigKept=Se encontro un RedisExcel.json existente y se conservo (sus ajustes no se sobrescribieron).%n%nEsta es una actualizacion MAYOR: el formato de configuracion cambio. Si ese archivo usa el formato antiguo, cada celda mostrara un error #CONFIG hasta migrarlo.%n%nEjecute Validate-Config.cmd (o =RedisCheckConfigFile() en Excel) y vea la seccion del README "Migrating from the old shape".
+spanish.UpgradeConfigKept=Se encontró un RedisExcel.json existente y se CONSERVÓ (sus ajustes no se sobrescribieron): es compatible con esta versión, así que no se migró nada.%n%nEjecute Validate-Config.cmd cuando quiera para comprobarlo.
+spanish.UpgradeConfigMigrated=El RedisExcel.json que había en esta carpeta usaba el formato ANTIGUO (anterior a 1.6), que este complemento rechaza: todas las celdas habrían mostrado el error #CONFIG.%n%nSe guardó como %1 y se escribió un RedisExcel.json nuevo con los ajustes que indicó.
 spanish.FinishedText=RedisExcel está instalado en:%n%2%n%nSi el complemento no se carga solo, actívelo en Excel:%nArchivo > Opciones > Complementos > Ir... > Examinar... y elija RedisExcel64-packed.xll (o RedisExcel-packed.xll para Office de 32 bits).%n%nLuego pruebe =RedisUDFGet("preco_btc") en una celda.
 spanish.UninstServersTitle=Servidores
 spanish.UninstServersSubtitle=¿Eliminar también los servidores compatibles con Redis?
@@ -219,7 +221,8 @@ brazilianportuguese.ServerFailed=Não foi possível configurar %1 automaticament
 brazilianportuguese.ConfigWriteFailed=Não foi possível gravar %1. Crie manualmente a partir do exemplo (RedisExcel.json).
 brazilianportuguese.TestFailed=Instalado, mas o Redis em %1 não respondeu ao PING.%nConfira se o servidor está rodando (docker ps) e ajuste o RedisExcel.json se ele estiver em outro host/porta.
 brazilianportuguese.TestOk=Tudo certo! O Redis respondeu em %1.%n%nPara usar: abra o Excel. Se o add-in não carregar sozinho, vá em Arquivo > Opções > Suplementos > Ir... > Procurar... e escolha o .xll em %2.
-brazilianportuguese.UpgradeConfigKept=Um RedisExcel.json existente foi encontrado e mantido (suas configuracoes nao foram sobrescritas).%n%nEsta e uma atualizacao MAIOR: o formato de configuracao mudou. Se esse arquivo usa o formato antigo, cada celula mostrara um erro #CONFIG ate ser migrado.%n%nRode o Validate-Config.cmd (ou =RedisCheckConfigFile() no Excel) e veja a secao "Migrating from the old shape" no README.
+brazilianportuguese.UpgradeConfigKept=Um RedisExcel.json existente foi encontrado e MANTIDO (suas configurações não foram sobrescritas): ele é compatível com esta versão, então nada foi migrado.%n%nRode o Validate-Config.cmd quando quiser para conferir o arquivo.
+brazilianportuguese.UpgradeConfigMigrated=O RedisExcel.json desta pasta usava o formato ANTIGO (pré-1.6), que este add-in rejeita: toda célula mostraria o erro #CONFIG.%n%nEle foi salvo como %1 e um novo RedisExcel.json foi escrito com as configurações que você informou.
 brazilianportuguese.FinishedText=O RedisExcel foi instalado em:%n%2%n%nSe o add-in não carregar sozinho, habilite no Excel:%nArquivo > Opções > Suplementos > Ir... > Procurar... e escolha RedisExcel64-packed.xll (ou RedisExcel-packed.xll para Office 32 bits).%n%nDepois teste =RedisUDFGet("preco_btc") em uma célula.
 brazilianportuguese.UninstServersTitle=Servidores
 brazilianportuguese.UninstServersSubtitle=Remover também os servidores compatíveis com o Redis?
@@ -307,7 +310,8 @@ chinesesimplified.UninstServerFailed=?????? %1(??? %2)???????????
 chinesesimplified.UninstServersDesc=在此计算机上发现了这些服务器。勾选要随 RedisExcel 一起移除的项。%n默认不移除任何内容。
 chinesesimplified.UninstServersSubtitle=也移除兼容 Redis 的服务器吗？
 chinesesimplified.UninstServersTitle=服务器
-chinesesimplified.UpgradeConfigKept=发现已有的 RedisExcel.json 并予以保留（未覆盖您的设置）。%n%n这是一次重大更新：配置格式已更改。如果该文件使用旧格式，在迁移之前每个单元格都会显示 #CONFIG 错误。%n%n请运行 Validate-Config.cmd（或在 Excel 中使用 =RedisCheckConfigFile()），并参阅 README 的 “Migrating from the old shape” 一节。
+chinesesimplified.UpgradeConfigKept=发现已有的 RedisExcel.json,已保留(未覆盖您的设置):它与本版本兼容,因此没有迁移任何内容。%n%n可随时运行 Validate-Config.cmd 检查该文件。
+chinesesimplified.UpgradeConfigMigrated=该文件夹中的 RedisExcel.json 使用旧格式(1.6 之前),本加载项会拒绝该格式:所有单元格都会显示 #CONFIG 错误。%n%n原文件已保存为 %1,并已按您填写的设置写入新的 RedisExcel.json。
 
 ; ---- chinesetraditional ----
 chinesetraditional.AdvPageDesc=這就是完整的 RedisExcel.json，可直接編輯：每個鍵都已預填預設值與簡短註解。增益集接受 // 註解，因此可以保留。可在此修改主機、別名、寫入模式、ConflationMs、AsyncWrites——全都在此。
@@ -367,7 +371,8 @@ chinesetraditional.UninstServerFailed=?????? %1(??? %2)???????????
 chinesetraditional.UninstServersDesc=在此電腦上找到這些伺服器。勾選要隨 RedisExcel 一併移除的項目。%n預設不移除任何項目。
 chinesetraditional.UninstServersSubtitle=也移除相容於 Redis 的伺服器嗎？
 chinesetraditional.UninstServersTitle=伺服器
-chinesetraditional.UpgradeConfigKept=找到現有的 RedisExcel.json 並予以保留（未覆寫您的設定）。%n%n這是一次重大更新：設定格式已變更。若該檔案使用舊格式，在移轉之前每個儲存格都會顯示 #CONFIG 錯誤。%n%n請執行 Validate-Config.cmd（或在 Excel 中使用 =RedisCheckConfigFile()），並參閱 README 的「Migrating from the old shape」一節。
+chinesetraditional.UpgradeConfigKept=發現現有的 RedisExcel.json,已保留(未覆寫您的設定):它與本版本相容,因此未進行任何移轉。%n%n可隨時執行 Validate-Config.cmd 檢查該檔案。
+chinesetraditional.UpgradeConfigMigrated=此資料夾中的 RedisExcel.json 使用舊格式(1.6 之前),此外掛會拒絕該格式:所有儲存格都會顯示 #CONFIG 錯誤。%n%n原檔案已儲存為 %1,並已依您填寫的設定寫入新的 RedisExcel.json。
 
 ; ---- russian ----
 russian.AdvPageDesc=Это весь ваш RedisExcel.json, готовый к правке: каждый ключ уже заполнен значением по умолчанию и коротким комментарием. Адд-ин принимает комментарии //, поэтому их можно оставить. Меняйте хосты, псевдонимы, режим записи, ConflationMs, AsyncWrites - всё здесь.
@@ -427,7 +432,8 @@ russian.UninstServerFailed=?? ??????? ????????????? ??????? %1 (??? %2). ???????
 russian.UninstServersDesc=Эти серверы найдены на компьютере. Отметьте те, которые нужно удалить вместе с RedisExcel.%nПо умолчанию НИЧЕГО не удаляется.
 russian.UninstServersSubtitle=Удалить также совместимые с Redis серверы?
 russian.UninstServersTitle=Серверы
-russian.UpgradeConfigKept=Найден существующий RedisExcel.json, он сохранён (ваши настройки не перезаписаны).%n%nЭто КРУПНОЕ обновление: формат конфигурации изменился. Если файл в старом формате, в каждой ячейке будет ошибка #CONFIG, пока его не перенести.%n%nЗапустите Validate-Config.cmd (или =RedisCheckConfigFile() в Excel) и см. раздел README "Migrating from the old shape".
+russian.UpgradeConfigKept=Найден существующий RedisExcel.json — он СОХРАНЁН (ваши настройки не перезаписаны) и совместим с этой версией, поэтому ничего не переносилось.%n%nПроверить файл можно через Validate-Config.cmd.
+russian.UpgradeConfigMigrated=Файл RedisExcel.json в этой папке использовал СТАРЫЙ формат (до 1.6), который это дополнение отклоняет: все ячейки показывали бы ошибку #CONFIG.%n%nОн сохранён как %1, а новый RedisExcel.json записан с вашими параметрами.
 
 ; ---- french ----
 french.AdvPageDesc=Voici tout votre RedisExcel.json, prêt à modifier : chaque clé est préremplie avec sa valeur par défaut et un court commentaire. Le complément accepte les commentaires //, vous pouvez donc les laisser. Modifiez les hôtes, alias, mode d'écriture, ConflationMs, AsyncWrites - tout est ici.
@@ -487,7 +493,8 @@ french.UninstServerFailed=Impossible de supprimer %1 automatiquement (code %2). 
 french.UninstServersDesc=Ces serveurs ont été trouvés sur cette machine. Cochez ceux à supprimer avec RedisExcel.%nPar défaut, RIEN n'est supprimé.
 french.UninstServersSubtitle=Supprimer aussi les serveurs compatibles Redis ?
 french.UninstServersTitle=Serveurs
-french.UpgradeConfigKept=Un RedisExcel.json existant a été trouvé et conservé (vos paramètres n'ont pas été écrasés).%n%nIl s'agit d'une MISE À JOUR MAJEURE : le format de configuration a changé. Si ce fichier utilise l'ancien format, chaque cellule affichera une erreur #CONFIG jusqu'à sa migration.%n%nExécutez Validate-Config.cmd (ou =RedisCheckConfigFile() dans Excel) et consultez la section README "Migrating from the old shape".
+french.UpgradeConfigKept=Un RedisExcel.json existant a été trouvé et CONSERVÉ (vos paramètres n'ont pas été écrasés) : il est compatible avec cette version, rien n'a donc été migré.%n%nLancez Validate-Config.cmd quand vous voulez pour le vérifier.
+french.UpgradeConfigMigrated=Le RedisExcel.json de ce dossier utilisait l'ANCIEN format (pré-1.6), que ce complément refuse : toutes les cellules auraient affiché l'erreur #CONFIG.%n%nIl a été enregistré sous %1 et un nouveau RedisExcel.json a été écrit avec les paramètres saisis.
 
 ; ---- korean ----
 korean.AdvPageDesc=이것은 편집할 수 있는 전체 RedisExcel.json입니다. 각 키에는 기본값과 짧은 설명이 미리 채워져 있습니다. 추가 기능은 // 주석을 허용하므로 그대로 두어도 됩니다. 호스트, 별칭, 쓰기 모드, ConflationMs, AsyncWrites를 여기서 변경하세요.
@@ -547,7 +554,8 @@ korean.UninstServerFailed=%1?(?) ???? ???? ?????(?? ?? %2). ???? ???? ?????.
 korean.UninstServersDesc=이 서버들이 이 컴퓨터에서 발견되었습니다. RedisExcel과 함께 제거할 항목을 선택하세요.%n기본적으로 아무것도 제거되지 않습니다.
 korean.UninstServersSubtitle=Redis 호환 서버도 제거하시겠습니까?
 korean.UninstServersTitle=서버
-korean.UpgradeConfigKept=기존 RedisExcel.json을 찾아 유지했습니다(설정이 덮어쓰이지 않았습니다).%n%n이것은 주요 업데이트입니다: 구성 형식이 변경되었습니다. 해당 파일이 이전 형식이면 마이그레이션할 때까지 모든 셀에 #CONFIG 오류가 표시됩니다.%n%nValidate-Config.cmd(또는 Excel에서 =RedisCheckConfigFile())를 실행하고 README의 "Migrating from the old shape" 섹션을 참고하세요.
+korean.UpgradeConfigKept=기존 RedisExcel.json을 찾아 유지했습니다(설정이 덮어쓰이지 않았습니다). 이 버전과 호환되므로 마이그레이션하지 않았습니다.%n%nValidate-Config.cmd로 언제든지 확인할 수 있습니다.
+korean.UpgradeConfigMigrated=이 폴더의 RedisExcel.json은 이 추가 기능이 거부하는 예전(1.6 이전) 형식이었습니다. 모든 셀에 #CONFIG 오류가 표시될 상황이었습니다.%n%n원본은 %1(으)로 저장하고, 입력한 설정으로 새 RedisExcel.json을 작성했습니다.
 
 ; ---- german ----
 german.AdvPageDesc=Dies ist Ihre gesamte RedisExcel.json, bereit zum Bearbeiten: jeder Schlüssel ist mit seinem Standardwert und einem kurzen Kommentar vorbelegt. Das Add-in akzeptiert //-Kommentare, Sie können sie also stehen lassen. Ändern Sie Hosts, Aliase, Schreibmodus, ConflationMs, AsyncWrites - alles hier.
@@ -607,7 +615,8 @@ german.UninstServerFailed=%1 konnte nicht automatisch entfernt werden (Code %2).
 german.UninstServersDesc=Diese Server wurden auf diesem Computer gefunden. Markieren Sie die, die mit RedisExcel entfernt werden sollen.%nStandardmäßig wird NICHTS entfernt.
 german.UninstServersSubtitle=Auch Redis-kompatible Server entfernen?
 german.UninstServersTitle=Server
-german.UpgradeConfigKept=Eine vorhandene RedisExcel.json wurde gefunden und behalten (Ihre Einstellungen wurden nicht überschrieben).%n%nDies ist ein GROSSES Update: Das Konfigurationsformat hat sich geändert. Wenn diese Datei das alte Format verwendet, zeigt jede Zelle einen #CONFIG-Fehler, bis sie migriert ist.%n%nFühren Sie Validate-Config.cmd (oder =RedisCheckConfigFile() in Excel) aus und lesen Sie den README-Abschnitt "Migrating from the old shape".
+german.UpgradeConfigKept=Eine vorhandene RedisExcel.json wurde gefunden und BEHALTEN (Ihre Einstellungen wurden nicht überschrieben): sie ist mit dieser Version kompatibel, es wurde also nichts migriert.%n%nValidate-Config.cmd prüft die Datei jederzeit.
+german.UpgradeConfigMigrated=Die RedisExcel.json in diesem Ordner verwendete das ALTE Format (vor 1.6), das dieses Add-In ablehnt - jede Zelle hätte #CONFIG gezeigt.%n%nSie wurde als %1 gespeichert und eine neue RedisExcel.json mit Ihren Angaben geschrieben.
 
 ; ---- japanese ----
 japanese.AdvPageDesc=これは RedisExcel.json の全体です。各キーには既定値と短いコメントがあらかじめ入力されています。アドインは // コメントを受け付けるのでそのまま残せます。ホスト、エイリアス、書き込みモード、ConflationMs、AsyncWrites をここで変更できます。
@@ -667,7 +676,8 @@ japanese.UninstServerFailed=%1 ??????????????(????? %2)?????????????????
 japanese.UninstServersDesc=これらのサーバーがこのコンピューターで見つかりました。RedisExcel と一緒に削除するものをチェックしてください。%n既定では何も削除されません。
 japanese.UninstServersSubtitle=Redis 互換サーバーも削除しますか？
 japanese.UninstServersTitle=サーバー
-japanese.UpgradeConfigKept=既存の RedisExcel.json が見つかり、保持されました（設定は上書きされていません）。%n%nこれは大幅な更新です: 構成形式が変わりました。そのファイルが旧形式の場合、移行するまで各セルに #CONFIG エラーが表示されます。%n%nValidate-Config.cmd（または Excel で =RedisCheckConfigFile()）を実行し、README の "Migrating from the old shape" を参照してください。
+japanese.UpgradeConfigKept=既存の RedisExcel.json が見つかったため保持しました(設定は上書きされていません)。このバージョンと互換性があるため、移行は行っていません。%n%nValidate-Config.cmd でいつでも確認できます。
+japanese.UpgradeConfigMigrated=このフォルダーの RedisExcel.json は、このアドインが受け付けない古い(1.6 以前の)形式でした。すべてのセルに #CONFIG エラーが表示されるところでした。%n%n元のファイルは %1 として保存し、入力された設定で新しい RedisExcel.json を作成しました。
 [Tasks]
 Name: "addinconfig"; Description: "{cm:TaskConfigDesc}"; GroupDescription: "{cm:GroupConfig}"
 Name: "nlogconfig";  Description: "{cm:TaskNlogDesc}"; GroupDescription: "{cm:GroupConfig}"
@@ -692,13 +702,16 @@ Source: "{#RepoRoot}\installer\verify-connection.ps1"; DestDir: "{app}\scripts";
 Source: "{#RepoRoot}\installer\detect-servers.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\uninstall-server.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\validate-config.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#RepoRoot}\installer\read-config-host.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 ; The full JSON Schema (the same one the add-in embeds) and a double-click tool.
 Source: "{#RepoRoot}\RedisExcel.schema.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\Validate-Config.cmd"; DestDir: "{app}"; Flags: ignoreversion
 ; A temporary copy of the server helpers, so the server can be installed
-; BEFORE the add-in files are extracted (see PrepareToInstall).
+; BEFORE the add-in files are extracted (see PrepareToInstall), and of the host
+; reader, which the WIZARD needs before any file is installed.
 Source: "{#RepoRoot}\installer\install-server.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#RepoRoot}\installer\test-connection.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#RepoRoot}\installer\read-config-host.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 
 [UninstallDelete]
 ; The log file our NLog.config writes next to the add-in.
@@ -720,6 +733,11 @@ var
   TestOk: Boolean;
   InstallCompleted: Boolean;
   InstallKeptConfig: Boolean;
+  InstallMigratedConfig: Boolean;
+  ConfigBackupPath: String;
+  ExistingHostValue: String;
+  ExistingHostLoaded: Boolean;
+  ConnHostPrefilled: Boolean;
   UninstallServersPage: TInputOptionWizardPage;
   ServerKinds: TArrayOfString;
   ServerLabels: TArrayOfString;
@@ -941,12 +959,77 @@ end;
 
 // ---- Values ---------------------------------------------------------------
 // Reads a field from the page that is visible in the current mode.
+// The address an existing RedisExcel.json points at, in either shape (v1.6
+// Default/Servers or a pre-1.6 RTD.host/UDF.host), read by the bundled helper so
+// an UPGRADE keeps the user's server instead of silently writing localhost into
+// the replacement file. Cached: the wizard asks for it several times.
+function ExistingConfigHost(): String;
+var
+  Script, Target, OutFile: String;
+  Lines: TArrayOfString;
+  Code: Integer;
+begin
+  Result := '';
+  if ExistingHostLoaded then
+  begin
+    Result := ExistingHostValue;
+    Exit;
+  end;
+  ExistingHostLoaded := True;
+
+  Target := AddBackslash(WizardDirValue()) + 'RedisExcel.json';
+  if not FileExists(Target) then Exit;
+
+  ExtractTemporaryFile('read-config-host.ps1');
+  Script := ExpandConstant('{tmp}\read-config-host.ps1');
+  OutFile := ExpandConstant('{tmp}\redisexcel-host.txt');
+  DeleteFile(OutFile);
+  if Exec('powershell.exe',
+          '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Config "' + Target +
+          '" -Out "' + OutFile + '"',
+          ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, Code) then
+  begin
+    if LoadStringsFromFile(OutFile, Lines) and (GetArrayLength(Lines) > 0) then
+    begin
+      if Copy(Lines[0], 1, 5) = 'HOST=' then
+        ExistingHostValue := Copy(Lines[0], 6, Length(Lines[0]));
+    end;
+  end;
+  Result := ExistingHostValue;
+end;
+
+// 0 = the add-in accepts this file, 1 = it REJECTS it (pre-1.6 shape or a wrong
+// value: every cell would show #CONFIG), 2 = the check could not run (no schema
+// next to the helper, powershell missing): keep the file, never guess.
+function ValidateExistingConfig(const ConfigPath: String): Integer;
+var
+  Script: String;
+  Code: Integer;
+begin
+  Script := ExpandConstant('{app}\scripts\validate-config.ps1');
+  if not FileExists(Script) then
+  begin
+    Result := 2;
+    Exit;
+  end;
+  if Exec('powershell.exe',
+          '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Config "' + ConfigPath + '"',
+          ExpandConstant('{app}\scripts'), SW_HIDE, ewWaitUntilTerminated, Code) then
+    Result := Code
+  else
+    Result := 2;
+end;
+
 function Host(): String;
 begin
   if (not WizardSilent()) and (ConnPage <> nil) then
     Result := Trim(ConnPage.Values[0])
   else
-    Result := ParamOr('HOST', 'localhost');
+  begin
+    Result := ParamOr('HOST', '');
+    if Result = '' then Result := ExistingConfigHost();
+    if Result = '' then Result := 'localhost';
+  end;
 end;
 
 function PortValue(): String;
@@ -1184,9 +1267,37 @@ begin
                  mbInformation, MB_OK);
       end
       else
-        // A pre-1.6 config is preserved verbatim: remember it so the finish step
-        // can warn about the migration (the add-in rejects the old shape).
-        InstallKeptConfig := True;
+      begin
+        // An existing config is KEPT when the add-in accepts it (the user's tuned
+        // settings win). A pre-1.6 file - or any file with a wrong value - is
+        // rejected WHOLESALE by the add-in, so keeping it would leave the upgrade
+        // showing #CONFIG in every cell: back it up and write a working file
+        // instead. The wizard already carries the old address (ExistingConfigHost),
+        // so the replacement does not move the user to localhost.
+        if ValidateExistingConfig(ConfigPath) = 1 then
+        begin
+          ConfigBackupPath := ConfigPath + '.pre-1.6.bak';
+          if FileCopy(ConfigPath, ConfigBackupPath, True) then
+          begin
+            Lines := ConfigJson();
+            if SaveStringToFile(ConfigPath, Lines, False) then
+              InstallMigratedConfig := True
+            else
+            begin
+              // The write failed: put the original back and keep the old behavior.
+              FileCopy(ConfigBackupPath, ConfigPath, True);
+              InstallKeptConfig := True;
+            end;
+          end
+          else
+            // Could not back it up: never overwrite something we cannot preserve.
+            InstallKeptConfig := True;
+        end
+        else
+          // Accepted (0), or undecidable (2): keep it and mention the validator,
+          // which is what the finish message does for InstallKeptConfig.
+          InstallKeptConfig := True;
+      end;
     end;
 
     if WizardIsTaskSelected('excelautoload') then
@@ -1235,9 +1346,12 @@ begin
 
   if not TestOk then
     Msg := FmtMessage(ExpandConstant('{cm:TestFailed}'), [HostPort])
+  else if InstallMigratedConfig then
+    // A pre-1.6 file was incompatible with this add-in: it was backed up and
+    // replaced, so say where the old one went instead of claiming all-set.
+    Msg := FmtMessage(ExpandConstant('{cm:UpgradeConfigMigrated}'), [ConfigBackupPath])
   else if InstallKeptConfig then
-    // An upgrade kept the user's existing RedisExcel.json: warn about the v1.6
-    // break (the old shape is rejected -> #CONFIG) instead of claiming all-set.
+    // An existing, compatible RedisExcel.json was kept verbatim.
     Msg := FmtMessage(ExpandConstant('{cm:UpgradeConfigKept}'), [HostPort, ExpandConstant('{app}')])
   else
     Msg := FmtMessage(ExpandConstant('{cm:TestOk}'), [HostPort, ExpandConstant('{app}')]);
@@ -1259,8 +1373,29 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 var
-  Lines, ModeText: String;
+  Lines, ModeText, Existing: String;
 begin
+  // Upgrade: start the connection page from the address the EXISTING config
+  // points at, so the replacement file cannot silently move to localhost.
+  if (CurPageID = ConnPage.ID) and (not WizardSilent()) and (not ConnHostPrefilled) then
+  begin
+    ConnHostPrefilled := True;
+    if ParamOr('HOST', '') = '' then
+    begin
+      Existing := ExistingConfigHost();
+      if Existing <> '' then
+      begin
+        if Pos(':', Existing) > 0 then
+        begin
+          ConnPage.Values[0] := Copy(Existing, 1, Pos(':', Existing) - 1);
+          ConnPage.Values[1] := Copy(Existing, Pos(':', Existing) + 1, Length(Existing));
+        end
+        else
+          ConnPage.Values[0] := Existing;
+      end;
+    end;
+  end;
+
   // Seed the advanced editor once, from the template (only the first visit).
   if (CurPageID = AdvConfigPage.ID) and (not WizardSilent()) and (not AdvSeeded) then
   begin

@@ -279,7 +279,12 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   no-file default for `ExcelUpdateRateMs` applies (1000 ms, vs the loaded-file
   default of 100 ms). An undefined `ExcelUpdateStyle` falls back to `Automatic`,
   and `Servers` names are matched after trimming and case-insensitively (exact
-  match first).
+  match first). **Upgrading:** the installer keeps an existing `RedisExcel.json`
+  the add-in accepts, and for one it would reject (pre-1.6 shape or a wrong value)
+  it saves `RedisExcel.json.pre-1.6.bak` and writes a working file - reading the
+  old address first (`read-config-host.ps1`) so the replacement does not silently
+  become `localhost`; the wizard's host field is pre-filled with it and a silent
+  install reuses it.
 
 ## Build
 

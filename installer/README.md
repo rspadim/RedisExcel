@@ -23,6 +23,13 @@ XLLs (removing the one that does not match your Office bitness). It runs
 
    It writes `RedisExcel.json` next to the XLL (the add-in searches its own
    folder first) and a final read-only page summarizes what will be written.
+   **Upgrading:** when a `RedisExcel.json` already exists there, the installer
+   leaves it alone *if the add-in accepts it*. A file the add-in rejects (the
+   pre-1.6 shape, or any wrong value - every cell would show `#CONFIG`) is backed
+   up to `RedisExcel.json.pre-1.6.bak` and replaced by a working file, and the
+   old server address is carried over: the host field is pre-filled with it (and
+   a `/VERYSILENT` install reuses it automatically), so the migration never
+   silently moves the user to localhost.
 4. **Optional: installs a server.** Choose *No*, *Docker: Redis (latest)*,
    *Docker: Valkey (latest)*, *WSL2: Redis*, *WSL2: Valkey* or *Memurai*. It runs
    `scripts\install-server.ps1`, which uses Docker if available and otherwise

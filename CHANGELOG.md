@@ -1,3 +1,19 @@
+## v1.6.3 (unreleased)
+
+### Fixed
+
+- **Upgrading over an incompatible `RedisExcel.json` now migrates it.** The
+  installer used to keep whatever file it found and merely warn, which left a
+  pre-1.6 file in place - the add-in rejects that shape, so every cell showed
+  `#CONFIG` until the user migrated it by hand. It now backs such a file up to
+  `RedisExcel.json.pre-1.6.bak` and writes a working one, and it takes the old
+  server address along: the wizard's host field starts from the address the old
+  file pointed at (a silent `/VERYSILENT` install reuses it automatically), so the
+  migration never silently moves a user to `localhost`. A file the add-in accepts
+  is still kept verbatim, and nothing is ever overwritten without a backup.
+- **The "existing config kept" message no longer talks about the old shape.** It
+  is shown only when the kept file is compatible with this version, so it now says
+  that instead of warning about a `#CONFIG` migration the user does not need.
 ## v1.6.2
 
 ### Fixed

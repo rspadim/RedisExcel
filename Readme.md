@@ -77,11 +77,15 @@ replace when you update the add-in.
 > `.dll` is a dependency and `NLog.config` configures the log file. When you move
 > the add-in, move that whole folder.
 
-> **Upgrading from 1.5.x or older:** the configuration format changed (breaking).
-> Replace the `.xll`/`.dll` as usual, then run `Validate-Config.cmd` (or
-> `=RedisCheckConfigFile()` in a cell) on your existing `RedisExcel.json`: if it
-> uses the old format, every cell shows a `#CONFIG` error until you migrate it.
-> See **Migrating from the old shape** under the JSON configuration section.
+> **Upgrading from 1.5.x or older:** the configuration format changed (breaking),
+> and **the installer migrates the file for you**: an existing `RedisExcel.json`
+> the add-in cannot use (the pre-1.6 shape, or a wrong value) is saved as
+> `RedisExcel.json.pre-1.6.bak` and a fresh one is written from the wizard - whose
+> server field starts from the address the old file pointed at, so you stay on
+> your server. A compatible file is left untouched. If you copy the files by hand
+> instead, run `Validate-Config.cmd` (or `=RedisCheckConfigFile()` in a cell):
+> until the file is migrated every cell shows a `#CONFIG` error. See
+> **Migrating from the old shape** under the JSON configuration section.
 
 The `RedisExcel.json` file (settings, named servers) is the host config
 ([Example](https://github.com/rspadim/RedisExcel/blob/main/RedisExcel.json)).
@@ -622,6 +626,11 @@ object with per-server timeouts.
 > file that still uses the old keys is **rejected**: every cell shows `#CONFIG`
 > until it is fixed. Use `=RedisCheckConfigFile()` / `Validate-Config.cmd` to see
 > exactly what is wrong.
+>
+> **The installer does this for you:** when it finds a file the add-in rejects, it
+> keeps a copy (`RedisExcel.json.pre-1.6.bak`), writes a working one from the
+> wizard, and takes the old server address along (the host field is pre-filled
+> with it, and a silent `/VERYSILENT` install reuses it automatically).
 
 > **Config notes:** the file is read once per Excel process - restart Excel
 > after editing it. The first existing file wins (the add-in folder, then the
