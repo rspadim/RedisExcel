@@ -44,7 +44,7 @@ O que ele faz
 | Escrita controlada | 24 funções `...NonVolatile`: escrevem uma vez (ao entrar na célula ou quando o argumento muda), sem repetir a cada recálculo |
 | Pub/Sub | `ChannelPublish` (texto e JSON), `ChannelLatest`, `ChannelUnsubscribe` e `PubSubChannelsInfo` |
 | Alta disponibilidade | Sentinel e Cluster nativos via StackExchange.Redis: segue MOVED/ASK e volta a assinar após failover |
-| Diagnóstico | contadores RTD, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable` e `RedisCheckConfigFile` (valida a configuração na própria planilha) |
+| Diagnóstico | contadores RTD, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable`, `RedisUDFVersion` (versão em execução e de onde o XLL foi carregado) e `RedisCheckConfigFile` (valida a configuração na própria planilha) |
 
 
 Download
@@ -64,6 +64,24 @@ Baixe a versão mais recente na
 
 Ainda não tem um servidor Redis? O instalador consegue subir um para você
 (Redis ou Valkey via Docker/WSL, ou Memurai) e testa a conexão no final.
+
+### O instalador testa a conexão antes de instalar
+
+O assistente tem um botão **Testar conexão** na página do host: ele usa o mesmo
+cliente (StackExchange.Redis) que o add-in usa para conversar com o servidor, e
+responde na hora se o endereço, a senha e o TLS estão certos — sem sair da página
+e sem gravar nada. Só leitura: o instalador nunca escreve nem publica em um
+servidor que não é dele.
+
+Se algo der errado, ele diz o motivo em vez de um "falhou" genérico: senha
+recusada, host desconhecido, sem resposta (com o tempo de espera), conexão
+recusada — nos 10 idiomas do assistente.
+
+> **Duas cópias do add-in?** O instalador remove a entrada de uma instalação
+> anterior, porque duas cópias fazem o Excel carregar duas vezes o add-in (funções
+> duplicadas, e cada cópia lendo um `RedisExcel.json` diferente). Para conferir
+> em qualquer momento, use `=RedisUDFVersion()` numa célula: ela mostra a versão
+> e o caminho do XLL que está realmente carregado.
 
 
 Instalação

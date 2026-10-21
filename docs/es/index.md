@@ -44,7 +44,7 @@ Qué hace
 | Escritura controlada | 24 funciones `...NonVolatile`: escriben una vez (al entrar en la celda o cuando cambia el argumento), sin repetir en cada recálculo |
 | Pub/Sub | `ChannelPublish` (texto y JSON), `ChannelLatest`, `ChannelUnsubscribe` y `PubSubChannelsInfo` |
 | Alta disponibilidad | Sentinel y Cluster nativos vía StackExchange.Redis: sigue MOVED/ASK y vuelve a suscribirse tras un failover |
-| Diagnóstico | contadores RTD, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable` y `RedisCheckConfigFile` (valida la configuración en la propia hoja) |
+| Diagnóstico | contadores RTD, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable`, `RedisUDFVersion` (la versión en ejecución y de dónde se cargó el XLL) y `RedisCheckConfigFile` (valida la configuración en la propia hoja) |
 
 
 Descarga
@@ -64,6 +64,24 @@ Descarga la última versión en la
 
 ¿Todavía no tienes un servidor Redis? El instalador puede levantar uno por ti
 (Redis o Valkey vía Docker/WSL, o Memurai) y prueba la conexión al final.
+
+### El instalador prueba la conexión antes de instalar
+
+El asistente tiene un botón **Probar conexión** en la página del host: usa el
+mismo cliente (StackExchange.Redis) que el complemento usa para hablar con el
+servidor, y responde al momento si la dirección, la contraseña y el TLS son
+correctos — sin salir de la página y sin escribir nada. Solo lectura: el
+instalador nunca escribe ni publica en un servidor que no es suyo.
+
+Cuando algo falla dice el motivo en lugar de un "falló" genérico: contraseña
+rechazada, host desconocido, sin respuesta (con el tiempo de espera), conexión
+rechazada — en los 10 idiomas del asistente.
+
+> **¿Dos copias del complemento?** El instalador elimina la entrada de una
+> instalación anterior, porque dos copias hacen que Excel cargue el complemento
+> dos veces (funciones duplicadas, y cada copia leyendo un `RedisExcel.json`
+> distinto). Para comprobarlo en cualquier momento, usa `=RedisUDFVersion()` en
+> una celda: muestra la versión y la ruta del XLL realmente cargado.
 
 
 Instalación

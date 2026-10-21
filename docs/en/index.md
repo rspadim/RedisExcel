@@ -43,7 +43,7 @@ What it does
 | Controlled writes | 24 `...NonVolatile` functions: they write once (when entered or when an argument changes) instead of re-running on every recalculation |
 | Pub/Sub | `ChannelPublish` (text and JSON), `ChannelLatest`, `ChannelUnsubscribe` and `PubSubChannelsInfo` |
 | High availability | Native Sentinel and Cluster via StackExchange.Redis: follows MOVED/ASK and re-subscribes after a failover |
-| Diagnostics | RTD counters, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable` and `RedisCheckConfigFile` (validates the configuration inside the sheet) |
+| Diagnostics | RTD counters, `RedisUDFConnectionCount`, `RedisUDFUpdateAvailable`, `RedisUDFVersion` (the running version and where the XLL was loaded from) and `RedisCheckConfigFile` (validates the configuration inside the sheet) |
 
 
 Download
@@ -63,6 +63,24 @@ Download the latest version from the
 
 No Redis server yet? The installer can set one up for you (Redis or Valkey via
 Docker/WSL, or Memurai) and tests the connection at the end.
+
+### The installer tests the connection before installing
+
+The wizard has a **Test connection** button on the host page: it uses the same
+client (StackExchange.Redis) the add-in uses to talk to the server, and answers
+right away whether the address, the password and TLS are correct — without
+leaving the page and without writing anything. Read-only: the installer never
+writes to, or publishes into, a server it does not own.
+
+When something is wrong it names the reason instead of a bare "failed": refused
+password, unknown host, no answer (with the timeout), connection refused — in
+all 10 wizard languages.
+
+> **Two copies of the add-in?** The installer removes a previous install's entry,
+> because two copies make Excel load the add-in twice (duplicated functions, and
+> each copy reading a different `RedisExcel.json`). To check at any time, put
+> `=RedisUDFVersion()` in a cell: it shows the version and the path of the XLL
+> that is really loaded.
 
 
 Install
