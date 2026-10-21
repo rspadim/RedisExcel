@@ -28,9 +28,20 @@ $ErrorActionPreference = 'Stop'
 
 function Line([string]$m = '') { Write-Host $m }
 
-Line '======================================================================'
-Line ' RedisExcel - config validator'
-Line '======================================================================'
+# Console header (see banner.ps1). Replaces the plain rule above so every
+# helper identifies itself the same way; a missing banner.ps1 must not break
+# the validator.
+try {
+  $bannerPath = Join-Path $PSScriptRoot 'banner.ps1'
+  if (Test-Path -LiteralPath $bannerPath) {
+    . $bannerPath
+    Write-RedisExcelBanner -Action 'Checking RedisExcel.json'
+  }
+} catch {
+  Line '======================================================================'
+  Line ' RedisExcel - config validator'
+  Line '======================================================================'
+}
 
 # ---- Locate the files ------------------------------------------------------
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path

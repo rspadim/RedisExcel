@@ -20,6 +20,16 @@
   failure (unknown host, timeout, connection refused, rejected password,
   unexpected reply) instead of a bare "failed". Localized in all 10 wizard
   languages.
+- **The installer's helper scripts print a RedisExcel header before their own
+  output.** The installer runs them in a visible console (setting up the server,
+  opening the sample sheet, `Validate-Config.cmd`), and an unidentified window
+  that prints terse technical lines and vanishes is exactly what makes a user
+  suspect malware. The header spells the product name in 5-row ASCII art, shows
+  the installed version (read from `RedisExcel.dll`) and the project URL. It is
+  ASCII-only because the console renders in an OEM codepage, and it degrades to
+  a single compact line when the window is narrower than 70 columns or the
+  output is redirected (`banner.ps1`, dot-sourced defensively so a missing file
+  never breaks a helper).
 
 ### Fixed
 

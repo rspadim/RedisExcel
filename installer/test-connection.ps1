@@ -30,11 +30,27 @@ param(
   [int]$Port = 6379,
   [string]$User = '',
   [string]$Password = '',
-  [string]$PasswordFile = ''
+  [string]$PasswordFile = '',
+  # Suppress the console header (the wizard redirects this output to a file and
+  # only reads the exit code).
+  [switch]$Quiet
 )
 
 $ErrorActionPreference = 'Stop'
 $ConnectTimeoutMs = 5000
+
+# Console header (see banner.ps1), unless the caller asked to stay quiet: the
+# wizard's "Test connection" button redirects this output to a file and wants
+# the exit code, not a banner. Failure to load it never breaks the check.
+if (-not $Quiet) {
+  try {
+    $bannerPath = Join-Path $PSScriptRoot 'banner.ps1'
+    if (Test-Path -LiteralPath $bannerPath) {
+      . $bannerPath
+      Write-RedisExcelBanner -Action ('Checking the Redis connection at ' + $ServerHost)
+    }
+  } catch { }
+}
 
 # The file content is used verbatim (no Trim): a password may contain spaces.
 if ($PasswordFile -ne '' -and (Test-Path -LiteralPath $PasswordFile)) {

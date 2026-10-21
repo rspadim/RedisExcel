@@ -799,6 +799,9 @@ Source: "{#RepoRoot}\NLog.config"; DestDir: "{app}"; Flags: onlyifdoesntexist; T
 Source: "{#RepoRoot}\installer\install-server.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\test-connection.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\verify-connection.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+; The console header (ASCII art) printed by the helpers above. Dot-sourced with
+; a try/catch, so its absence degrades to a plain header instead of failing.
+Source: "{#RepoRoot}\installer\banner.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\detect-servers.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\uninstall-server.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#RepoRoot}\installer\validate-config.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -808,10 +811,12 @@ Source: "{#RepoRoot}\RedisExcel.schema.json"; DestDir: "{app}"; Flags: ignorever
 Source: "{#RepoRoot}\installer\Validate-Config.cmd"; DestDir: "{app}"; Flags: ignoreversion
 ; A temporary copy of the server helpers, so the server can be installed
 ; BEFORE the add-in files are extracted (see PrepareToInstall), and of the host
-; reader, which the WIZARD needs before any file is installed.
+; reader, which the WIZARD needs before any file is installed. banner.ps1 comes
+; along because the helpers dot-source it from their own folder.
 Source: "{#RepoRoot}\installer\install-server.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#RepoRoot}\installer\test-connection.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#RepoRoot}\installer\read-config-host.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#RepoRoot}\installer\banner.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 
 [UninstallDelete]
 ; The log file our NLog.config writes next to the add-in.
@@ -1111,6 +1116,9 @@ begin
   Args := '-ServerHost "' + HostPort + '"';
   if PwFile <> '' then
     Args := Args + ' -PasswordFile "' + PwFile + '"';
+  // -Quiet: this output is redirected to a file and only the exit code is
+  // used, so no banner is printed (it would just be captured as noise).
+  Args := Args + ' -Quiet';
 
   if not Exec('cmd.exe',
           '/c ""powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "' + Script + '" ' +
@@ -1570,6 +1578,10 @@ begin
       '": use none, docker-redis, docker-valkey, wsl-redis, wsl-valkey or memurai. Nothing was installed.');
 
   ExtractTemporaryFile('install-server.ps1');
+  // The helper dot-sources banner.ps1 from its own folder ({tmp} here); extract
+  // it too so the visible console shows the RedisExcel header, not an
+  // unidentified window printing technical lines.
+  ExtractTemporaryFile('banner.ps1');
   Script := ExpandConstant('{tmp}\install-server.ps1');
   Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Kind ' + Kind +
             ' -Port ' + PortValue();

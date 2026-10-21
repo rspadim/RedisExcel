@@ -59,6 +59,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
 | `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). `BuildInfo` (in `RedisConnectionManager.cs`) resolves the readable version reported by `RedisUDFVersion`. |
 | `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). The wizard ships **10 languages** (English, both Chinese, pt-BR, es, ru, fr, ko, de, ja; the two Chinese `.isl` live in `installer/languages/`, the rest come with Inno). The add-in inside Excel is **English-only** on purpose (localized cell text would make volatile functions locale-dependent). Built by CI; see `installer/README.md`. |
+| `installer/banner.ps1` | The console header the helper scripts print (5-row ASCII wordmark + version + project URL). ASCII only, because the console renders in an OEM codepage; degrades to one compact line when the window is narrow or the output is redirected. Dot-sourced defensively. |
 | `docs/`, `overrides/`, `mkdocs.yml`, `tools/make-social-cards.py` | The landing page (MkDocs Material, pt-BR/en/es via `mkdocs-static-i18n`) published by `pages.yml`. Each language has its own social card (`docs/assets/social-card*.png`) used as the page hero and as `og:image` (set per page through the `og_image` front matter, read by `overrides/main.html`); `tools/make-social-cards.py` regenerates them from the original by repainting only the subtitle, so a new language needs one line there. |
 
 ## Runtime model (why it is the way it is)
@@ -618,3 +619,47 @@ frozen baseline - `PublicSurfaceParityTests.BaselineHeader`/the generated
 `test\RedisExcel.Tests\PublicSurface.baseline.txt` - with
 `REDISEXCEL_REFRESH_PUBLIC_SURFACE=1` and review the diff. The landing pages
 (`docs\`) carry no version, so they only change when their text changes.
+
+## Shell for agents
+
+This is a **Windows** project (.NET Framework 4.8, Excel-DNA, Inno Setup), so the
+tools that matter are Windows ones and they are all reachable from PowerShell:
+
+- **PowerShell is available and preferred over bash.** Build with `dotnet build
+  RedisExcel.sln -c Release`, test with `dotnet test test\RedisExcel.Tests\...`,
+  compile the installer with `& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+  "/DAppVersion=<ver>" "installer\RedisExcel.iss"`, and drive/inspect the
+  registry with `Get-ItemProperty` / `Set-ItemProperty` (Excel's auto-load list
+  lives in `HKCU:\Software\Microsoft\Office\<ver>\Excel\Options`). None of this
+  needs a POSIX shell.
+- **When a bash-style command is unavoidable, prefer the PowerShell equivalent.**
+  `grep` -> `Select-String`, `sed`/`awk` -> `-replace`/`-split`, `head`/`tail` ->
+  `Select-Object -First/-Last`, `which` -> `Get-Command`, `ls -R` ->
+  `Get-ChildItem -Recurse`. Piping between them works the same way.
+- **Quoting differs between the two shells** and silently corrupts output: in
+  bash a heredoc (`<<'EOF'`) and `$(...)` work; in PowerShell they do not
+  (`<<` is reserved and `$(...)` is subexpression syntax). Write the body to a
+  file and pass `-File`, or use a `.ps1` script, instead of inlining a long
+  multi-line command.
+- **Never rewrite a text file with `Set-Content`/`Out-File` just to change a few
+  bytes.** Both re-encode the file, which corrupted this repo's `.iss` (mixed
+  ASCII/CJK/accented text) during development. Use the editor's targeted
+  replace, or read/write with an explicit encoding:
+  `[IO.File]::WriteAllText($p, $text, (New-Object Text.UTF8Encoding($false)))`.
+  Check with a strict decode (`New-Object Text.UTF8Encoding($false, $true)`)
+  when in doubt: the console showing `?` does NOT mean the file is broken, but
+  a failed strict decode does.
+- **Console output is not a reliable view of the text.** The Windows console
+  renders in an OEM codepage (437/850/866/932), so accented and CJK characters
+  appear as `?` or mojibake even when the file is perfect. Verify non-ASCII text
+  by code point instead of trusting what a `Write-Host`/redirect shows.
+- **Locating windows and automating dialogs** works through `user32.dll`
+  (`EnumWindows`, `PrintWindow`, `PostMessage`): `PrintWindow` renders an
+  unfocused window, so a wizard/screenshot check never steals focus. These
+  P/Invoke types do not survive between separate `powershell.exe` invocations -
+  run the whole capture in ONE script.
+- **Long/hanging commands**: an Excel COM call or a dialog can block forever.
+  Bound it (`Start-Job` + `Wait-Job -Timeout`, or a script with an explicit
+  timeout) instead of leaving the shell waiting. Never leave an automation Excel
+  (`EXCEL.EXE /automation -Embedding`) behind - but never kill a user's Excel
+  either: identify your own by the XLL module loaded / the `/automation` flag.

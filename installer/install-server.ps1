@@ -47,6 +47,24 @@ function Invoke-Native([scriptblock]$block) {
 
 function Write-Step([string]$m) { Write-Host ("[redis-server] " + $m) }
 
+# The console header: this script runs in a visible window during the install,
+# and an unidentified window that prints technical lines is the main "is this a
+# virus?" trigger. Dot-sourced so a missing banner.ps1 can never break the setup.
+$script:BannerLoaded = $false
+try {
+  $bannerPath = Join-Path $PSScriptRoot 'banner.ps1'
+  if (Test-Path -LiteralPath $bannerPath) {
+    . $bannerPath
+    $script:BannerLoaded = $true
+  }
+} catch { $script:BannerLoaded = $false }
+
+function Show-Banner([string]$action) {
+  if ($script:BannerLoaded) {
+    try { Write-RedisExcelBanner -Action $action } catch { }
+  }
+}
+
 function Test-Port([int]$p) {
   try {
     $c = New-Object System.Net.Sockets.TcpClient
@@ -157,10 +175,10 @@ function Memurai-Up() {
 }
 
 switch ($Kind) {
-  'none'          { Write-Step "no server requested."; exit 0 }
-  'docker-redis'  { Docker-Up $(if ($Image) { $Image } else { 'redis:latest' }) 'redis-cli' }
-  'docker-valkey' { Docker-Up $(if ($Image) { $Image } else { 'valkey/valkey:latest' }) 'valkey-cli' }
-  'wsl-redis'     { Wsl-Up 'redis-server' }
-  'wsl-valkey'    { Wsl-Up 'valkey-server' }
-  'memurai'       { Memurai-Up }
+  'none'          { Show-Banner 'No server requested - nothing to do.'; Write-Step "no server requested."; exit 0 }
+  'docker-redis'  { Show-Banner 'Setting up a Redis server in Docker'; Docker-Up $(if ($Image) { $Image } else { 'redis:latest' }) 'redis-cli' }
+  'docker-valkey' { Show-Banner 'Setting up a Valkey server in Docker'; Docker-Up $(if ($Image) { $Image } else { 'valkey/valkey:latest' }) 'valkey-cli' }
+  'wsl-redis'     { Show-Banner 'Setting up a Redis server in WSL2'; Wsl-Up 'redis-server' }
+  'wsl-valkey'    { Show-Banner 'Setting up a Valkey server in WSL2'; Wsl-Up 'valkey-server' }
+  'memurai'       { Show-Banner 'Setting up Memurai (native Windows service)'; Memurai-Up }
 }

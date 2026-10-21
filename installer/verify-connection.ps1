@@ -34,6 +34,17 @@ $ErrorActionPreference = 'Stop'
 $ConnectTimeoutMs = 5000
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
 
+# Console header (see banner.ps1): this script runs in a visible window during
+# the install, and an unidentified window is what makes a user suspect a virus.
+# Failure to load it must never break the check itself.
+try {
+  $bannerPath = Join-Path $PSScriptRoot 'banner.ps1'
+  if (Test-Path -LiteralPath $bannerPath) {
+    . $bannerPath
+    Write-RedisExcelBanner -Action 'Installing and checking RedisExcel' -InstallDir $AddInDir
+  }
+} catch { }
+
 if ($PasswordFile -ne '' -and (Test-Path -LiteralPath $PasswordFile)) {
   $Password = [System.IO.File]::ReadAllText($PasswordFile)
 }
@@ -178,19 +189,25 @@ try {
   $ws.Range('B5').Formula = '=IF(ISERROR(RedisUDFServerTime' + $hostArg + '),"FAILED","OK - Redis answered")'
   $ws.Range('A6').Value2 = 'Server says:'
   $ws.Range('B6').Formula = '=RedisUDFServerTime' + $hostArg
+  # Version and the XLL that answered: the first question of any support case,
+  # and how a SECOND installed copy becomes obvious (each one reports its own
+  # path in the xll= field).
+  $ws.Range('A7').Value2 = 'Version:'
+  $ws.Range('B7').Formula = '=RedisUDFVersion()'
 
-  $ws.Range('A8').Value2 = 'Read/write test (press F9 to refresh):'
-  $ws.Range('A9').Value2 = 'Set:'
-  $ws.Range('B9').Formula = '=RedisUDFSet("redisexcel:install_test","hello from the installer")'
-  $ws.Range('A10').Value2 = 'Get:'
-  $ws.Range('B10').Formula = '=RedisUDFGet("redisexcel:install_test")'
+  $ws.Range('A9').Value2 = 'Read/write test (press F9 to refresh):'
+  $ws.Range('A10').Value2 = 'Set:'
+  $ws.Range('B10').Formula = '=RedisUDFSet("redisexcel:install_test","hello from the installer")'
+  $ws.Range('A11').Value2 = 'Get:'
+  $ws.Range('B11').Formula = '=RedisUDFGet("redisexcel:install_test")'
 
-  $ws.Range('A12').Value2 = 'Example: =RedisUDFGet("price_btc"' + $exampleArg + ')'
-  $ws.Range('A4:A6').Font.Bold = $true
-  $ws.Range('A9:A10').Font.Bold = $true
-  $ws.Columns.Item('A').ColumnWidth = 42
-  $ws.Columns.Item('B').ColumnWidth = 40
+  $ws.Range('A13').Value2 = 'Example: =RedisUDFGet("price_btc"' + $exampleArg + ')'
+  $ws.Range('A4:A7').Font.Bold = $true
+  $ws.Range('A10:A11').Font.Bold = $true
+  $ws.Range('A').ColumnWidth = 42
+  $ws.Range('B').ColumnWidth = 40
   $ws.Range('B5').Font.Bold = $true
+  $ws.Range('B7').Font.Italic = $true
 
   $excel.Application.Calculate() | Out-Null
   Write-Host "[verify] sample workbook opened (XLL registered: $registered)"
