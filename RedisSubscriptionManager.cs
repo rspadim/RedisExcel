@@ -30,6 +30,8 @@ namespace RedisExcel
     /// consecutive payloads are compared as raw bytes (no string decoding) and skipped
     /// when SkipRepeatedMessages is on (default). Patterns are never deduplicated
     /// because different channels can interleave messages with the same payload.
+    /// The marker is kept aligned with the payload delivered LAST: an out-of-order
+    /// delivery never leaves it claiming a value the cell did not keep.
     ///
     /// Before: each topic registered its own handler and DisconnectData called
     /// Unsubscribe(channel) without a handler, tearing down every other topic's handler
@@ -446,6 +448,13 @@ namespace RedisExcel
             private RedisValue _lastMessage;
             private bool _hasLastMessage;
 
+            // Monotonic stamp of the dedup marker, bumped under _dedupSync on every
+            // write (stamp or clear). A delivery remembers the stamp it took and
+            // notices afterwards that another callback replaced the marker while it
+            // was fanning out: the cell then holds THIS payload while the marker
+            // claims a newer one (see HandleMessage).
+            private int _markerVersion;
+
             public ChannelState(string host, string channel, bool pattern, bool skipRepeated)
             {
                 Host = host;
@@ -595,7 +604,9 @@ namespace RedisExcel
                 // different channels interleave here. Suppression stays best-effort
                 // under concurrency: two racing copies may both fan out, which is
                 // harmless.
-                if (_skipRepeated && !Pattern)
+                bool deduplicate = _skipRepeated && !Pattern;
+                int markerVersion = 0;
+                if (deduplicate)
                 {
                     lock (_dedupSync)
                     {
@@ -603,6 +614,7 @@ namespace RedisExcel
                             return;
                         _lastMessage = message;
                         _hasLastMessage = true;
+                        markerVersion = ++_markerVersion;
                     }
                 }
 
@@ -617,6 +629,37 @@ namespace RedisExcel
                     catch (Exception ex)
                     {
                         logger.Error(ex, $"HandleMessage: listener error host={AppConfig.MaskHost(Host)}, channel={Name}");
+                    }
+                }
+
+                if (deduplicate)
+                {
+                    // An out-of-order delivery (see the class remark: SE.Redis hands
+                    // every callback to the thread pool) can stamp a newer payload
+                    // while THIS older one is still being fanned out: the cell then
+                    // ends on the older value while the marker holds the newer one.
+                    // An identical republish of the current value is then suppressed
+                    // forever, so the cell stays on the older value until the feed
+                    // changes - a transient inversion would become permanent
+                    // staleness. Realign the marker with what was actually delivered
+                    // last (a marker cleared by a join is left alone: _hasLastMessage
+                    // is false and the next payload must reach the joiner).
+                    //
+                    // The unlocked pre-check keeps the in-order steady state free of
+                    // an extra lock acquisition (an int is written only under
+                    // _dedupSync, so a stale read can only skip one realign, never
+                    // corrupt the marker).
+                    if (Volatile.Read(ref _markerVersion) != markerVersion)
+                    {
+                        lock (_dedupSync)
+                        {
+                            if (_hasLastMessage && _markerVersion != markerVersion
+                                && !RedisResultFormatter.SameMessage(_lastMessage, message))
+                            {
+                                _lastMessage = message;
+                                _markerVersion++;
+                            }
+                        }
                     }
                 }
             }

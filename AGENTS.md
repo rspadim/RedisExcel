@@ -127,10 +127,14 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   complete out of order (the raw baseline shows inversions in every run under
   load). Nothing is dropped and no thread stalls; the visible effect is that a
   cell (`SUB`/`PSUB`/`ChannelLatest`) may transiently hold the older of two
-  overlapping values until the next message, and a burst can leave the dedup
-  marker on the older payload. Ordering-sensitive feeds must carry a
-  timestamp/sequence field and compare it in the formula; polled reads
-  (`GET`/`HGET`/`HGETALL`) are single round trips per tick and are unaffected.
+  overlapping values until the next message. The per-channel dedup marker is
+  deliberately kept aligned with the payload delivered LAST (it is re-stamped
+  when a later-finishing delivery notices that another callback replaced it),
+  so an inversion can never make an identical republish of the current value be
+  suppressed and turn the transient inversion into permanent staleness.
+  Ordering-sensitive feeds must still carry a timestamp/sequence field and
+  compare it in the formula; polled reads (`GET`/`HGET`/`HGETALL`) are single
+  round trips per tick and are unaffected.
 - `ChannelLatest` lifecycle: per-key epochs + per-listener locks. An
   unsubscribe/reset (including add-in reload) bumps the epoch before removing,
   so a subscribe that raced it declines to install (no ghost listener), and a

@@ -3,6 +3,7 @@ using StackExchange.Redis;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Threading;
 using Xunit;
 
 namespace RedisExcel.Tests
@@ -400,6 +401,83 @@ namespace RedisExcel.Tests
             }
             finally
             {
+                mux.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Regression for the out-of-order delivery latch. StackExchange.Redis hands
+        /// every channel callback to the thread pool (no ordering guarantee), so the
+        /// OLDER of two overlapping messages can be fanned out LAST. The cell then
+        /// keeps the older payload while the dedup marker has been stamped with the
+        /// newer one by the other callback, and an identical republish of the newest
+        /// value - the usual shape of a price/margin feed - was suppressed forever:
+        /// a transient inversion turned into permanent staleness. The marker must
+        /// follow the payload delivered last.
+        ///
+        /// Drives HandleMessage on two threads with the older delivery held inside
+        /// its listener, which is exactly the interleaving the library allows and
+        /// needs no server (the state's subscriber is a dead multiplexer).
+        /// </summary>
+        [Fact]
+        public void OutOfOrderDelivery_DoesNotLeaveTheDedupMarkerOnAPayloadTheCellDiscarded()
+        {
+            var manager = new RedisSubscriptionManager(new RedisConnectionManager());
+            string host = "out-of-order-a";
+            const string channel = "out-of-order-channel";
+            var delivered = new List<string>();
+            var olderInside = new ManualResetEventSlim(false);
+            var releaseOlder = new ManualResetEventSlim(false);
+
+            var mux = ConnectionMultiplexer.Connect(DeadHost);
+            try
+            {
+                object state = SeedState(manager, mux, host, channel, pattern: false);
+                var token = manager.Subscribe(host, channel, pattern: false, onMessage: m =>
+                {
+                    if (m == "older")
+                    {
+                        olderInside.Set();
+                        releaseOlder.Wait(TimeSpan.FromSeconds(10));
+                    }
+                    lock (delivered)
+                        delivered.Add(m);
+                });
+
+                // Callback for the OLDER payload (published first): stalled in the listener.
+                var olderThread = new Thread(() => Deliver(state, channel, "older")) { IsBackground = true };
+                olderThread.Start();
+                Assert.True(olderInside.Wait(TimeSpan.FromSeconds(10)),
+                    "the older delivery reached the listener");
+
+                // Callback for the NEWER payload (published second): completes first,
+                // stamping the marker with "newer" while "older" is still in flight.
+                Deliver(state, channel, "newer");
+
+                releaseOlder.Set();
+                Assert.True(olderThread.Join(TimeSpan.FromSeconds(10)), "the older delivery completed");
+
+                // The inversion itself is inherent to SE.Redis and not fixed here:
+                // the cell transiently ends on the older value.
+                Assert.Equal(new[] { "newer", "older" }, delivered);
+
+                // What must hold: the marker describes the payload delivered LAST, so
+                // the next publish of the current value is fanned out instead of being
+                // suppressed while the cell still shows the older one.
+                Deliver(state, channel, "newer");
+                Assert.Equal(3, delivered.Count);
+                Assert.Equal("newer", delivered[2]);
+
+                // The dedup itself keeps working: an immediate identical repeat is
+                // still suppressed.
+                Deliver(state, channel, "newer");
+                Assert.Equal(3, delivered.Count);
+
+                token.Dispose();
+            }
+            finally
+            {
+                releaseOlder.Set();
                 mux.Dispose();
             }
         }
