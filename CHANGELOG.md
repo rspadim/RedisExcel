@@ -1,3 +1,29 @@
+## v1.7.1
+
+### Fixed
+
+- **The installer no longer reports a working server as dead.** The probe used
+  `PING`, which a Redis with `stop-writes-on-bgsave-error yes` answers with
+  `-MISCONF ...` (a persistence error) even though every read works - so a server
+  RedisExcel uses happily was rejected. It now climbs a ladder of READ commands -
+  `PUBSUB CHANNELS` (the `@pubsub` category, exactly what the add-in does),
+  `DBSIZE` (`@keyspace`) then `PING` - because a restricted user is often denied
+  one and allowed the next. Any reply proves the path (TCP, TLS, `AUTH`,
+  database selection); only a rejected password fails the ladder early, and
+  `-NOPERM` moves on. The verdict is **connected + login accepted**, which is
+  what a user can act on; per-command authorization is theirs to grant.
+- **The failure reason is readable.** The old code concatenated the whole
+  exception chain, including PowerShell's own `Exceção ao chamar "Execute" ...`
+  wrapper, so the cell showed noise instead of the cause. The probe now keeps the
+  original error record (so the classifier still sees the real chain) and prints
+  the innermost reason: `Error: NOAUTH Authentication required.` rather than the
+  wrapper.
+- **The probe wording no longer mentions a PONG**, which stopped being the
+  verdict. Success reads "the server answered and the login was accepted", and
+  the failure reasons name the credential problem or say the port does not look
+  like a Redis server. Rewritten in all 10 wizard languages.
+
+## v1.7.0
 ## v1.7.0
 
 ### Fixed

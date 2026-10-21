@@ -610,7 +610,9 @@ Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
 the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
-release: `v1.7.0` (fixes a Pub/Sub cell that could stay on an older value after a
+release: `v1.7.1` (the installer's connection probe reads instead of PINGing, so a
+server that refuses writes is no longer reported as dead - on top of the `v1.7.0`
+fix for a Pub/Sub cell that could stay on an older value after a
 transient out-of-order delivery, and the installer's connection test now drives
 StackExchange.Redis itself instead of a raw `PING`; on top of the v1.6.4
 `RedisUDFVersion`/stale-install cleanup, the v1.6.3 config migration and the

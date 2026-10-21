@@ -53,12 +53,12 @@ if (-not $Quiet) {
 }
 
 # --- exit-code classification ----------------------------------------------
-# The real client wraps every failure the same way: a top-level
-# "message timed out in the backlog" whose inner RedisConnectionException carries
-# the actionable reason. It does NOT surface a SocketException, so DNS vs refused
-# vs timeout has to be read from the client's own report text. These markers are
-# the client's own English tokens (not localized by Windows): "UnableToConnect",
-# "AuthenticationFailure", "ConnectTimeout" and the last-connection detail.
+# The client wraps every failure: PowerShell adds its own
+# "Exceção ao chamar "Execute"..." layer, then StackExchange.Redis adds a
+# "message timed out in the backlog" layer, and only the innermost message names
+# the real reason ("NOAUTH Authentication required", "UnableToConnect on
+# host:port", "MISCONF ..."). Both the classification below and the line printed
+# for the user need that inner text, so it is extracted once.
 function Get-InnermostError {
   param($Record)
   $ex = $Record.Exception
@@ -76,6 +76,33 @@ function Get-ErrorText {
     $ex = $ex.InnerException
   }
   return $text
+}
+
+# The user-facing reason, with the wrapper noise removed. PowerShell's own
+# "Exception calling X with N argument(s)" carries no information for a human, so
+# the innermost message is preferred and trimmed of stray quotes/whitespace.
+function Get-FriendlyReason {
+  param($Record)
+
+  $inner = Get-InnermostError $Record
+  $reason = $inner.Message
+
+  # Unwrap the client's own "The message timed out in the backlog ... (5000ms) -
+  # Last connection error: <real reason>" form when the real reason is inside it.
+  if ($reason -match 'Last connection error:\s*(.+)$') {
+    $reason = $Matches[1]
+  }
+  # Drop a leading "no answer: " style prefix the client may add.
+  $reason = $reason -replace '^\s*no answer:\s*', ''
+  # Collapse the long multi-line diagnostic the client emits after a comma.
+  $reason = ($reason -replace '\s+', ' ').Trim()
+  # The client appends a very long internal state dump after the first sentence;
+  # keep the sentence a person can act on.
+  $cut = $reason.IndexOf(' on ')
+  if ($cut -gt 0 -and $reason.Length -gt 120) { $reason = $reason.Substring(0, $cut) }
+
+  if ($reason.Length -gt 200) { $reason = $reason.Substring(0, 197) + '...' }
+  return $reason
 }
 
 function Get-FailureCode {
@@ -152,7 +179,67 @@ function Connect-WithClient {
   $mux = [StackExchange.Redis.ConnectionMultiplexer]::Connect($options)
   try {
     $db = $mux.GetDatabase()
-    [void]$db.Ping()
+
+    # Connection detection: ANY reply proves the whole path (TCP, TLS, AUTH,
+    # database selection) - even an error reply. Only "no reply" means the
+    # address is wrong. So the verdict is "the server answered something", and
+    # the only real failures are auth rejection and non-permission on EVERY
+    # probe tried.
+    #
+    # A ladder, because each command belongs to a different ACL category and a
+    # restricted user (exactly the kind a read-only feed grants) may be denied
+    # one while being allowed the next:
+    #   PUBSUB CHANNELS  @pubsub      - what the add-in actually does (SUB/PSUB)
+    #   DBSIZE           @keyspace    - what a GET user always has
+    #   PING             @connection  - allowed to nearly everyone
+    #
+    # PING alone is a BAD verdict: a Redis with `stop-writes-on-bgsave-error`
+    # answers it with "-MISCONF ..." even though every read works, so it
+    # rejects a server the add-in uses happily. DBSIZE alone is bad too: an
+    # @read/@pubsub-only user gets -NOPERM. And PUBLISH is never an option -
+    # the installer must not write to, or publish into, a server it does not
+    # own.
+    $connected = $false
+    $authProblem = $null
+    $probingError = $null
+    foreach ($command in @("PUBSUB CHANNELS", "DBSIZE", "PING")) {
+      try {
+        if ($command -eq "PUBSUB CHANNELS") {
+          # Bounded by the same timeout; a channel list is read-only metadata.
+          [void]$db.Execute("PUBSUB", "CHANNELS")
+        } else {
+          [void]$db.Execute($command)
+        }
+        $connected = $true
+        break
+      } catch {
+        # Keep the ORIGINAL ErrorRecord: its exception chain still carries the
+        # client's real reason (NOAUTH, UnableToConnect, ...). Rebuilding an
+        # exception from the concatenated text would lose it and print the
+        # PowerShell wrapper instead.
+        $probingError = $_
+
+        $text = Get-ErrorText $_
+
+        # Credentials are wrong for the whole server, not for one command: no
+        # point trying the rest.
+        if ($text -match 'NOAUTH|WRONGPASS|AuthenticationFailure|invalid password') {
+          $authProblem = Get-FriendlyReason $_
+          break
+        }
+        # Denied for this command only (-NOPERM): try the next one.
+        if ($text -match 'NOPERM|no permissions') { continue }
+        $authProblem = Get-FriendlyReason $_
+        continue
+      }
+    }
+
+    if (-not $connected) {
+      # Re-throw the ORIGINAL record so the caller's classifier sees the same
+      # exception chain a direct connect failure would produce.
+      if ($probingError) { throw $probingError }
+      throw (New-Object System.Exception([string]$authProblem))
+    }
   } finally {
     $mux.Dispose()
   }
@@ -172,8 +259,8 @@ if ($clientDll) {
     exit 0
   } catch {
     $code = Get-FailureCode $_
-    $ex = Get-InnermostError $_
-    Write-Host ('no answer: ' + $ex.Message)
+    $reason = Get-FriendlyReason $_
+    Write-Host ('no answer: ' + $reason)
     exit $code
   }
 }

@@ -195,6 +195,10 @@ try {
   $ws.Range('A7').Value2 = 'Version:'
   $ws.Range('B7').Formula = '=RedisUDFVersion()'
 
+  # The sample workbook is the USER'S OWN sheet, so a write here is fine and
+  # useful: it shows a real round trip (Set then Get). This is deliberately
+  # different from the installer's connection PROBE (test-connection.ps1), which
+  # must never write to a server it does not own.
   $ws.Range('A9').Value2 = 'Read/write test (press F9 to refresh):'
   $ws.Range('A10').Value2 = 'Set:'
   $ws.Range('B10').Formula = '=RedisUDFSet("redisexcel:install_test","hello from the installer")'
