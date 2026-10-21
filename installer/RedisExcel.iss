@@ -1723,6 +1723,11 @@ begin
   Args := '-ServerHost "' + HostPort + '"';
   if PwFile <> '' then
     Args := Args + ' -PasswordFile "' + PwFile + '"';
+  // -HoldSeconds 3: this runs with SW_SHOW at the end of the setup, so the
+  // console must stay up long enough to read the banner and the result. It is
+  // passed here ONLY (not by the wizard button, whose output is redirected and
+  // only its exit code matters), so the check itself never gets slower.
+  Args := Args + ' -HoldSeconds 3';
   TestOk := (RunScript('test-connection.ps1', Args) = 0);
 
   // The migration note is INDEPENDENT of the connection test: a migrated config
@@ -1749,7 +1754,10 @@ begin
 
   if OpenExcelChecked() then
   begin
-    Args := '-AddInDir "' + ExpandConstant('{app}') + '" -ServerHost "' + HostPort + '" -OpenExcel -Quiet';
+    // -HoldSeconds 3: the installer starts this with SW_SHOW, so the console must
+    // stay up long enough to read the banner and the outcome. Excel opens on its
+    // own and is not affected.
+    Args := '-AddInDir "' + ExpandConstant('{app}') + '" -ServerHost "' + HostPort + '" -OpenExcel -Quiet -HoldSeconds 3';
     if PwFile <> '' then
       Args := Args + ' -PasswordFile "' + PwFile + '"';
     RunScript('verify-connection.ps1', Args);

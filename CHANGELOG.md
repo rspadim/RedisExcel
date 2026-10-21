@@ -1,3 +1,15 @@
+## v1.7.2
+
+### Fixed
+
+- **The console the installer opens at the end no longer disappears before it can
+  be read.** The end-of-setup check and the sample-workbook step run with
+  `SW_SHOW`, so the window showed the banner and the result and closed in the
+  same instant. Both now take `-HoldSeconds N` and the installer passes `3`: the
+  result stays on screen for three seconds. The parameter defaults to 0, so the
+  wizard's "Test connection" button (whose output is redirected and whose only
+  meaningful output is the exit code) is not slowed down.
+
 ## v1.7.1
 
 ### Fixed

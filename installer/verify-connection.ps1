@@ -27,7 +27,12 @@ param(
   [string]$Password = '',
   [string]$PasswordFile = '',
   [switch]$OpenExcel,
-  [switch]$Quiet
+  [switch]$Quiet,
+  # Seconds to keep the console open when the caller runs this in a VISIBLE
+  # window. The installer starts it with SW_SHOW, so without a hold the banner
+  # and the result would flash and vanish. Excel itself stays open; this only
+  # keeps the CONSOLE readable before the script returns.
+  [int]$HoldSeconds = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +52,13 @@ try {
 
 if ($PasswordFile -ne '' -and (Test-Path -LiteralPath $PasswordFile)) {
   $Password = [System.IO.File]::ReadAllText($PasswordFile)
+}
+
+# Keeps the console readable when started from the installer (SW_SHOW). Called
+# right before every exit path, so the banner and the result are on screen for
+# at least HoldSeconds. With 0 it is a no-op (the redirected wizard call).
+function Hold {
+  if ($HoldSeconds -gt 0) { Start-Sleep -Seconds $HoldSeconds }
 }
 
 function Show([string]$text, [string]$title = 'RedisExcel') {
@@ -136,6 +148,7 @@ if (-not $ok) {
   Show ("Could not connect to Redis at $target.`r`n`r`n" +
         "- Check that the server is running (docker ps, or the service).`r`n" +
         "- If it is on another host/port, adjust RedisExcel.json.") "RedisExcel - connection"
+  Hold
   exit 1
 }
 
@@ -145,6 +158,7 @@ if (-not $OpenExcel) {
   Show ("All set!`r`n`r`nRedis answered at $target.`r`n" +
         "Open Excel, register the XLL (File > Options > Add-ins > Go... > Browse...) " +
         "and use, for example, =RedisUDFGet(`"key`").") "RedisExcel - installed"
+  Hold
   exit 0
 }
 
@@ -154,6 +168,7 @@ $xll32 = Join-Path $AddInDir 'RedisExcel-packed.xll'
 $xll = if (Test-Path $xll64) { $xll64 } elseif (Test-Path $xll32) { $xll32 } else { $null }
 if (-not $xll) {
   Show ("Could not find the XLL in $AddInDir.") "RedisExcel"
+  Hold
   exit 0
 }
 
@@ -215,8 +230,10 @@ try {
 
   $excel.Application.Calculate() | Out-Null
   Write-Host "[verify] sample workbook opened (XLL registered: $registered)"
+  Hold
   exit 0
 } catch {
   Show ("Could not open Excel: " + $_.Exception.Message) "RedisExcel"
+  Hold
   exit 0
 }

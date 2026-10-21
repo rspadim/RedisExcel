@@ -30,7 +30,13 @@ param(
   [string]$PasswordFile = '',
   # Suppress the console header (the wizard redirects this output to a file and
   # only reads the exit code).
-  [switch]$Quiet
+  [switch]$Quiet,
+  # Seconds to keep the console open after the result when running in a VISIBLE
+  # window (the installer runs this with SW_SHOW at the end of a setup). Without
+  # it the window flashes the banner and closes before anyone can read it. The
+  # wizard's "Test connection" button passes -Quiet and no hold, because its
+  # output is redirected and only the exit code matters.
+  [int]$HoldSeconds = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -256,13 +262,19 @@ if ($clientDll) {
   try {
     Connect-WithClient -DllPath $clientDll
     Write-Host 'PONG'
-    exit 0
+    $result = 0
   } catch {
-    $code = Get-FailureCode $_
+    $result = Get-FailureCode $_
     $reason = Get-FriendlyReason $_
     Write-Host ('no answer: ' + $reason)
-    exit $code
   }
+
+  # Hold the console when the caller runs this in a VISIBLE window (the
+  # installer's end-of-setup check): without it the window shows the banner and
+  # closes before the user can read the result. The wizard's "Test connection"
+  # button passes -Quiet and no hold, because its output is redirected.
+  if ($HoldSeconds -gt 0) { Start-Sleep -Seconds $HoldSeconds }
+  exit $result
 }
 
 # --- fallback: raw RESP -----------------------------------------------------
@@ -319,14 +331,20 @@ try {
   Send-Command $stream @('PING')
   $pong = $reader.ReadLine()
   $client.Close()
-  if ($pong -match 'PONG') { Write-Host 'PONG'; exit 0 }
-  Write-Host "unexpected reply: $pong"
-  exit 6
+  if ($pong -match 'PONG') {
+    Write-Host 'PONG'
+    $result = 0
+  } else {
+    Write-Host "unexpected reply: $pong"
+    $result = 6
+  }
 } catch {
-  $code = Get-FailureCode $_
+  $result = Get-FailureCode $_
   $ex = Get-InnermostError $_
   Write-Host ('no answer: ' + $ex.Message)
-  exit $code
 } finally {
   if ($client) { try { $client.Close() } catch { } }
 }
+
+if ($HoldSeconds -gt 0) { Start-Sleep -Seconds $HoldSeconds }
+exit $result
