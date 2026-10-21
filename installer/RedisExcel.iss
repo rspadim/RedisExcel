@@ -29,6 +29,11 @@
 #ifndef BuildDir
   #define BuildDir "..\bin\Release\net48\publish"
 #endif
+; The client libraries live in the build output, not in publish\ (which holds
+; only what the add-in itself needs at load time).
+#ifndef LibDir
+  #define LibDir "..\bin\Release\net48"
+#endif
 #ifndef RepoRoot
   #define RepoRoot ".."
 #endif
@@ -793,6 +798,22 @@ Name: "{group}\{#AppName}"; Filename: "{uninstallexe}"; Comment: "{cm:IconUninst
 Source: "{#BuildDir}\RedisExcel.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\RedisExcel64-packed.xll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\RedisExcel-packed.xll"; DestDir: "{app}"; Flags: ignoreversion
+; StackExchange.Redis and its own dependencies, ALSO unpacked next to the XLL.
+; The XLL already carries them packed, but the installer's "Test connection"
+; button drives the REAL client from PowerShell (test-connection.ps1), so the
+; check exercises exactly the connection-string parser, TLS/ACL/cluster support
+; and client version the add-in itself uses - a raw PING proves none of that.
+; ~1.5 MB, and harmless next to the packed XLL (Excel-DNA loads from the pack).
+Source: "{#LibDir}\StackExchange.Redis.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\Pipelines.Sockets.Unofficial.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.IO.Pipelines.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.Threading.Tasks.Extensions.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.Runtime.CompilerServices.Unsafe.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.Memory.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.Buffers.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\System.Numerics.Vectors.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\Microsoft.Extensions.Logging.Abstractions.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#LibDir}\Microsoft.Bcl.AsyncInterfaces.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#RepoRoot}\NLog.config"; DestDir: "{app}"; Flags: onlyifdoesntexist; Tasks: nlogconfig
 ; Helper scripts: server setup, connection test, end-of-install verification,
 ; server detection/removal for the uninstaller, and the config validator.
