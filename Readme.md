@@ -467,6 +467,7 @@ Functions to use directly in Excel cells:
 | RedisUDFChannelUnsubscribe       | Unsubscribe a channel | channel, optionalHost   |
 | RedisUDFPubSubChannelsInfo       | Lists active Pub/Sub channels and subscriber counts | optionalHost             |
 | RedisUDFUpdateAvailable       | TRUE when a newer release exists | none                                      |
+| RedisUDFVersion               | Running version + loaded XLL path + config in use (also spots a second installed copy) | none |
 | RedisCheckConfigFile          | Validate RedisExcel.json against its schema | optionalFilePath (blank = the config in use) |
 | RedisJsonSchemaContents       | The JSON Schema used to validate RedisExcel.json | none                              |
 | RedisUDFJSONToMatrix             | Convert JSON → Excel matrix      | json, nullValue                           |
@@ -522,6 +523,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | `RedisUDFPubSubChannelsInfo` | matrix `Channel` / `Subscribers` (header first) | header-only matrix when nothing is subscribed |
 | `RedisUDFServerTime` | the server time | - |
 | `RedisUDFUpdateAvailable` | `TRUE` when a newer release is known (background check, never blocks) | `FALSE` |
+| `RedisUDFVersion` | `RedisExcel 1.6.4 \| xll=<path> \| config=<path> \| connections=N` - the running version and what it loaded | `dev` for a local build, `(defaults)` when no RedisExcel.json was found |
 | `RedisCheckConfigFile` | `OK (...)` when the config is valid, otherwise one line per problem | `Error: ...` (never blocks) |
 | `RedisJsonSchemaContents` | the JSON Schema text (the allowed keys/values) | - |
 | `RedisUDFConnectionCount` | live UDF connections | `0` |

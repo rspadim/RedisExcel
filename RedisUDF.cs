@@ -2819,6 +2819,52 @@ namespace RedisExcel
         {
             return ConfigSchema.Text;
         }
+
+        [ExcelFunction(Description = "Returns the running RedisExcel version and where it was loaded from (use it to check that the add-in loaded correctly, and to spot two copies installed).", IsVolatile = true)]
+        public static string RedisUDFVersion()
+        {
+            string version;
+            string xllPath;
+            string configPath;
+            int connections;
+            try
+            {
+                version = BuildInfo.Version;
+            }
+            catch
+            {
+                version = "dev";
+            }
+            try
+            {
+                xllPath = ExcelDna.Integration.ExcelDnaUtil.XllPath;
+            }
+            catch
+            {
+                xllPath = null;
+            }
+            try
+            {
+                configPath = AppConfig.FirstExistingPath();
+            }
+            catch
+            {
+                configPath = null;
+            }
+            try
+            {
+                connections = RedisRuntime.Connections.LiveUdfConnectionCount();
+            }
+            catch
+            {
+                connections = 0;
+            }
+
+            return "RedisExcel " + version
+                + " | xll=" + (string.IsNullOrWhiteSpace(xllPath) ? "(unknown)" : xllPath)
+                + " | config=" + (string.IsNullOrWhiteSpace(configPath) ? "(defaults)" : configPath)
+                + " | connections=" + connections.ToString(CultureInfo.InvariantCulture);
+        }
     }
 
     /// <summary>

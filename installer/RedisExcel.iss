@@ -86,6 +86,16 @@ english.ConnPageDesc=Press Next for the default (localhost:6379). You can change
 english.ConnHost=Host (or host:port):
 english.ConnPort=Port:
 english.ConnPassword=Password (optional):
+english.TestButton=Test connection
+english.TestButtonTesting=Testing... (waits up to 5 seconds for an answer)
+english.TestButtonOk=Connected - Redis answered at %1.
+english.TestButtonFailed=Could not connect to %1.
+english.TestReasonUnknownHost=Unknown host name - check for a typo.
+english.TestReasonTimeout=No answer (timeout) - is the server running and reachable?
+english.TestReasonAuth=The server rejected the password.
+english.TestReasonUnexpected=The server answered, but not with a PONG.
+english.TestReasonRefused=Connection refused - is Redis running on that port?
+english.TestCouldNotRun=Could not run the connection test (PowerShell unavailable?). The installer will still check the connection at the end.
 english.OptionsPageTitle=Extra checks
 english.OptionsPageSubtitle=Almost done
 english.OptionsPageDesc=The installer tests the connection when it finishes. Optionally open a sample Excel workbook showing it working.
@@ -146,6 +156,16 @@ spanish.ConnPageDesc=Pulse Siguiente para el valor predeterminado (localhost:637
 spanish.ConnHost=Host (o host:puerto):
 spanish.ConnPort=Puerto:
 spanish.ConnPassword=Contraseña (opcional):
+spanish.TestButton=Probar conexión
+spanish.TestButtonTesting=Probando... (espera hasta 5 segundos la respuesta)
+spanish.TestButtonOk=Conectado: Redis respondió en %1.
+spanish.TestButtonFailed=No se pudo conectar a %1.
+spanish.TestReasonUnknownHost=Nombre de host desconocido: revise si hay un error de escritura.
+spanish.TestReasonTimeout=Sin respuesta (tiempo de espera): ¿el servidor está en marcha y accesible?
+spanish.TestReasonAuth=El servidor rechazó la contraseña.
+spanish.TestReasonUnexpected=El servidor respondió, pero no con un PONG.
+spanish.TestReasonRefused=Conexión rechazada: ¿Redis está en marcha en ese puerto?
+spanish.TestCouldNotRun=No se pudo ejecutar la prueba de conexión (¿PowerShell no disponible?). El instalador comprobará la conexión al final de todos modos.
 spanish.OptionsPageTitle=Comprobaciones
 spanish.OptionsPageSubtitle=Casi listo
 spanish.OptionsPageDesc=El instalador prueba la conexión al terminar. Opcionalmente abre un libro de Excel de ejemplo que muestra que funciona.
@@ -206,6 +226,16 @@ brazilianportuguese.ConnPageDesc=Clique em Avançar para o padrão (localhost:63
 brazilianportuguese.ConnHost=Host (ou host:porta):
 brazilianportuguese.ConnPort=Porta:
 brazilianportuguese.ConnPassword=Senha (opcional):
+brazilianportuguese.TestButton=Testar conexão
+brazilianportuguese.TestButtonTesting=Testando... (aguarda até 5 segundos pela resposta)
+brazilianportuguese.TestButtonOk=Conectado - o Redis respondeu em %1.
+brazilianportuguese.TestButtonFailed=Não foi possível conectar em %1.
+brazilianportuguese.TestReasonUnknownHost=Nome de host desconhecido - confira se há um erro de digitação.
+brazilianportuguese.TestReasonTimeout=Sem resposta (tempo esgotado) - o servidor está rodando e acessível?
+brazilianportuguese.TestReasonAuth=O servidor recusou a senha.
+brazilianportuguese.TestReasonUnexpected=O servidor respondeu, mas não com um PONG.
+brazilianportuguese.TestReasonRefused=Conexão recusada - o Redis está rodando nessa porta?
+brazilianportuguese.TestCouldNotRun=Não foi possível executar o teste de conexão (PowerShell indisponível?). O instalador vai testar a conexão no final de qualquer forma.
 brazilianportuguese.OptionsPageTitle=Verificações
 brazilianportuguese.OptionsPageSubtitle=Quase pronto
 brazilianportuguese.OptionsPageDesc=O instalador testa a conexão ao terminar. Opcionalmente abre uma planilha de exemplo do RedisExcel mostrando que funcionou.
@@ -261,6 +291,16 @@ chinesesimplified.ConnPageDesc=使用默认值（localhost:6379）请点“下�
 chinesesimplified.ConnPageSubtitle=RedisExcel 应连接到何处？
 chinesesimplified.ConnPageTitle=Redis 连接
 chinesesimplified.ConnPassword=密码（可选）：
+chinesesimplified.TestButton=测试连接
+chinesesimplified.TestButtonTesting=正在测试...（最多等待 5 秒）
+chinesesimplified.TestButtonOk=已连接 - %1 的 Redis 已响应。
+chinesesimplified.TestButtonFailed=无法连接到 %1。
+chinesesimplified.TestReasonUnknownHost=主机名未知 - 请检查是否拼写错误。
+chinesesimplified.TestReasonTimeout=无响应（超时） - 服务器是否在运行且可访问？
+chinesesimplified.TestReasonAuth=服务器拒绝了密码。
+chinesesimplified.TestReasonUnexpected=服务器已响应，但未返回 PONG。
+chinesesimplified.TestReasonRefused=连接被拒绝 - 该端口上是否运行着 Redis？
+chinesesimplified.TestCouldNotRun=无法运行连接测试（PowerShell 不可用？）。安装程序仍会在结束时测试连接。
 chinesesimplified.ConnPort=端口：
 chinesesimplified.FinishedText=RedisExcel 已安装到：%n%2%n%n如果加载项未自动加载，请在 Excel 中启用：%n文件 > 选项 > 加载项 > 转到... > 浏览...，选择 RedisExcel64-packed.xll（32 位 Office 用 RedisExcel-packed.xll）。%n%n然后在单元格中试试 =RedisUDFGet("preco_btc")。
 chinesesimplified.GroupConfig=配置：
@@ -322,6 +362,16 @@ chinesetraditional.ConnPageDesc=使用預設值（localhost:6379）請按「下�
 chinesetraditional.ConnPageSubtitle=RedisExcel 應連線到何處？
 chinesetraditional.ConnPageTitle=Redis 連線
 chinesetraditional.ConnPassword=密碼（選填）：
+chinesetraditional.TestButton=測試連線
+chinesetraditional.TestButtonTesting=正在測試...（最多等待 5 秒）
+chinesetraditional.TestButtonOk=已連線 - %1 的 Redis 已回應。
+chinesetraditional.TestButtonFailed=無法連線到 %1。
+chinesetraditional.TestReasonUnknownHost=主機名稱未知 - 請檢查是否拼寫錯誤。
+chinesetraditional.TestReasonTimeout=無回應（逾時） - 伺服器是否在執行且可存取？
+chinesetraditional.TestReasonAuth=伺服器拒絕了密碼。
+chinesetraditional.TestReasonUnexpected=伺服器已回應，但未傳回 PONG。
+chinesetraditional.TestReasonRefused=連線被拒絕 - 該連接埠上是否執行著 Redis？
+chinesetraditional.TestCouldNotRun=無法執行連線測試（PowerShell 無法使用？）。安裝程式仍會在結束時測試連線。
 chinesetraditional.ConnPort=連接埠：
 chinesetraditional.FinishedText=RedisExcel 已安裝於：%n%2%n%n若增益集未自動載入，請在 Excel 中啟用：%n檔案 > 選項 > 增益集 > 前往... > 瀏覽...，選擇 RedisExcel64-packed.xll（32 位元 Office 請用 RedisExcel-packed.xll）。%n%n接著在儲存格中試試 =RedisUDFGet("preco_btc")。
 chinesetraditional.GroupConfig=設定：
@@ -383,6 +433,16 @@ russian.ConnPageDesc=Нажмите «Далее» для значения по 
 russian.ConnPageSubtitle=Куда подключаться RedisExcel?
 russian.ConnPageTitle=Подключение к Redis
 russian.ConnPassword=Пароль (необязательно):
+russian.TestButton=Проверить подключение
+russian.TestButtonTesting=Проверка... (ответ ожидается до 5 секунд)
+russian.TestButtonOk=Подключено - Redis ответил по адресу %1.
+russian.TestButtonFailed=Не удалось подключиться к %1.
+russian.TestReasonUnknownHost=Неизвестное имя хоста - проверьте, нет ли опечатки.
+russian.TestReasonTimeout=Нет ответа (тайм-аут) - сервер запущен и доступен?
+russian.TestReasonAuth=Сервер отклонил пароль.
+russian.TestReasonUnexpected=Сервер ответил, но не PONG.
+russian.TestReasonRefused=В подключении отказано - запущен ли Redis на этом порту?
+russian.TestCouldNotRun=Не удалось запустить проверку подключения (PowerShell недоступен?). Установщик всё равно проверит подключение в конце.
 russian.ConnPort=Порт:
 russian.FinishedText=RedisExcel установлен в:%n%2%n%nЕсли адд-ин не загружается автоматически, включите его в Excel:%nФайл > Параметры > Надстройки > Перейти... > Обзор... и выберите RedisExcel64-packed.xll (или RedisExcel-packed.xll для 32-битного Office).%n%nЗатем попробуйте =RedisUDFGet("preco_btc") в ячейке.
 russian.GroupConfig=Конфигурация:
@@ -444,6 +504,16 @@ french.ConnPageDesc=Cliquez sur Suivant pour la valeur par défaut (localhost:63
 french.ConnPageSubtitle=Où RedisExcel doit-il se connecter ?
 french.ConnPageTitle=Connexion Redis
 french.ConnPassword=Mot de passe (facultatif) :
+french.TestButton=Tester la connexion
+french.TestButtonTesting=Test en cours... (attente de la réponse : jusqu'à 5 secondes)
+french.TestButtonOk=Connecté - Redis a répondu à %1.
+french.TestButtonFailed=Impossible de se connecter à %1.
+french.TestReasonUnknownHost=Nom d'hôte inconnu - vérifiez s'il y a une faute de frappe.
+french.TestReasonTimeout=Aucune réponse (délai dépassé) - le serveur est-il démarré et joignable ?
+french.TestReasonAuth=Le serveur a refusé le mot de passe.
+french.TestReasonUnexpected=Le serveur a répondu, mais pas par un PONG.
+french.TestReasonRefused=Connexion refusée - Redis est-il démarré sur ce port ?
+french.TestCouldNotRun=Impossible d'exécuter le test de connexion (PowerShell indisponible ?). L'installateur vérifiera quand même la connexion à la fin.
 french.ConnPort=Port :
 french.FinishedText=RedisExcel est installé dans :%n%2%n%nSi le complément ne se charge pas automatiquement, activez-le dans Excel :%nFichier > Options > Compléments > Atteindre... > Parcourir... et choisissez RedisExcel64-packed.xll (ou RedisExcel-packed.xll pour Office 32 bits).%n%nEssayez ensuite =RedisUDFGet("preco_btc") dans une cellule.
 french.GroupConfig=Configuration :
@@ -505,6 +575,16 @@ korean.ConnPageDesc=기본값(localhost:6379)이면 다음을 누르세요. 나�
 korean.ConnPageSubtitle=RedisExcel이 어디에 연결해야 합니까?
 korean.ConnPageTitle=Redis 연결
 korean.ConnPassword=비밀번호(선택):
+korean.TestButton=연결 테스트
+korean.TestButtonTesting=테스트 중... (응답을 최대 5초 기다립니다)
+korean.TestButtonOk=연결됨 - %1의 Redis가 응답했습니다.
+korean.TestButtonFailed=%1에 연결할 수 없습니다.
+korean.TestReasonUnknownHost=알 수 없는 호스트 이름 - 오타가 있는지 확인하세요.
+korean.TestReasonTimeout=응답 없음(시간 초과) - 서버가 실행 중이며 접근 가능한가요?
+korean.TestReasonAuth=서버가 비밀번호를 거부했습니다.
+korean.TestReasonUnexpected=서버가 응답했지만 PONG이 아닙니다.
+korean.TestReasonRefused=연결이 거부됨 - 해당 포트에서 Redis가 실행 중인가요?
+korean.TestCouldNotRun=연결 테스트를 실행할 수 없습니다(PowerShell을 사용할 수 없음?). 설치 프로그램이 끝에서 연결을 확인합니다.
 korean.ConnPort=포트:
 korean.FinishedText=RedisExcel이 다음 위치에 설치되었습니다:%n%2%n%n추가 기능이 자동으로 로드되지 않으면 Excel에서 활성화하세요:%n파일 > 옵션 > 추가 기능 > 이동... > 찾아보기...에서 RedisExcel64-packed.xll(32비트 Office는 RedisExcel-packed.xll)을 선택합니다.%n%n그런 다음 셀에 =RedisUDFGet("preco_btc")를 입력해 보세요.
 korean.GroupConfig=구성:
@@ -566,6 +646,16 @@ german.ConnPageDesc=Klicken Sie auf Weiter für den Standard (localhost:6379). S
 german.ConnPageSubtitle=Womit soll sich RedisExcel verbinden?
 german.ConnPageTitle=Redis-Verbindung
 german.ConnPassword=Passwort (optional):
+german.TestButton=Verbindung testen
+german.TestButtonTesting=Wird getestet... (wartet bis zu 5 Sekunden auf eine Antwort)
+german.TestButtonOk=Verbunden - Redis hat unter %1 geantwortet.
+german.TestButtonFailed=Verbindung zu %1 nicht möglich.
+german.TestReasonUnknownHost=Unbekannter Hostname - auf Tippfehler prüfen.
+german.TestReasonTimeout=Keine Antwort (Zeitüberschreitung) - läuft der Server und ist er erreichbar?
+german.TestReasonAuth=Der Server hat das Passwort abgelehnt.
+german.TestReasonUnexpected=Der Server hat geantwortet, aber nicht mit PONG.
+german.TestReasonRefused=Verbindung abgelehnt - läuft Redis auf diesem Port?
+german.TestCouldNotRun=Der Verbindungstest konnte nicht ausgeführt werden (PowerShell nicht verfügbar?). Der Installer prüft die Verbindung am Ende trotzdem.
 german.ConnPort=Port:
 german.FinishedText=RedisExcel ist installiert in:%n%2%n%nWenn das Add-in nicht automatisch geladen wird, aktivieren Sie es in Excel:%nDatei > Optionen > Add-Ins > Gehe zu... > Durchsuchen... und wählen Sie RedisExcel64-packed.xll (oder RedisExcel-packed.xll für 32-Bit-Office).%n%nProbieren Sie dann =RedisUDFGet("preco_btc") in einer Zelle.
 german.GroupConfig=Konfiguration:
@@ -627,6 +717,16 @@ japanese.ConnPageDesc=既定値（localhost:6379）でよければ「次へ」�
 japanese.ConnPageSubtitle=RedisExcel はどこに接続しますか？
 japanese.ConnPageTitle=Redis 接続
 japanese.ConnPassword=パスワード（任意）:
+japanese.TestButton=接続をテスト
+japanese.TestButtonTesting=テスト中...（最大 5 秒待機します）
+japanese.TestButtonOk=接続済み - %1 の Redis が応答しました。
+japanese.TestButtonFailed=%1 に接続できませんでした。
+japanese.TestReasonUnknownHost=ホスト名が不明です - 入力ミスがないか確認してください。
+japanese.TestReasonTimeout=応答なし（タイムアウト） - サーバーは起動して到達可能ですか？
+japanese.TestReasonAuth=サーバーがパスワードを拒否しました。
+japanese.TestReasonUnexpected=サーバーは応答しましたが PONG ではありません。
+japanese.TestReasonRefused=接続が拒否されました - そのポートで Redis は起動していますか？
+japanese.TestCouldNotRun=接続テストを実行できませんでした（PowerShell が使用できない可能性があります）。インストーラーは最後に接続を確認します。
 japanese.ConnPort=ポート:
 japanese.FinishedText=RedisExcel は次にインストールされました:%n%2%n%nアドインが自動で読み込まれない場合は Excel で有効化してください:%nファイル > オプション > アドイン > 設定... > 参照... で RedisExcel64-packed.xll（32 ビット Office なら RedisExcel-packed.xll）を選択します。%n%nその後、セルに =RedisUDFGet("preco_btc") を入力してみてください。
 japanese.GroupConfig=構成:
@@ -728,12 +828,15 @@ var
   AdvMemo: TNewMemo;
   OptionsPage: TInputOptionWizardPage;
   SummaryPage: TOutputMsgMemoWizardPage;
+  TestButton: TNewButton;
+  TestResultLabel: TNewStaticText;
   AdvSeeded: Boolean;
   ServerInstallCode: Integer;
   TestOk: Boolean;
   InstallCompleted: Boolean;
   InstallKeptConfig: Boolean;
   InstallMigratedConfig: Boolean;
+  StaleEntriesRemoved: Integer;
   ConfigBackupPath: String;
   ExistingHostValue: String;
   ExistingHostLoaded: Boolean;
@@ -849,10 +952,211 @@ begin
   end;
 end;
 
+// ---- Remove the auto-load entry of a PREVIOUS RedisExcel install ----------
+// An upgrade into another folder (or a copy registered by hand) leaves its own
+// OPEN value behind, so Excel loads TWO copies of the add-in: every RedisExcel
+// function is then duplicated in the function list, and each copy reads its own
+// folder's RedisExcel.json - one of them usually shows #CONFIG or answers from
+// the wrong server. Only entries that point at a RedisExcel XLL and are NOT the
+// one being installed are removed; other add-ins in the key are left alone.
+function XllNameIsRedisExcel(const Value: String): Boolean;
+var
+  FileName: String;
+begin
+  FileName := ExtractFileName(RemoveQuotes(Trim(Value)));
+  Result := (CompareText(FileName, 'RedisExcel64-packed.xll') = 0)
+    or (CompareText(FileName, 'RedisExcel-packed.xll') = 0)
+    or (CompareText(FileName, 'RedisExcel64.xll') = 0)
+    or (CompareText(FileName, 'RedisExcel.xll') = 0);
+end;
+
+// TRUE when the value names a RedisExcel add-in other than KeepPath.
+function IsStaleRedisExcelEntry(const Value, KeepPath: String): Boolean;
+var
+  Target: String;
+begin
+  Result := False;
+  if (Trim(Value) = '') or (not XllNameIsRedisExcel(Value)) then Exit;
+  Target := RemoveQuotes(Trim(Value));
+  if Pos('\', Target) = 0 then
+    // A bare file name: keep it only when it is this install's own XLL.
+    Result := CompareText(Target, ExtractFileName(KeepPath)) <> 0
+  else
+    Result := CompareText(Target, KeepPath) <> 0;
+end;
+
+// Removes OPEN / OPEN1..OPENn values that would load ANOTHER RedisExcel copy.
+// Returns how many entries were removed (logged by the caller).
+function RemoveStaleExcelEntries(const KeepPath: String): Integer;
+var
+  Keys: TArrayOfString;
+  I, N: Integer;
+  BaseKey, ValName, Cur: String;
+begin
+  Result := 0;
+  Keys := OfficeExcelKeys();
+  for I := 0 to GetArrayLength(Keys) - 1 do
+  begin
+    BaseKey := 'SOFTWARE\Microsoft\Office\' + Keys[I] + '\Excel\Options';
+    if RegQueryStringValue(HKCU, BaseKey, 'OPEN', Cur) and
+       IsStaleRedisExcelEntry(Cur, KeepPath) then
+    begin
+      if RegDeleteValue(HKCU, BaseKey, 'OPEN') then
+      begin
+        Result := Result + 1;
+        Log('Stale add-in removed: ' + Keys[I] + '\Excel\Options\OPEN = ' + Cur);
+      end;
+    end;
+    N := 1;
+    while N < 100 do
+    begin
+      ValName := 'OPEN' + IntToStr(N);
+      if RegQueryStringValue(HKCU, BaseKey, ValName, Cur) and
+         IsStaleRedisExcelEntry(Cur, KeepPath) then
+      begin
+        if RegDeleteValue(HKCU, BaseKey, ValName) then
+        begin
+          Result := Result + 1;
+          Log('Stale add-in removed: ' + Keys[I] + '\Excel\Options\' + ValName + ' = ' + Cur);
+        end;
+      end;
+      N := N + 1;
+    end;
+  end;
+end;
+
+// ---- Remove a stale "Add-in Manager" entry --------------------------------
+// Excel still lists add-ins registered through the LEGACY dialog: the value NAME
+// is the label the user sees and the data is the path. A renamed or moved old
+// copy leaves a label pointing at a file that no longer exists, which shows up
+// as a second, dead "RedisExcel"/"redisd" line in File > Options > Add-ins.
+// Only values whose path is a RedisExcel XLL that no longer exists are removed.
+function RemoveStaleAddInManagerEntries(const KeepPath: String): Integer;
+var
+  Keys: TArrayOfString;
+  Names: TArrayOfString;
+  I, J: Integer;
+  BaseKey, Cur, Target: String;
+begin
+  Result := 0;
+  Keys := OfficeExcelKeys();
+  for I := 0 to GetArrayLength(Keys) - 1 do
+  begin
+    BaseKey := 'SOFTWARE\Microsoft\Office\' + Keys[I] + '\Excel\Add-in Manager';
+    if RegGetValueNames(HKCU, BaseKey, Names) then
+      for J := 0 to GetArrayLength(Names) - 1 do
+        if RegQueryStringValue(HKCU, BaseKey, Names[J], Cur) then
+        begin
+          Target := RemoveQuotes(Trim(Cur));
+          if XllNameIsRedisExcel(Cur) and (not FileExists(Target)) and
+             (CompareText(Target, KeepPath) <> 0) then
+          begin
+            if RegDeleteValue(HKCU, BaseKey, Names[J]) then
+            begin
+              Result := Result + 1;
+              Log('Stale Add-in Manager entry removed: ' + Names[J] + ' = ' + Cur);
+            end;
+          end;
+        end;
+  end;
+end;
+
 // ---- Wizard pages ---------------------------------------------------------
+// Forward declarations: the wizard (created first) installs this handler, and
+// it reads the values through helpers defined further down.
+procedure TestButtonClick(Sender: TObject); forward;
+function TestCurrentConnection(): Boolean; forward;
+function HostString(): String; forward;
+function PasswordValue(): String; forward;
+
 function ParamOr(Param, Default: String): String;
 begin
   Result := ExpandConstant('{param:' + Param + '|' + Default + '}');
+end;
+
+// ---- "Test connection" button (host page) ---------------------------------
+// PINGs the address currently in the fields, WITHOUT leaving the page and
+// without touching RedisExcel.json: nobody should have to walk through the
+// whole wizard just to learn that the address is wrong. The wizard already
+// ships test-connection.ps1 (the end-of-install check extracts it), so the same
+// authenticated probe is reused; a password travels through a private temp file
+// instead of the command line.
+//
+// Only the helper's STABLE exit code is used for the message: its own text
+// comes through a console redirect in the OEM codepage, so accented characters
+// would arrive mangled in a label.
+function TestCurrentConnection(): Boolean;
+var
+  Script, OutFile, PwFile, Args, HostPort, Pw, Reason: String;
+  Code: Integer;
+begin
+  Result := False;
+  HostPort := HostString();
+  if Pos(',', HostPort) > 0 then HostPort := Copy(HostPort, 1, Pos(',', HostPort) - 1);
+
+  ExtractTemporaryFile('test-connection.ps1');
+  Script := ExpandConstant('{tmp}\test-connection.ps1');
+  OutFile := ExpandConstant('{tmp}\redisexcel-test.txt');
+  DeleteFile(OutFile);
+
+  Pw := PasswordValue();
+  PwFile := '';
+  if Pw <> '' then
+  begin
+    PwFile := ExpandConstant('{tmp}\redisexcel-test-pw.txt');
+    if not SaveStringToFile(PwFile, Pw, False) then
+      PwFile := '';
+  end;
+
+  Args := '-ServerHost "' + HostPort + '"';
+  if PwFile <> '' then
+    Args := Args + ' -PasswordFile "' + PwFile + '"';
+
+  if not Exec('cmd.exe',
+          '/c ""powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "' + Script + '" ' +
+          Args + ' > "' + OutFile + '" 2>&1"',
+          ExpandConstant('{tmp}'), SW_HIDE, ewWaitUntilTerminated, Code) then
+  begin
+    TestResultLabel.Caption := ExpandConstant('{cm:TestCouldNotRun}');
+    Exit;
+  end;
+  if PwFile <> '' then DeleteFile(PwFile);
+
+  if Code = 0 then
+  begin
+    TestResultLabel.Caption := FmtMessage(ExpandConstant('{cm:TestButtonOk}'), [HostPort]);
+    Result := True;
+    Exit;
+  end;
+
+  case Code of
+    2: Reason := ExpandConstant('{cm:TestReasonUnknownHost}');
+    3: Reason := ExpandConstant('{cm:TestReasonTimeout}');
+    5: Reason := ExpandConstant('{cm:TestReasonAuth}');
+    6: Reason := ExpandConstant('{cm:TestReasonUnexpected}');
+  else
+    Reason := ExpandConstant('{cm:TestReasonRefused}');
+  end;
+  TestResultLabel.Caption := FmtMessage(ExpandConstant('{cm:TestButtonFailed}'), [HostPort])
+    + ' ' + Reason;
+  Log('TestCurrentConnection: host=' + HostPort + ' exit=' + IntToStr(Code));
+end;
+
+procedure TestButtonClick(Sender: TObject);
+begin
+  // Immediate feedback: a dead host can take the whole 5s TCP timeout.
+  TestResultLabel.Font.Color := clGrayText;
+  TestResultLabel.Caption := ExpandConstant('{cm:TestButtonTesting}');
+  TestResultLabel.Refresh;
+  TestButton.Enabled := False;
+  try
+    if TestCurrentConnection() then
+      TestResultLabel.Font.Color := clGreen
+    else
+      TestResultLabel.Font.Color := clRed;
+  finally
+    TestButton.Enabled := True;
+  end;
 end;
 
 function BoolToStr(b: Boolean): String;
@@ -897,6 +1201,29 @@ begin
   ConnPage.Values[0] := ParamOr('HOST', 'localhost');
   ConnPage.Values[1] := ParamOr('PORT', '6379');
   ConnPage.Values[2] := ParamOr('PASSWORD', '');
+
+  // "Test connection" on the host page: the answer is shown next to the button
+  // without leaving the page. Next still behaves exactly as before.
+  TestButton := TNewButton.Create(ConnPage);
+  TestButton.Parent := ConnPage.Surface;
+  TestButton.Width := ScaleX(150);
+  TestButton.Height := ScaleY(25);
+  TestButton.Left := 0;
+  TestButton.Top := ConnPage.SurfaceHeight - TestButton.Height - ScaleY(4);
+  TestButton.Caption := ExpandConstant('{cm:TestButton}');
+  TestButton.OnClick := @TestButtonClick;
+
+  // The result sits ABOVE the button and spans the page width: a failure is two
+  // lines (address + reason) and a 1-line label next to the button clipped it.
+  TestResultLabel := TNewStaticText.Create(ConnPage);
+  TestResultLabel.Parent := ConnPage.Surface;
+  TestResultLabel.Left := 0;
+  TestResultLabel.Top := TestButton.Top - ScaleY(42);
+  TestResultLabel.Width := ConnPage.SurfaceWidth;
+  TestResultLabel.Height := ScaleY(38);
+  TestResultLabel.AutoSize := False;
+  TestResultLabel.WordWrap := True;
+  TestResultLabel.Caption := '';
 
   // Advanced mode: a single editable page with the whole RedisExcel.json
   // (pre-filled with comments explaining every key). One screen, everything.
@@ -958,6 +1285,17 @@ begin
 end;
 
 // ---- Values ---------------------------------------------------------------
+// The XLL this installation actually leaves on disk (the non-matching one is
+// deleted in CurStepChanged), used to tell "our" auto-load entry from an older
+// copy's during the stale-entry cleanup.
+function CurrentXllPath(): String;
+begin
+  if Is64BitOffice then
+    Result := ExpandConstant('{app}\RedisExcel64-packed.xll')
+  else
+    Result := ExpandConstant('{app}\RedisExcel-packed.xll');
+end;
+
 // Reads a field from the page that is visible in the current mode.
 // The address an existing RedisExcel.json points at, in either shape (v1.6
 // Default/Servers or a pre-1.6 RTD.host/UDF.host), read by the bundled helper so
@@ -1307,6 +1645,16 @@ begin
       else
         RegisterExcelAutoLoad(ExpandConstant('{app}\RedisExcel-packed.xll'));
     end;
+
+    // An earlier copy (another folder, or one registered by hand) makes Excel
+    // load TWO add-ins: the functions are duplicated and each copy reads its own
+    // folder's RedisExcel.json - one of them usually shows #CONFIG. Drop the
+    // other copy's auto-load entry and its dead legacy dialog entry; this
+    // install's own entry (just written above) is never touched.
+    StaleEntriesRemoved := RemoveStaleExcelEntries(CurrentXllPath());
+    StaleEntriesRemoved := StaleEntriesRemoved + RemoveStaleAddInManagerEntries(CurrentXllPath());
+    if StaleEntriesRemoved > 0 then
+      Log('Stale older installs unregistered: ' + IntToStr(StaleEntriesRemoved));
 
     InstallCompleted := True;
   end;

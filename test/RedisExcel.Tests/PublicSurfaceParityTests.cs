@@ -46,8 +46,8 @@ namespace RedisExcel.Tests
 
         // The real, code-derived counts. Pinned so a rename that keeps the count
         // cannot slip through, and so the UDF/RTD/diagnostic split stays explicit.
-        private const int ExpectedTotal = 79;
-        private const int ExpectedUdf = 68;
+        private const int ExpectedTotal = 80;
+        private const int ExpectedUdf = 69;
         private const int ExpectedRtd = 9;
         private const int ExpectedDiagnostic = 2;
         private const int ExpectedTwins = 24;

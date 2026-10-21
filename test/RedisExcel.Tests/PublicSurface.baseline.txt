@@ -87,3 +87,4 @@ RedisUDFTTL | volatile=true | key:object "Redis key to check TTL for"; optionalH
 RedisUDFTTLMultiples | volatile=true | keys:object[,] "Array of Redis keys to check TTL for"; optionalHost:object "Optional Redis host (e.g., host:port)" | "Returns the TTL of multiple Redis keys in seconds"
 RedisUDFType | volatile=true | key:object "Redis key to check the type of"; optionalHost:object "Optional Redis host (e.g., host:port)" | "Returns the type of a Redis key"
 RedisUDFUpdateAvailable | volatile=true | (no arguments) | "Returns TRUE while a newer RedisExcel release is known to exist (background check, never blocks Excel)."
+RedisUDFVersion | volatile=true | (no arguments) | "Returns the running RedisExcel version and where it was loaded from (use it to check that the add-in loaded correctly, and to spot two copies installed)."

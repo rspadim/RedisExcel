@@ -714,6 +714,27 @@ namespace RedisExcel
         /// </summary>
         public static string Tag { get; } = ResolveTag();
 
+        /// <summary>
+        /// Human-readable version for a cell ("1.6.4"), derived from
+        /// <see cref="Tag"/>: the leading "v" and any "+build" suffix are
+        /// dropped. A local build (no tag) reports "dev".
+        /// </summary>
+        public static string Version { get; } = ResolveVersion();
+
+        private static string ResolveVersion()
+        {
+            string tag = (Tag ?? "").Trim();
+            if (tag.Length == 0)
+                return "dev";
+            int suffix = tag.IndexOfAny(new[] { '+', '-' });
+            if (suffix > 0)
+                tag = tag.Substring(0, suffix);
+            if (tag.StartsWith("v", StringComparison.OrdinalIgnoreCase))
+                tag = tag.Substring(1);
+            tag = tag.Trim();
+            return tag.Length == 0 ? "dev" : tag;
+        }
+
         private static string ResolveTag()
         {
             try

@@ -47,6 +47,12 @@ XLLs (removing the one that does not match your Office bitness). It runs
    check through a private temp file, not the argument list (a password with a
    quote or a space cannot be passed as one argument safely, and a command line is
    readable by other local users).
+   The connection page also has a **Test connection** button that runs the same
+   probe on what is in the fields *right now*, without leaving the page and
+   without writing `RedisExcel.json`. It says up front that it waits up to 5
+   seconds, and on failure names the reason (unknown host, timeout, refused,
+   rejected password) from the helper's stable exit code - never from its console
+   text, which a redirect re-encodes.
 6. On the last page it explains the one manual step: add the `.xll` in Excel via
    **File > Options > Add-ins > Go... > Browse...** (Excel exposes no safe
    automation for that).

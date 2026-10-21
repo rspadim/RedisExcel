@@ -1,3 +1,39 @@
+## v1.6.4
+
+### Added
+
+- **`=RedisUDFVersion()`** reports the running version, the **path of the XLL it
+  was loaded from**, the `RedisExcel.json` in use and the live UDF connection
+  count in one cell - for example
+  `RedisExcel 1.6.4 | xll=C:\RedisExcel\RedisExcel64-packed.xll | config=C:\RedisExcel\RedisExcel.json | connections=0`.
+  It answers the usual support question ("which build is running?") and makes a
+  **second installed copy** obvious: each one reports its own xll path (and,
+  usually, a different config, one of them showing `#CONFIG`). It needs no Redis
+  server and never blocks. The version is the release tag without the leading
+  `v`; a local build reports `dev`.
+- **A "Test connection" button on the installer's host page.** Nobody should have
+  to walk through the whole wizard (or finish an install) to learn that the
+  address is wrong: the button PINGs what is in the fields at that moment -
+  with `AUTH` when a password was typed - and shows the result right below, in
+  green or red, without leaving the page or writing `RedisExcel.json`. It
+  explains the wait up front ("waits up to 5 seconds") and names the reason on
+  failure (unknown host, timeout, connection refused, rejected password,
+  unexpected reply) instead of a bare "failed". Localized in all 10 wizard
+  languages.
+
+### Fixed
+
+- **The installer now removes an older RedisExcel from Excel.** Upgrading into a
+  different folder (or a copy registered by hand) left the previous `OPEN`
+  value in place, so Excel loaded **two** add-ins: every RedisExcel function
+  appeared twice in the function list and each copy read its own folder's
+  `RedisExcel.json` - one of them typically showing `#CONFIG` or answering from
+  the wrong server. The installer now drops any auto-load entry pointing at a
+  *different* RedisExcel XLL, plus dead "Add-in Manager" labels left by a renamed
+  or moved copy (the `redisd`-style line in File > Options > Add-ins). Other
+  add-ins in the same registry key are never touched, and this install's own
+  entry is registered after the cleanup.
+
 ## v1.6.3
 
 ### Fixed

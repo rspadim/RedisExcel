@@ -57,7 +57,7 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
 | `RedisResultFormatter.cs` | Value formatting sent to Excel (HGETALL as valid JSON). |
 | `TickGate.cs` | Non-blocking reentrancy gate for timer callbacks; shared `StripedLocks` helper. |
 | `Conflation.cs` | Real-time delivery conflation window (`ConflationMs`): latest value wins per window; sanitize/resolve/due helpers. |
-| `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). |
+| `UpdateCheck.cs` | Non-blocking GitHub release check (background task; exposed via RedisUDFUpdateAvailable). `BuildInfo` (in `RedisConnectionManager.cs`) resolves the readable version reported by `RedisUDFVersion`. |
 | `installer/` | Inno Setup script (`RedisExcel.iss`) + README: a per-user helper installer (copies the files, keeps the matching XLL, writes a starter config). The wizard ships **10 languages** (English, both Chinese, pt-BR, es, ru, fr, ko, de, ja; the two Chinese `.isl` live in `installer/languages/`, the rest come with Inno). The add-in inside Excel is **English-only** on purpose (localized cell text would make volatile functions locale-dependent). Built by CI; see `installer/README.md`. |
 | `docs/`, `overrides/`, `mkdocs.yml`, `tools/make-social-cards.py` | The landing page (MkDocs Material, pt-BR/en/es via `mkdocs-static-i18n`) published by `pages.yml`. Each language has its own social card (`docs/assets/social-card*.png`) used as the page hero and as `og:image` (set per page through the `og_image` front matter, read by `overrides/main.html`); `tools/make-social-cards.py` regenerates them from the original by repainting only the subtitle, so a new language needs one line there. |
 
@@ -285,7 +285,21 @@ Excel add-in (XLL) written in C# / .NET Framework 4.8 with Excel-DNA:
   it saves `RedisExcel.json.pre-1.6.bak` and writes a working file - reading the
   old address first (`read-config-host.ps1`) so the replacement does not silently
   become `localhost`; the wizard's host field is pre-filled with it and a silent
-  install reuses it.
+  install reuses it. The installer also **unregisters an older copy** of the
+  add-in: any `OPEN`/`OPENn` value in `Excel\Options` that points at a *different*
+  RedisExcel XLL is deleted (plus dead "Add-in Manager" labels left by a renamed
+  or moved copy, the `redisd`-style line in File > Options > Add-ins), because
+  otherwise Excel loads two copies - duplicated functions, one of them reading a
+  different `RedisExcel.json`. Other add-ins' entries are never touched, and this
+  install's own entry is registered after the cleanup.
+- The installer's host page has a **Test connection** button (same authenticated
+  probe as the end-of-install check, run without leaving the page or writing the
+  config). Its message comes from the helper's STABLE exit codes (0 ok, 2 unknown
+  host, 3 timeout, 4 refused/other socket error, 5 AUTH rejected, 6 unexpected
+  reply) and never from the helper's console text, which a `cmd.exe` redirect
+  re-encodes into the OEM codepage and would mangle. `RedisUDFVersion` is the
+  in-Excel counterpart: it reports the build and the XLL path actually loaded, so
+  a duplicated install is visible from a cell too.
 
 ## Build
 
@@ -591,9 +605,10 @@ Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
 the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
-release: `v1.6.3` (the installer migrates an incompatible `RedisExcel.json` on
-upgrade - backup + working file, carrying the old server address - on top of the
-v1.6.0 named-server configuration; see the root `CHANGELOG.md`).
+release: `v1.6.4` (`RedisUDFVersion` reports the running build and its XLL path,
+the installer unregisters an older copy of the add-in, and its host page has a
+"Test connection" button; on top of the v1.6.3 config migration and the v1.6.0
+named-server configuration - see the root `CHANGELOG.md`).
 
 On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
 guard fails the release otherwise and names this line); work in progress keeps an

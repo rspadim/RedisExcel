@@ -13,6 +13,13 @@
   The socket connect is BOUNDED: an unreachable host must not freeze the wizard
   on the OS SYN timeout.
 
+  Exit codes are STABLE reason codes so a caller can show its own (localized)
+  message instead of this script's text: 0 = PONG, 2 = unknown host (DNS),
+  3 = timeout/unreachable, 4 = connection refused or other socket error,
+  5 = AUTH failed, 6 = unexpected reply. The human detail is written after the
+  first line; it is free-form (may be non-ASCII) and meant for the log, not for
+  a UI label - a console redirect re-encodes it and would mangle accents.
+
   Examples:
     powershell -ExecutionPolicy Bypass -File test-connection.ps1 -ServerHost localhost:6379
     powershell -ExecutionPolicy Bypass -File test-connection.ps1 -ServerHost localhost:6379 -PasswordFile C:\Temp\pw.txt
@@ -46,7 +53,8 @@ function Connect-Redis([string]$h, [int]$p) {
   $connect = $client.ConnectAsync($h, $p)
   if (-not $connect.Wait($ConnectTimeoutMs)) {
     $client.Close()
-    throw ("no TCP answer within " + [int]($ConnectTimeoutMs / 1000) + "s (unreachable host or firewall?)")
+    # 3 = no answer in time (unreachable host, firewall, wrong port)
+    exit 3
   }
   return $client
 }
@@ -87,9 +95,10 @@ try {
     else { Send-Command $stream @('AUTH', $Password) }
     $auth = $reader.ReadLine()
     if ($auth -notmatch '^\+OK') {
+      # 5 = the server answered but rejected the credentials
       Write-Host "AUTH failed: $auth"
       $client.Close()
-      exit 1
+      exit 5
     }
   }
 
@@ -97,9 +106,26 @@ try {
   $pong = $reader.ReadLine()
   $client.Close()
   if ($pong -match 'PONG') { Write-Host "PONG"; exit 0 }
+  # 6 = something answered, but not with a PONG
   Write-Host "unexpected reply: $pong"
-  exit 1
+  exit 6
 } catch {
-  Write-Host ("no answer: " + (Get-ErrorMessage $_))
-  exit 1
+  $message = Get-ErrorMessage $_
+  Write-Host ("no answer: " + $message)
+  # 2 = the NAME does not resolve (a typo in the host); 4 = the name resolves
+  # but nothing accepts the connection (server down, wrong port, firewall).
+  # The classification uses the SocketError CODE, never the message text: the
+  # text is localized by Windows and a pattern match on it breaks per locale.
+  $hostNotFound = $false
+  $e = $_.Exception
+  while ($e -and -not $hostNotFound) {
+    $se = $e -as [System.Net.Sockets.SocketException]
+    if ($se -and ($se.SocketErrorCode -eq [System.Net.Sockets.SocketError]::HostNotFound -or
+                  $se.SocketErrorCode -eq [System.Net.Sockets.SocketError]::NoData)) {
+      $hostNotFound = $true
+    }
+    $e = $e.InnerException
+  }
+  if ($hostNotFound) { exit 2 }
+  exit 4
 }
