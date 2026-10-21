@@ -715,7 +715,7 @@ namespace RedisExcel
         public static string Tag { get; } = ResolveTag();
 
         /// <summary>
-        /// Human-readable version for a cell ("1.6.4"), derived from
+        /// Human-readable version for a cell ("1.7.0"), derived from
         /// <see cref="Tag"/>: the leading "v" and any "+build" suffix are
         /// dropped. A local build (no tag) reports "dev".
         /// </summary>

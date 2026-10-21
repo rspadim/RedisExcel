@@ -526,7 +526,7 @@ spills a 2-column range; a missing key/value uses the sentinel noted per group.
 | `RedisUDFPubSubChannelsInfo` | matrix `Channel` / `Subscribers` (header first) | header-only matrix when nothing is subscribed |
 | `RedisUDFServerTime` | the server time | - |
 | `RedisUDFUpdateAvailable` | `TRUE` when a newer release is known (background check, never blocks) | `FALSE` |
-| `RedisUDFVersion` | `RedisExcel 1.6.4 \| xll=<path> \| config=<path> \| connections=N` - the running version and what it loaded | `dev` for a local build, `(defaults)` when no RedisExcel.json was found |
+| `RedisUDFVersion` | `RedisExcel 1.7.0 \| xll=<path> \| config=<path> \| connections=N` - the running version and what it loaded | `dev` for a local build, `(defaults)` when no RedisExcel.json was found |
 | `RedisCheckConfigFile` | `OK (...)` when the config is valid, otherwise one line per problem | `Error: ...` (never blocks) |
 | `RedisJsonSchemaContents` | the JSON Schema text (the allowed keys/values) | - |
 | `RedisUDFConnectionCount` | live UDF connections | `0` |

@@ -610,10 +610,11 @@ Push an annotated `v*` tag; the CI workflow builds and
 publishes the packed XLLs, `RedisExcel.dll`, `NLog.config`, `RedisExcel.json` and
 the installer (`RedisExcelSetup-<version>.exe` plus the version-less
 `RedisExcelSetup.exe`, the stable direct-link name) as release assets. Current
-release: `v1.6.4` (`RedisUDFVersion` reports the running build and its XLL path,
-the installer unregisters an older copy of the add-in, and its host page has a
-"Test connection" button; on top of the v1.6.3 config migration and the v1.6.0
-named-server configuration - see the root `CHANGELOG.md`).
+release: `v1.7.0` (fixes a Pub/Sub cell that could stay on an older value after a
+transient out-of-order delivery, and the installer's connection test now drives
+StackExchange.Redis itself instead of a raw `PING`; on top of the v1.6.4
+`RedisUDFVersion`/stale-install cleanup, the v1.6.3 config migration and the
+v1.6.0 named-server configuration - see the root `CHANGELOG.md`).
 
 On a version bump: (1) the CHANGELOG top heading must be `## v<tag>` (the CI
 guard fails the release otherwise and names this line); work in progress keeps an

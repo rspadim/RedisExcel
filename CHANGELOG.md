@@ -1,3 +1,32 @@
+## v1.7.0
+
+### Fixed
+
+- **A Pub/Sub cell could stay on an older value indefinitely after a transient
+  inversion.** StackExchange.Redis hands every channel callback to the thread
+  pool, so two messages of one channel can finish out of order. The duplicate
+  suppression marker was stamped *before* the fan-out, so with deliveries A
+  (older) and B (newer) the cell could end on A while the marker claimed B - and
+  a feed that republishes the current value (price and margin feeds do) was then
+  suppressed as "unchanged", leaving the cell stuck on the older value until the
+  payload changed. The marker now carries a version and is realigned with what
+  the cell actually holds, so an inversion can no longer become permanent
+  staleness. Suppression can only be narrowed; the in-order path is unchanged.
+  The inversion itself is inherent to the client and is still documented:
+  ordering-sensitive feeds should carry a timestamp/sequence in the payload.
+
+### Changed
+
+- **The installer's "Test connection" now drives StackExchange.Redis**, the same
+  client the add-in uses, instead of a hand-written `PING`. A raw exchange could
+  not prove what actually breaks: the connection-string parser (the wizard writes
+  `host:port,defaultDatabase=0,ssl=False,...` and a string the client rejects
+  never reaches the server), TLS, ACL users, or a Cluster/Sentinel string. The
+  installer ships the client libraries next to the XLL (~1.5 MB) so the probe can
+  load them. Failure reasons now come from the client's own report, and a
+  name-resolution failure is detected up front (the client cannot distinguish a
+  typo from an unreachable server).
+
 ## v1.6.4
 
 ### Added
